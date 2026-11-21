@@ -3,6 +3,7 @@
 # Symlinked as gh, git, pkill, killall in ~/lonca/shims; agent launches put that dir first in PATH.
 # Same hard limits as ~/lonca/AGENTS.md. shortcut: matches argv text, not a parser; the pre-push hook backs up git.
 name=$(basename "$0")
+L=$(dirname "$(dirname "$(readlink -f "$0")")")   # the Lonca checkout this shim belongs to
 args=" $* "
 deny() { echo "lonca guard: blocked '$name$args'— $1. Stop and report to the owner." >&2; exit 126; }
 
@@ -13,7 +14,7 @@ case $name in
     case $args in
       " pr merge "*|*" api "*merge*) deny "merge only with merge-pr (checks first)" ;;
     esac
-    "$HOME/lonca/bin/ai-trace-gh" "$@" || exit 126 ;;
+    "$L/bin/ai-trace-gh" "$@" || exit 126 ;;
   git)
     case $args in
       *" push "*" --force"*|*" push "*" -f "*|*" push --force"*|*" push -f "*|*" push "*" +"*) deny "no force-push" ;;

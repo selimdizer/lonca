@@ -7,7 +7,7 @@ Exit 0: fine or not a text-writing gh call. Exit 2 (hook) / 1 (shim): blocked, r
 """
 import json, os, re, shlex, subprocess, sys
 
-CHECK = os.path.expanduser("~/lonca/bin/ai-trace-check")
+CHECK = os.path.join(os.path.dirname(os.path.realpath(__file__)), "ai-trace-check")
 WRITES = re.compile(r"^(pr|issue) (create|edit|comment|review|close|merge)\b|^(release) (create|edit)\b|^api\b")
 
 def text_of(args):
