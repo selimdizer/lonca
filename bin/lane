@@ -48,10 +48,9 @@ case $agent in
   omp:*)    cmd="omp --model ${agent#omp:}" ;;
   copilot:*) cmd="copilot --model ${agent#copilot:} --yolo -i" ;;            # -i: runs the prompt, stays interactive
   pi:*)      cmd="pi --model ${agent#pi:}" ;;                                # pi has no approvals to bypass
-  agy:*)     cmd="agy --model ${agent#agy:} --dangerously-skip-permissions -i" ;;   # Antigravity CLI
+  agy:*)     cmd="agy --model ${agent#agy:} --dangerously-skip-permissions -i" ;;   # Antigravity CLI; worktree trust below
   grok:*)    cmd="grok -m ${agent#grok:} --always-approve" ;;              # the prompt is the positional argument
-  # opencode: no --model on the TUI; the model comes in as config, and --prompt only fills the box (Enter sent below)
-  opencode:*) cmd="env OPENCODE_CONFIG_CONTENT='{\"model\":\"${agent#opencode:}\"}' opencode --standalone --auto --prompt" ;;
+  opencode:*) cmd="opencode mini --standalone --agent lonca-lane --model ${agent#opencode:} --prompt" ;;   # standalone: its tools run in this terminal (shims, TMPDIR, tagged messages); permissions: the lonca-lane agent
   *) echo "unknown agent: $agent" >&2; exit 2 ;;
 esac
 quoted=$(printf '%s' "$prompt" | sed "s/'/'\\\\''/g")
@@ -97,22 +96,26 @@ name=$(printf '%s-%s' "$(basename "$(realpath "$repo")" | cut -c1-8)" "$branch" 
   set -- --label "repo=$(basename "$(realpath "$repo")")"
   [ -n "$space" ] && set -- "$@" --label "herdr.space=$space" --label "herdr.tab=lane-$name"
   [ $ro = 1 ] && set -- "$@" --no-notify   # it sends DONE itself and exits right after: no second "exited" note
+  # Folder trust, each CLI's documented way, so no lane waits at a trust prompt:
+  case $agent in
+    claude:*)  # Claude keeps trust per git repo root and a worktree inherits its main checkout's: trust that once
+      python3 -I - "$(realpath "$repo")" <<'PY'
+import json, os, sys, tempfile
+f = os.path.expanduser("~/.claude.json"); root = sys.argv[1]
+d = json.load(open(f))
+p = d.setdefault("projects", {}).setdefault(root, {})
+if not p.get("hasTrustDialogAccepted"):
+    p["hasTrustDialogAccepted"] = True
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(f)); os.write(fd, json.dumps(d, indent=2).encode()); os.close(fd)
+    os.chmod(tmp, os.stat(f).st_mode & 0o777); os.replace(tmp, f)
+PY
+      ;;
+    agy:*)     # Antigravity trusts exact paths only: this worktree, for this session
+      cmd="${cmd% -i} --settings '{\"trustedWorkspaces\":[\"$wt\"]}' -i"; run="exec $cmd '$quoted'" ;;
+  esac   # Copilot: install.sh lists ~/.herdr/worktrees in trustedFolders, which covers every worktree below it
   # --outlive-parent: a lane keeps running if the lead's session ends; its exit is noted in the lead's input
   hc run --bg --outlive-parent --name "$name" --cwd "$wt" "$@" \
     -- sh -c "export PATH=$HOME/lonca/shims:$HOME/lonca-local/shims:\$PATH TMPDIR=$TMPDIR; $run" >/dev/null   # hc passes no env: set it here
-  on_screen() {  # on_screen <text> [tries]: wait (2 s per try, default 30) for text on the lane's screen
-    i=0; while [ $i -lt "${2:-30}" ]; do hc read "$name" --lines 80 2>/dev/null | grep -q "$1" && return 0; sleep 2; i=$((i + 1)); done; return 1
-  }
-  case $agent in
-    opencode:*)  # submit the prefilled prompt once the TUI shows it
-      on_screen "Read the brief" && hc keys "$name" enter >/dev/null 2>&1 || echo "lane: press Enter in $name to start it" >&2 ;;
-    claude:*)    # Claude asks to trust a folder it has not seen (a new worktree): "Yes, I trust this folder"
-      on_screen "trust this folder" 8 && { hc keys "$name" down >/dev/null 2>&1; hc keys "$name" enter >/dev/null 2>&1; } || true ;;
-    agy:*)       # Antigravity asks to trust a new folder; "Yes, I trust this folder" is preselected
-      on_screen "trust the contents of this project" 15 && hc keys "$name" enter >/dev/null 2>&1 || true ;;
-    copilot:*)   # interactive Copilot asks to trust each new folder: "Yes" for this session (nothing saved)
-      on_screen "Confirm folder trust" 15 && hc keys "$name" enter >/dev/null 2>&1 || true ;;
-  esac
   # lane record for lane-watch and a restarted lead
   python3 -c 'import json,sys,time; k="name worktree lead agent base result card branch repo".split()
 d=dict(zip(k, sys.argv[1:])); d["started"]=int(time.time()); json.dump(d, open(sys.argv[-1], "w"))' \

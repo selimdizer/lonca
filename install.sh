@@ -36,9 +36,17 @@ if [ $UN = 1 ]; then
     for t in "$SRC"/config/systemd/*.timer; do systemctl --user disable --now "$(basename "$t")" >/dev/null 2>&1 || true; done
   fi
   [ "$(uname)" = Darwin ] && python3 "$SRC/bin/launchd-units" uninstall
+  [ -f "$HOME/.copilot/config.json" ] && python3 -I - "$HOME/.copilot/config.json" "$HOME/.herdr/worktrees" <<'PY'
+import json, sys
+f, folder = sys.argv[1:]; t = open(f).read()
+head = "".join(l for l in t.splitlines(True) if l.lstrip().startswith("//"))
+d = json.loads("".join(l for l in t.splitlines(True) if not l.lstrip().startswith("//")) or "{}")
+if folder in d.get("trustedFolders", []):
+    d["trustedFolders"].remove(folder); open(f, "w").write(head + json.dumps(d, indent=2) + "\n")
+PY
   [ -f "$HOME/.local/state/lonca/mcp-added" ] && while read -r h srv; do "$SRC/bin/lonca-mcp" remove "$h" "$srv"; done < "$HOME/.local/state/lonca/mcp-added"
   for d in "$HOME/.claude/skills" "$HOME/.agents/skills" "$HOME/.claude/agents" "$HOME/.local/bin" "$HOME/.config/systemd/user" \
-           "$HOME/.codex" "$HOME/.codex/rules" "$HOME/.omp/agent" "$HOME/.omp/agent/extensions" "$HOME/.config/opencode" "$HOME/.gemini" "$HOME/.gemini/skills" "$HOME/.copilot" "$HOME/.config/crush" "$HOME/.pi/agent" "$HOME/.config/amp" "$HOME/.config/agents/skills" "$HOME/.grok" "$HOME/lonca-local/shims" "$HOME/Library/LaunchAgents"; do
+           "$HOME/.codex" "$HOME/.codex/rules" "$HOME/.omp/agent" "$HOME/.omp/agent/extensions" "$HOME/.config/opencode" "$HOME/.config/opencode/agents" "$HOME/.gemini" "$HOME/.gemini/skills" "$HOME/.copilot" "$HOME/.config/crush" "$HOME/.pi/agent" "$HOME/.config/amp" "$HOME/.config/agents/skills" "$HOME/.grok" "$HOME/lonca-local/shims" "$HOME/Library/LaunchAgents"; do
     for f in "$d"/* "$d"/.[!.]*; do
       [ -L "$f" ] || continue
       case $(readlink -f "$f" 2>/dev/null) in "$SRC"/*|"$SRC") rm "$f" ;; esac
@@ -112,6 +120,19 @@ for h in $pick; do
   say "  linked: $h"
 done
 export LONCA_HARNESSES="$pick"   # read by the settings step
+case " $pick " in *" copilot "*)   # Copilot: trust the lane worktrees folder once (covers every worktree below it)
+  python3 -I - "$HOME/.copilot/config.json" "$HOME/.herdr/worktrees" <<'PY'
+import json, os, sys
+f, folder = sys.argv[1:]
+text = open(f).read() if os.path.exists(f) else "{}"
+head = "".join(l for l in text.splitlines(True) if l.lstrip().startswith("//"))
+d = json.loads("".join(l for l in text.splitlines(True) if not l.lstrip().startswith("//")) or "{}")
+if folder not in d.setdefault("trustedFolders", []):
+    d["trustedFolders"].append(folder)
+    os.makedirs(os.path.dirname(f), exist_ok=True); open(f, "w").write(head + json.dumps(d, indent=2) + "\n")
+PY
+  ;; esac
+case " $pick " in *" opencode "*) link "$L/config/opencode/lonca-lane.md" "$HOME/.config/opencode/agents/lonca-lane.md" ;; esac
 # Lonca's MCP servers (Kanzo board, deja search) in every harness you picked, Claude Code included
 for srv in kanzo deja; do
   exe=$(command -v $srv) || continue

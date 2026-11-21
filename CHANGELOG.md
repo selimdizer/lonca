@@ -22,7 +22,14 @@ Merging, simplified (after a three-family council review): risk tiers for the ch
   context7, chrome-devtools…), ToolSearch, and from the checkers even skills, so Claude leads and lanes could not
   update Kanzo cards or use deja's MCP tool. Now only the checkers (reviewer, verifier, security-auditor) are
   read-only (`disallowedTools`); the lead and implementer have everything.
-- deja is the first stop for any "was this decided / is anything pending" check, and every lane prompt says so.
+- deja is the first stop for any "was this decided / is anything pending" check, and every lane prompt says so; a
+  status check ends with a Kanzo card for every open item.
+- Kanzo and deja MCP servers in every harness you pick, through each CLI's own `mcp add` (or its documented
+  `mcp.json`); uninstall removes only what Lonca added.
+- Folder trust the documented way instead of keystrokes: Claude (the main checkout in its projects config, which
+  covers every worktree), Copilot (`trustedFolders` = ~/.herdr/worktrees), Antigravity (`--settings
+  trustedWorkspaces` per worktree). OpenCode lanes use `opencode mini --standalone --agent lonca-lane --model …
+  --prompt …`, so the prompt is submitted and its tools run inside the lane with Lonca's guards.
 - `lane-watch` closes a lane that wrote its report 10+ min ago and left nothing behind (no commits, no changes:
   review, council or test lanes), and removes its worktree and never-pushed branch.
 
