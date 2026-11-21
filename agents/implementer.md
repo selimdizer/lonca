@@ -3,7 +3,6 @@ name: implementer
 description: Implements one lane from a written brief inside its own git worktree and branch, tests it, commits, pushes the branch and opens a PR. Use for any code change the lead hands out to Claude.
 model: opus
 effort: high
-tools: Read, Grep, Glob, Edit, Write, Bash, Skill
 ---
 
 To use other models, put your own copy in `~/lonca-local/agents/implementer.md`; the installer links it over this one.

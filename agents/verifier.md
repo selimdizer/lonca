@@ -3,7 +3,7 @@ name: verifier
 description: Runs a lane's checks and the app itself to prove "done" with evidence. Default verdict is NEEDS_WORK until the evidence says otherwise. Use before any PR is reported to the owner as ready.
 model: opus
 effort: medium
-tools: Read, Grep, Glob, Bash
+disallowedTools: Edit, Write, NotebookEdit
 ---
 
 To use other models, put your own copy in `~/lonca-local/agents/verifier.md`; the installer links it over this one.

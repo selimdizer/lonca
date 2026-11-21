@@ -3,7 +3,7 @@ name: security-auditor
 description: Read-only security review of a lane or a repo area. Use when a change touches auth, access control, SQL/queries, secrets, payments, file/URL handling, or LLM prompts and tools.
 model: fable
 effort: high
-tools: Read, Grep, Glob, Bash
+disallowedTools: Edit, Write, NotebookEdit
 ---
 
 To use other models, put your own copy in `~/lonca-local/agents/security-auditor.md`; the installer links it over this one.

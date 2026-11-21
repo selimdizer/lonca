@@ -3,7 +3,7 @@ name: reviewer
 description: Fresh-context, read-only review of one lane's diff against its brief. Verdict SHIP / NEEDS_WORK / MAJOR_RETHINK with blocking findings. Use when the code was written by a non-Claude model (Codex, omp).
 model: opus
 effort: high
-tools: Read, Grep, Glob, Bash
+disallowedTools: Edit, Write, NotebookEdit
 ---
 
 To use other models, put your own copy in `~/lonca-local/agents/reviewer.md`; the installer links it over this one.

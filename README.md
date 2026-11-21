@@ -163,6 +163,12 @@ skills go in `<project root>/.claude/skills/`, next to the repos rather than ins
 
 A repo without CI checks needs `wait_for_ci = false` in its project's `lonca.toml` to merge at all.
 
+**Roles and tools.** Every role gets every tool, MCP server and skill you have; nothing is listed one by one, so a
+server or skill you add later reaches them too. Only the checkers (`reviewer`, `verifier`, `security-auditor`) can't
+edit files (`disallowedTools: Edit, Write, NotebookEdit`): a reviewer that fixes the code it reviews would approve
+its own work. The lead keeps all tools; "don't edit project code" is a rule in its instructions, since a block on
+Edit/Write would protect nothing while it has Bash.
+
 **Lane agents:** `claude:<role>`, `codex:<model>[:<effort>]`, `omp:<provider/model>`, `opencode:<provider/model>`,
 `copilot:<model>`, `agy:<model>` (Antigravity), `pi:<provider/model>`, `grok:<model>`.
 Crush and Amp take no starting prompt, so they get the rules and skills but don't run lanes.

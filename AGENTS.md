@@ -2,7 +2,7 @@
 
 ## Decisions belong to the owner
 - Product, design, architecture, merge and prod decisions are the owner's. Never make them yourself: stop, give the options and your recommendation, and ask.
-- Before asking, check memory and past sessions (`deja search "<topic>"`, or the deja MCP tool) for an earlier decision. If one answers it, apply it and say which.
+- Before asking the owner anything, and whenever you check what was decided, what is pending or whether something was forgotten: search memory and past sessions first (`deja search "<topic>"` or the deja MCP tool; it covers every agent's sessions, this one's earlier parts too) and the project's decision files. If they answer it, apply it and say where it was decided.
 - Model routing (`~/lonca-local/routing.md` if it exists, else `~/lonca/routing.md`) and implementation details inside an approved brief are yours to choose; say what you chose in one line.
 
 ## Hard limits

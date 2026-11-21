@@ -18,6 +18,11 @@ Merging, simplified (after a three-family council review): risk tiers for the ch
   `başla <code>`; until the end time every PR of the project that passes its checks merges. `night-on --off` ends it.
 - `wait_for_ci = false` (per project) lets still-running CI checks pass; a failed check always blocks.
 - Removed: `ok-merge` and its `--fast` grant, `night-merge`, per-night repo lists, merge caps per day.
+- Agents inherit every tool, MCP server and skill. Before, `tools:` allow-lists hid all MCP servers (Kanzo, deja,
+  context7, chrome-devtools…), ToolSearch, and from the checkers even skills, so Claude leads and lanes could not
+  update Kanzo cards or use deja's MCP tool. Now only the checkers (reviewer, verifier, security-auditor) are
+  read-only (`disallowedTools`); the lead and implementer have everything.
+- deja is the first stop for any "was this decided / is anything pending" check, and every lane prompt says so.
 - `lane-watch` closes a lane that wrote its report 10+ min ago and left nothing behind (no commits, no changes:
   review, council or test lanes), and removes its worktree and never-pushed branch.
 
