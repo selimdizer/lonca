@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""launchd-units <install|uninstall>: Lonca's timers on macOS, made from the same config/systemd/*.timer + .service files.
+
+Each timer becomes ~/Library/LaunchAgents/dev.lonca.<name>.plist (StartInterval for OnUnitActiveSec, StartCalendarInterval
+for OnCalendar), loaded with launchctl. Logs: ~/Library/Logs/lonca/<name>.log.
+"""
+import glob, os, plistlib, re, shlex, subprocess, sys
+
+H = os.path.expanduser("~"); L = os.path.join(H, "lonca"); A = os.path.join(H, "Library/LaunchAgents")
+UID = str(os.getuid()); LOGS = os.path.join(H, "Library/Logs/lonca")
+skip = set(sys.argv[2:])   # timers whose tool is missing
+
+def keys(path):
+    d = {}
+    for line in open(path):
+        if "=" in line and not line.startswith(("#", "[")):
+            k, v = line.rstrip("\n").split("=", 1); d.setdefault(k, v)
+    return d
+
+def seconds(v):
+    n, u = re.fullmatch(r"(\d+)\s*(min|h|s)?", v).groups()
+    return int(n) * {"min": 60, "h": 3600, None: 1, "s": 1}[u]
+
+def calendar(v):
+    if v == "hourly":
+        return {"Minute": 0}
+    m = re.fullmatch(r"\*-\*-(\*|\d\d) (\d\d):(\d\d)", v)
+    c = {"Hour": int(m.group(2)), "Minute": int(m.group(3))}
+    if m.group(1) != "*":
+        c["Day"] = int(m.group(1))
+    return c
+
+for t in sorted(glob.glob(f"{L}/config/systemd/*.timer")):
+    name = os.path.basename(t)[:-6]; label = f"dev.lonca.{name}"; dst = f"{A}/{label}.plist"
+    subprocess.run(["launchctl", "bootout", f"gui/{UID}/{label}"], capture_output=True)
+    if os.path.exists(dst):
+        os.remove(dst)
+    if sys.argv[1] == "uninstall" or name in skip:
+        continue
+    tk, sk = keys(t), keys(t[:-6] + ".service")
+    cmd = sk["ExecStart"].replace("%h", H).replace("%%", "%")
+    args = shlex.split(cmd)
+    p = {"Label": label, "ProgramArguments": args, "StandardOutPath": f"{LOGS}/{name}.log", "StandardErrorPath": f"{LOGS}/{name}.log",
+         "EnvironmentVariables": {"PATH": f"{H}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", "HOME": H}}
+    if "OnUnitActiveSec" in tk:
+        p["StartInterval"] = seconds(tk["OnUnitActiveSec"])
+    else:
+        p["StartCalendarInterval"] = calendar(tk["OnCalendar"])
+    os.makedirs(A, exist_ok=True); os.makedirs(LOGS, exist_ok=True)
+    with open(dst, "wb") as f:
+        plistlib.dump(p, f)
+    r = subprocess.run(["launchctl", "bootstrap", f"gui/{UID}", dst], capture_output=True, text=True)
+    print(f"  timer on: {name}" if r.returncode == 0 else f"  timer {name}: launchctl said {r.stderr.strip()}")

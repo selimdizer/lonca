@@ -54,14 +54,14 @@ force-push, or grant themselves that permission.
 
 | Tool | Used for | If it's missing |
 |---|---|---|
-| Claude Code, git, gh, Python ≥ 3.11 | everything | required |
+| Claude Code, git, gh, Python ≥ 3.9 (standard library only; macOS ships it) | everything | required |
 | [Herdr](https://herdr.dev) + herdr-core (`hc`) | visible lanes and their messages | `lane` refuses to start: no hidden agents, by design |
 | Codex CLI | cross-family review, backend lanes | everything runs on Claude |
 | omp | cheap reading and review lanes, Copilot models | reading runs on Claude Explore / Sonnet |
 | [Kanzo](https://github.com/emanuele-em/kanzo) | the board | card steps are skipped |
 | [deja](https://github.com/vshulcz/deja-vu) | search across past sessions | the lead asks you instead |
 
-Linux gets systemd user timers. On macOS the scripts work, but you schedule the timers yourself (cron or launchd).
+Timers run as systemd user units on Linux and as launchd agents on macOS; the installer sets up whichever you have.
 
 ## Install
 

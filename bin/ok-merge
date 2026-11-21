@@ -10,6 +10,6 @@ d=$HOME/.local/state/lonca/merge-grants; mkdir -p "$d"
 for a in "$@"; do
   pr=${a##*#}
   case $pr in ''|*[!0-9]*) echo "ok-merge: bad PR '$a'" >&2; exit 2 ;; esac
-  echo "$(date -Is) $fast" > "$d/$(printf '%s' "$nwo" | tr '/' '_')_$pr"
+  echo "$(date -Iseconds) $fast" > "$d/$(printf '%s' "$nwo" | tr '/' '_')_$pr"
   echo "ok: $nwo#$pr may be merged once by merge-pr (24 h)${fast:+, without waiting for running CI}"
 done

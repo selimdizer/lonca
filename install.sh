@@ -24,8 +24,9 @@ if [ $UN = 1 ]; then
   if command -v systemctl >/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
     for t in "$SRC"/config/systemd/*.timer; do systemctl --user disable --now "$(basename "$t")" >/dev/null 2>&1 || true; done
   fi
+  [ "$(uname)" = Darwin ] && python3 "$SRC/bin/launchd-units" uninstall
   for d in "$HOME/.claude/skills" "$HOME/.agents/skills" "$HOME/.claude/agents" "$HOME/.local/bin" "$HOME/.config/systemd/user" \
-           "$HOME/.codex" "$HOME/.codex/rules" "$HOME/.omp/agent" "$HOME/.omp/agent/extensions" "$HOME/.config/opencode"; do
+           "$HOME/.codex" "$HOME/.codex/rules" "$HOME/.omp/agent" "$HOME/.omp/agent/extensions" "$HOME/.config/opencode" "$HOME/Library/LaunchAgents"; do
     for f in "$d"/* "$d"/.[!.]*; do
       [ -L "$f" ] || continue
       case $(readlink -f "$f" 2>/dev/null) in "$SRC"/*|"$SRC") rm "$f" ;; esac
@@ -152,7 +153,12 @@ if command -v systemctl >/dev/null && systemctl --user show-environment >/dev/nu
       systemctl --user enable --now "$n.timer" >/dev/null 2>&1 && say "  timer on: $n"
     done
   fi
+elif [ "$(uname)" = Darwin ]; then
+  if ask "Install the timers as launchd agents (lane-watch, kanzo-sync, ai-cleanup, memory-review, ai-memory-commit, …)?"; then
+    miss=; command -v kanzo >/dev/null || miss="kanzo-sync kanzo-backup monthly-card"; command -v deja >/dev/null || miss="$miss deja-index"
+    python3 "$L/bin/launchd-units" install $miss
+  fi
 else
-  say "No systemd user session: run bin/lane-watch, bin/kanzo-sync, bin/ai-cleanup, bin/memory-review from cron/launchd yourself."
+  say "No systemd or launchd: run bin/lane-watch, bin/kanzo-sync, bin/ai-cleanup, bin/memory-review from cron yourself."
 fi
 say "Lonca is set up. Start a lead in a project folder:  claude --agent lead"

@@ -6,7 +6,16 @@ Like mise/EditorConfig/direnv: a lane worktree counts as its main repo; from the
 Its `name = "..."` names the project (memory group, Kanzo slug); default: the folder's name in lower case.
 No marker: the git repo is the project. LONCA_PROJECT overrides the name.
 """
-import os, subprocess, sys, tomllib
+import os, re, subprocess, sys
+
+def marker_name(path):
+    try:
+        import tomllib  # Python 3.11+
+        with open(path, "rb") as f:
+            return tomllib.load(f).get("name")
+    except ImportError:  # older Python (macOS ships 3.9): the one key Lonca reads
+        m = re.search(r'^\s*name\s*=\s*["\']([^"\']+)["\']', open(path).read(), re.M)
+        return m.group(1) if m else None
 
 start = os.path.realpath(sys.argv[1] if len(sys.argv) > 1 else os.getcwd())
 r = subprocess.run(["git", "-C", start, "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, text=True)
@@ -16,8 +25,7 @@ d = repo or start
 while True:
     for n in ("lonca.toml", ".lonca.toml"):
         if os.path.isfile(os.path.join(d, n)):
-            with open(os.path.join(d, n), "rb") as f:
-                name = tomllib.load(f).get("name") or os.path.basename(d).lower()
+            name = marker_name(os.path.join(d, n)) or os.path.basename(d).lower()
             print(f"{os.environ.get('LONCA_PROJECT') or name}\t{d}")
             sys.exit(0)
     if d == "/":

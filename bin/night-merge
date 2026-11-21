@@ -12,7 +12,7 @@ dry=0; [ "${1:-}" = --dry-run ] && { dry=1; shift; }
 [ $# -eq 4 ] || { echo "usage: night-merge [--dry-run] <repo-dir> <pr-number> <run-dir> <lane>" >&2; exit 2; }
 repo=$(realpath "$1") pr=$2 run=$3 lane=$4
 N=$HOME/.cache/ai-runs/night
-no() { echo "night-merge: refused PR #$pr: $*" >&2; echo "$(date -Is) refused $repo #$pr: $*" >> "$N/log" 2>/dev/null || true; exit 1; }
+no() { echo "night-merge: refused PR #$pr: $*" >&2; echo "$(date -Iseconds) refused $repo #$pr: $*" >> "$N/log" 2>/dev/null || true; exit 1; }
 # the real gh, not the guard shim
 GH=$(PATH=$(printf '%s' "$PATH" | tr ':' '\n' | grep -v "lonca/shims" | paste -sd: -) command -v gh)
 
@@ -48,7 +48,7 @@ G=$HOME/.local/state/lonca/merge-grants/$(printf '%s' "$nwo" | tr '/' '_')_$pr
 fast=0
 if [ $day = 1 ]; then
   [ -f "$G" ] || no "no owner grant: the owner runs  ok-merge $nwo#$pr"
-  [ $(( $(date +%s) - $(stat -c %Y "$G") )) -lt 86400 ] || no "owner grant older than 24 h; ask again"
+  [ $(( $(date +%s) - $(date -r "$G" +%s) )) -lt 86400 ] || no "owner grant older than 24 h; ask again"
   grep -q fast "$G" && fast=1   # ok-merge --fast: still-running CI does not block, a failed check still does
 fi
 err=$(printf '%s' "$info" | FAST=$fast python3 -I -c '
@@ -71,6 +71,6 @@ printf '%s' "$info" | python3 -I -c 'import json,sys;p=json.load(sys.stdin);prin
 [ $dry = 1 ] && { echo "merge: dry run OK for #$pr ($repo -> $base, $( [ $day = 1 ] && echo "day, owner said merge" || echo "night file $proj.json"))"; exit 0; }
 (cd "$repo" && "$GH" pr merge "$pr" --merge --match-head-commit "$head") || no "gh merge failed"
 [ $day = 1 ] && rm -f "$G"
-echo "$(date -Is) merged [$proj] $repo #$pr -> $base (lane $lane)" >> "$N/log"
+echo "$(date -Iseconds) merged [$proj] $repo #$pr -> $base (lane $lane)" >> "$N/log"
 "$HOME/lonca/bin/kanzo-sync" >/dev/null 2>&1 || true   # its card -> done now, not at the next timer run
 echo "night-merge: merged #$pr into $base"

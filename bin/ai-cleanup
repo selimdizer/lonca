@@ -32,6 +32,9 @@ def run(*a, cwd=None):
     return subprocess.run(a, cwd=cwd, capture_output=True, text=True)
 
 def in_use_paths():
+    """Paths open, used as cwd, or named by any process; None where /proc is missing (macOS): then nothing counts as free."""
+    if not Path("/proc").is_dir():
+        return None
     used = set()
     for p in Path("/proc").iterdir():
         if not p.name.isdigit():
@@ -56,6 +59,8 @@ USED = in_use_paths()
 
 def busy(path):
     s = str(path)
+    if USED is None:
+        return True
     return any(u == s or u.startswith(s + "/") for u in USED)
 
 def touched_within(path, hours):
@@ -119,7 +124,7 @@ for repo in repos:
                         run("hc", "kill", t["address"])
             if not DRY:
                 time.sleep(3)
-                USED.clear(); USED.update(in_use_paths())
+                USED = in_use_paths()
         if busy(path):
             continue
         if run("git", "status", "--porcelain", cwd=path).stdout.strip():
@@ -153,7 +158,10 @@ for base in (Path("/tmp"), Path("/var/tmp"), Path("/var/tmp/agents")):
             continue
         if st.st_uid != UID or not d.is_dir() or d.is_symlink() or d.name.startswith(SKIP_TMP):
             continue
-        if (d / ".git").is_file() or busy(d) or touched_within(d, AGE_H):
+        try:
+            if busy(d) or (d / ".git").is_file() or touched_within(d, AGE_H):
+                continue
+        except OSError:   # unreadable (another program's private dir): not ours to judge
             continue
         remove(d, f"untouched {AGE_H}h, not in use")
 

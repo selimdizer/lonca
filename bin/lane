@@ -19,7 +19,7 @@ ro=0; [ "${1:-}" = --read ] && { ro=1; shift; }
 [ $# -eq 5 ] || [ $# -eq 6 ] || { echo "usage: lane <repo-dir> <branch> <agent> <brief-file> <result-file> [base-branch]" >&2; exit 2; }
 repo=$1 branch=$2 agent=$3 brief=$(realpath "$4") result=$5 base=${6:-}
 command -v hc >/dev/null 2>&1 && hc server status >/dev/null 2>&1 || { echo "lane: herdr-core (hc) is not running; not starting a lane" >&2; exit 1; }
-mkdir -p "$(dirname "$result")"; result=$(realpath -m "$result")
+mkdir -p "$(dirname "$result")"; result="$(cd "$(dirname "$result")" && pwd -P)/$(basename "$result")"
 prompt="Read the brief at $brief and do the lane it describes. When you are done, or stopped, write your final report (at most 30 lines, with a Not verified section, ending with a Lessons section: facts a future session in this project would need, such as a gotcha, a command that works or a decision you learned, or none) to $result and end. Do not write to ~/ai-memory yourself; the lead saves your lessons."
 # Project skills live in the project root (the folder with lonca.toml, not a team repo): point the lane at them
 proot=$("$HOME/lonca/bin/lonca-project" "$repo" 2>/dev/null | cut -f2) || proot=
@@ -72,7 +72,7 @@ fi
 
   # hc names are unique among live terminals: repo prefix + branch, then a short hash if it had to be cut
 name=$(printf '%s-%s' "$(basename "$(realpath "$repo")" | cut -c1-8)" "$branch" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_-' '-')
-[ ${#name} -gt 32 ] && name="$(printf '%s' "$name" | cut -c1-25)-$(printf '%s' "$rkey/$branch" | sha1sum | cut -c1-6)"
+[ ${#name} -gt 32 ] && name="$(printf '%s' "$name" | cut -c1-25)-$(printf '%s' "$rkey/$branch" | { sha1sum 2>/dev/null || shasum; } | cut -c1-6)"
   # Started from a lead inside the Herdr app: open the lane as its own tab in the lead's space
   space=$( [ -n "${HC_TERMINAL_ID:-}" ] && hc get "$HC_TERMINAL_ID" --json 2>/dev/null | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("labels",{}).get("herdr.space",""))' 2>/dev/null || true)
   # Started by a lead in an hc terminal: the lane reports DONE and asks questions there; the lead answers with hc send
