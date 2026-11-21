@@ -17,6 +17,8 @@ Merging sized to the risk, approved in two words (decided after a three-family c
   it was approved.
 - Night mode starts the same way: the lead runs `night-on --request …` and the owner answers `başla <code>`; the merge
   cap can be `unlimited`. The morning report also goes to the lead's session.
+- `lane-watch` closes a lane that wrote its report 10+ min ago and left nothing behind (no commits, no changes: review,
+  council or test lanes), and removes its worktree and never-pushed branch. Before, such lanes stayed open forever.
 
 ## [0.3.2] - 2026-11-22
 
