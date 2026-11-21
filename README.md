@@ -56,8 +56,7 @@ force-push, or grant themselves that permission.
 |---|---|---|
 | Claude Code, git, gh, Python ≥ 3.9 (standard library only; macOS ships it) | everything | required |
 | [Herdr](https://herdr.dev) + herdr-core (`hc`) | visible lanes and their messages | `lane` refuses to start: no hidden agents, by design |
-| Codex CLI | cross-family review, backend lanes | everything runs on Claude |
-| omp | cheap reading and review lanes, Copilot models | reading runs on Claude Explore / Sonnet |
+| Other harnesses, any you like: Codex, omp, OpenCode, Gemini CLI, Antigravity, Copilot CLI, Amp, Grok, Crush, goose, pi | lanes on other model families (cross-family review needs at least one) | everything runs on Claude |
 | [Kanzo](https://github.com/emanuele-em/kanzo) | the board | card steps are skipped |
 | [deja](https://github.com/vshulcz/deja-vu) | search across past sessions | the lead asks you instead |
 
@@ -74,7 +73,8 @@ From inside Herdr you can instead run `herdr plugin install selimdizer/lonca` an
 
 The installer is safe to run again, and it backs up every file it changes as `*.lonca-bak`. It does the following:
 
-- links the skills and agents into Claude Code, Codex and omp;
+- asks which of the agent harnesses it found should get Lonca (you choose; Claude Code always does) and links the
+  rules and skills into each one's own folders;
 - puts the guild rules (`AGENTS.md`) in front of every harness;
 - adds Lonca's deny rules and hooks to `~/.claude/settings.json` and `~/.codex/hooks.json`;
 - sets the git hooks;
@@ -132,6 +132,10 @@ skills go in `<project root>/.claude/skills/`, next to the repos rather than ins
 
 **Git config.** Set `git config lonca.toolNamesOk true` in a repo whose subject is AI tools (Lonca itself is one). Tool
 names are then allowed in that repo's commits and PRs; co-author lines are still rejected.
+
+**Lane agents:** `claude:<role>`, `codex:<model>[:<effort>]`, `omp:<provider/model>`, `opencode:<provider/model>`,
+`copilot:<model>`, `gemini:<model>`, `agy:<model>` (Antigravity), `pi:<provider/model>`, `grok:<model>`, `goose:<model>`.
+Crush and Amp take no starting prompt, so they get the rules and skills but don't run lanes.
 
 ## Herdr plugin
 
