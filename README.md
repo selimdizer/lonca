@@ -45,7 +45,7 @@ rails, not a sandbox: lanes run with full permissions as your user, so a determi
 ## What it does
 
 - 🧵 **Lanes you can see.** `lane` starts an agent in its own worktree as a [Herdr](https://herdr.dev) terminal. It reports back with `DONE: <outcome>` or asks `QUESTION: …`, and `lane-watch` tells the lead when one goes quiet.
-- 🔏 **One way to merge, sized to the risk.** `merge-pr` merges only the PR's *exact* head commit, after CI and evidence from verify, review and security for that commit. A script reads the diff and sets the risk tier (docs/tests = low, auth/payments/migrations/CI/dependencies = high, the rest medium); low needs fewer checks, and you can let low-tier PRs merge themselves per project. Everything else waits for your `evet <code>` in chat.
+- 🔏 **One way to merge, sized to the risk.** `merge-pr` merges only the PR's *exact* head commit, after CI and evidence from verify, review and security for that commit. A script reads the diff and sets the risk tier (docs/tests = low, auth/payments/migrations/CI/dependencies = high, the rest medium); low needs fewer checks, and you choose per project which tiers merge themselves (none, low, medium or all). Everything else waits for your `evet <code>` in chat.
 - 🌙 **Night mode.** The lead asks every question up front and prepares tonight's limits (end time, merge cap or unlimited, which repos). You answer `başla <code>` and go to bed; the lead works through the tagged cards, merges green PRs within those limits, and leaves you the night's summary and open questions for the morning.
 - 🧠 **Memory you only fill once.** `~/ai-memory` is plain Markdown that every agent loads at start, with one group per project. Agents save decisions as they go; an optional background review catches the ones they missed.
 - 📋 **A board that keeps itself current.** With [Kanzo](https://github.com/emanuele-em/kanzo), cards move by themselves: *doing* when a lane starts, *review* when its PR opens, *done* when it merges. Issues and PRs your account opens in a project's linked repos get a card too.
@@ -124,8 +124,8 @@ that holds them (anywhere on disk). It is a one-line file:
 
 ```toml
 name = "shop"              # memory group ~/ai-memory/shop/ and Kanzo project slug; default: the folder's name
-auto_merge_low = true      # optional: low-tier PRs (docs/tests) merge after their checks without asking
-auto_merge_daily = 10      # optional: at most this many auto-merges a day
+auto_merge = "low"         # optional: merge PRs up to this tier without asking: off | low | medium | all
+auto_merge_daily = 10      # optional: at most this many auto-merges a day ("unlimited" for no cap)
 min_tier = "medium"        # optional: nothing in this project counts as low
 high_paths = ["src/pay/*"] # optional: more paths that make a PR high tier
 ```
@@ -194,8 +194,9 @@ lead out of the code leaves its context free for planning and checking, and ever
 **Why does review use a different model family?** A model tends to approve its own habits. So Claude's code goes to Codex
 for review, and Codex and omp code goes to a Claude reviewer.
 
-**Isn't approving every PR slow?** Low-risk PRs can merge themselves (`auto_merge_low`), and the rest take two words
-in chat. The code proves the answer came from you, for that PR's current state: a lane message or an old "yes" can't
+**Isn't approving every PR slow?** PRs up to the tier you choose merge themselves (`auto_merge`, per project or as a
+default in `~/.config/lonca/config.toml`), and the rest take two words in chat; PRs that are ready together share one
+code. The code proves the answer came from you, for that PR's current state: a lane message or an old "yes" can't
 merge anything. These are guard rails for honest mistakes, not a sandbox against a hostile agent.
 
 **Do I need every tool?** No: see [Requirements](#requirements). Herdr is the only one lanes insist on, because you can't

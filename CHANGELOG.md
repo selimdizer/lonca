@@ -11,9 +11,10 @@ Merging sized to the risk, approved in two words (decided after a three-family c
   tests, at most 10 files and 100 lines. Medium: the rest. Projects can raise the floor (`min_tier`) or add
   `high_paths`; the lead can only raise a tier.
 - Evidence by tier: PERF required for high, and for medium when a perf check ran; low ignores it.
-- `merge-pr` approvals: an `ok-merge` grant; low-tier PRs merge by themselves where `lonca.toml` says
-  `auto_merge_low = true` (capped by `auto_merge_daily`, default 10); otherwise it prints a code bound to the PR's
-  head for one hour, and the owner approves with `evet <code>` in chat. Every merge is logged with its tier and how
+- `merge-pr` approvals: an `ok-merge` grant; auto-merge up to the tier set by `auto_merge = "off|low|medium|all"`
+  (per project in `lonca.toml`, default in `~/.config/lonca/config.toml`; capped by `auto_merge_daily`, default 10);
+  otherwise it prints a code bound to the PR's head for one hour, and the owner approves with `evet <code>` in chat.
+  PRs asked within five minutes share one code, so a batch is one answer. Every merge is logged with its tier and how
   it was approved.
 - Night mode starts the same way: the lead runs `night-on --request …` and the owner answers `başla <code>`; the merge
   cap can be `unlimited`. The morning report also goes to the lead's session.
