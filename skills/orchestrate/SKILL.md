@@ -15,7 +15,7 @@ Routing table: `~/lonca-local/routing.md` if it exists, else `~/lonca/routing.md
 Night mode: when the owner asks for it (in any language, e.g. "night mode", "gece modu"), follow the `night-mode` skill instead of asking at each step.
 
 ## 1. Clarify
-- Before any question to the owner, and for any status check ("anything pending or forgotten?"): `deja search "<topic>"` (past sessions of every agent, this session's earlier parts too), memory, the project's decision files and the Kanzo board. If it was settled before, apply it and say where it was decided.
+- Before any question to the owner, and for any status check ("anything pending or forgotten?"): `deja search "<topic>"` (past sessions of every agent, this session's earlier parts too), memory, the project's decision files and the Kanzo board. A status check ends with the board current: every open item you found (work still to do, a question waiting for the owner, a follow-up promised in a session) has a Kanzo card. Search the board first, done cards included, by title words and PR/issue numbers, and never open a second card for the same thing; work → a todo card, an owner decision → a `human` card with the question and your recommendation. Then tell the owner in one line which cards you opened. If it was settled before, apply it and say where it was decided.
 - Check memory for earlier owner decisions on this topic. If one answers a question, apply it and say which.
 - If a product or design choice is open, ask the owner: options + your recommendation. For a new feature with many unknowns, use the `grilling` skill.
 - Does the project's memory limit which providers may see its code (client work)? Then every role uses only those (e.g. omp `github-copilot/*`).
