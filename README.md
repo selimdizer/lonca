@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🏛️ Lonca
+<img src="assets/logo-wordmark.svg" alt="Lonca" width="320">
 
 **A guild for your coding agents.**
 One lead plans and inspects, apprentices build in their own workshops, and nothing reaches the bazaar without the master's seal.
