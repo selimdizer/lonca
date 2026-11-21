@@ -3,6 +3,10 @@
 All notable changes to Lonca. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] - 2026-11-22
+
+- The guard shim and `ai-trace-gh` find Lonca from their own path, so they work from any checkout (CI has no `~/lonca`).
+
 ## [0.3.0] - 2026-11-22
 
 Safer defaults for new users; the behaviour you had is one setting away.
@@ -44,6 +48,7 @@ First public release.
 - `kanzo-sync`, `lane-watch`, `ai-cleanup` and their timers.
 - `install.sh` (with `--uninstall`) and the Herdr plugin.
 
+[0.3.1]: https://github.com/selimdizer/lonca/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/selimdizer/lonca/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/selimdizer/lonca/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/selimdizer/lonca/releases/tag/v0.1.0
