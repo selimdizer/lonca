@@ -1,4 +1,5 @@
 archive/
 model-log.jsonl
 __pycache__/
+# the maintainer's own project marker for this checkout
 .lonca.toml

@@ -1,6 +1,6 @@
 ---
 name: dispatch
-description: Exact commands to start another agent CLI (Claude, Codex, omp, opencode, Copilot, Gemini, Antigravity, pi, Grok, goose) as a lane or headless and collect its result. Use when your brief allows you to hand work to another agent or model, or when you are the lead routing work.
+description: Exact commands to start another agent CLI (Claude, Codex, omp, opencode, Copilot, Antigravity, pi, Grok) as a lane or headless and collect its result. Use when your brief allows you to hand work to another agent or model, or when you are the lead routing work.
 ---
 
 # Dispatching work to other agents
@@ -24,11 +24,9 @@ Lane agents:
 - `omp:<provider/model>` — oh-my-pi, any provider it knows; `omp:github-copilot/<model>` keeps its helper models on Copilot too.
 - `opencode:<provider/model>` — opencode; `lane` presses Enter to submit the prefilled prompt.
 - `copilot:<model>` — GitHub Copilot CLI; `lane` answers its folder-trust prompt for the session.
-- `gemini:<model>` — Gemini CLI.
 - `agy:<model>` — Antigravity CLI.
 - `pi:<provider/model>` — pi.
 - `grok:<model>` — Grok CLI.
-- `goose:<model>` — goose; flags taken from its docs, not run yet: check the first lane's screen.
 
 Read-only questions, code reading, research: `lane --read <repo-dir> <short-name> omp:<provider/model> <brief> <result>` — no worktree, read/grep/glob only, its answer is the report and DONE comes by itself. A review, audit or test check that needs commands: a normal lane on a fresh copy of the PR branch (`lane <repo-dir> review/<lane> <agent> <brief> <result> <pr-branch>`); the brief says "do not edit, commit or push". Several parts of one sweep = several lanes. Close finished lanes with `env -u CLAUDECODE hc kill <name>` after reading the report. omp work never runs as a hidden background command: the owner watches it in Herdr.
 

@@ -11,7 +11,7 @@ description: Prove a lane is done in any repo by running the same checks its CI 
 4. Added files: `git status --porcelain --ignored` must show no new `!!` that the code needs (ignored files pass locally, fail in CI).
 5. Exercise the change for real when it is user-facing (run the CLI, hit the endpoint, open the page).
 6. Leave the worktree as you found it: run Python with `PYTHONDONTWRITEBYTECODE=1`; remove untracked caches your runs created (`git status --porcelain` before/after).
-7. Move (Sui): use the Sui version the repo's CI pins — `~/lonca/bin/sui` (also in the shims PATH) picks it from `SUI_VERSION` in `.github/workflows`; a newer toolchain rewrites `Move.lock` revs. A stale lock (manifest changed, lock not) is rewritten by any build, CI's version too. Unless the lane changed dependencies on purpose, `git diff --quiet -- '*Move.lock'` must hold after your runs; restore any rewritten lock with `git checkout -- <file>` and report a stale lock to the owner.
+7. Move (Sui): use the Sui version the repo's CI pins (`SUI_VERSION` in `.github/workflows`); with Lonca's Sui extra (`install.sh --sui`) the `sui` on a lane's PATH already picks it. A newer toolchain rewrites `Move.lock` revs: unless the lane changed dependencies on purpose, `git diff --quiet -- '*Move.lock'` must hold after your runs; restore a rewritten lock with `git checkout -- <file>` and report a stale lock.
 8. Anything you could not run (missing service, credentials, platform) is FAIL / not verified, never OK.
 
 Report: per check, the command → pass/fail with key output lines, then "Not verified".

@@ -20,6 +20,19 @@ jobs:
           for f in $(git ls-files); do
             if [ -f "$f" ] && [ ! -L "$f" ] && head -1 "$f" | grep -q python3; then python3 -m py_compile "$f"; fi
           done
+      - name: Guard shim cases
+        run: sh shims/check.sh
+      - name: ok-merge grants (several repos, bare numbers, bad input)
+        run: |
+          H=$(mktemp -d); G=$H/.local/state/lonca/merge-grants
+          HOME=$H sh bin/ok-merge --fast a/b#1 #2 c/d#3
+          test -f $G/a_b_1 && test -f $G/a_b_2 && test -f $G/c_d_3 && test ! -e $G/a_b_3 && grep -q fast $G/c_d_3
+          ! HOME=$H sh bin/ok-merge a/b#1 x
+      - name: AI-trace check (default and strict)
+        run: |
+          echo "add anthropic client" | bin/ai-trace-check
+          ! printf 'x\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n' | bin/ai-trace-check
+          ! echo "add anthropic client" | GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=lonca.strictTraces GIT_CONFIG_VALUE_0=true bin/ai-trace-check
       - name: Install and uninstall in an empty home
         run: |
           H=$(mktemp -d); git config --global user.name ci; git config --global user.email ci@localhost

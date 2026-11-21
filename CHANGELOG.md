@@ -3,13 +3,31 @@
 All notable changes to Lonca. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-11-22
+
+Safer defaults for new users; the behaviour you had is one setting away.
+- AI-trace check refuses attribution lines only; the tool-name ban is `git config --global lonca.strictTraces true`.
+- `ai-cleanup` clears only Lonca's own temp dir unless `cleanup_tmp_dirs` in `~/.config/lonca/config.toml` names more.
+- Opt-in: background memory review (`--memory-review`), Claude sessions' TMPDIR (`--agent-tmpdir`), Sui Move extra
+  (`--sui`, now in `extras/sui/`). Lanes always use Lonca's per-user temp dir (`tmpdir` setting).
+- Git hooks: every hook name Lonca doesn't use runs the repo's own `.git/hooks/<name>`; `pre-push` also protects the
+  remote's default branch.
+- `merge-pr` merges with the method the repo allows (or `lonca.mergeMethod`); messages name the command you ran.
+- `ok-merge` takes several repos in one line (`a/b#1 #2 c/d#3`); a bare `#N` belongs to the repo before it.
+- Guard shim also blocks `push +ref`, branch deletes by push, and `-c core.hooksPath=…`; more deny rules (grant files,
+  `push --delete`); the main-push rule no longer catches branches that only start with `main`.
+- Lanes: TMPDIR reaches the terminal (hc passes no environment), Claude's and Copilot's folder-trust prompts are
+  answered, `--read` lanes fail when omp fails, the lane record is written as JSON, `lane --help`.
+- Generic `routing.md` template; your own goes in `~/lonca-local/routing.md` (example in `examples/`).
+- Skills and agents: consistent DONE format, base branch instead of `main`, optional scanners, full PR template.
+- Removed: Gemini CLI and goose (Antigravity replaces Gemini CLI); personal configs and the gopls wrapper.
+
 ## [0.2.0] - 2026-11-21
 
 - macOS: timers as launchd agents; portable `date`/`stat`/`realpath`/hash; Python 3.9+ (no `tomllib` needed).
 - The installer asks which harnesses get Lonca: Codex, omp, OpenCode, Antigravity, Copilot CLI, Amp, Grok,
   Crush, pi (Claude Code always).
 - Lane agents for OpenCode, Copilot, Antigravity, pi and Grok (each run end to end).
-- Projects found by `lonca.toml` (walk up from the repo, like mise/EditorConfig); no fixed projects folder.
 - Logo, icons and social preview.
 
 ## [0.1.0] - 2026-11-21
@@ -25,3 +43,7 @@ First public release.
 - Shared memory template, project discovery with `lonca.toml`, background memory review.
 - `kanzo-sync`, `lane-watch`, `ai-cleanup` and their timers.
 - `install.sh` (with `--uninstall`) and the Herdr plugin.
+
+[0.3.0]: https://github.com/selimdizer/lonca/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/selimdizer/lonca/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/selimdizer/lonca/releases/tag/v0.1.0

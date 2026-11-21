@@ -1,5 +1,5 @@
 [Unit]
-Description=Hermes-style memory review: save the owner's new decisions to ~/ai-memory (Sonnet) - ~/lonca/bin/memory-review
+Description=Background memory review: save the owner's new decisions to ~/ai-memory (Sonnet) - ~/lonca/bin/memory-review
 
 [Service]
 Type=oneshot

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""memory-review [--since-hours N] [--dry-run]: Hermes-style background memory review (timer, every 2 h).
+"""memory-review [--since-hours N] [--dry-run]: background memory review (timer, every 2 h).
 
 Collects the owner's messages from all Claude sessions since the last review (state file), each with a short
 excerpt of the agent turn it answered, and lets Sonnet save durable decisions into ~/ai-memory following

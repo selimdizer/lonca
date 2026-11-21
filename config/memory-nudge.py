@@ -1,6 +1,6 @@
 """Codex/omp Stop hook: ask once per turn whether something should be saved to ~/ai-memory.
 
-Claude saves on its own (native auto memory); Codex did not in the 2026-11-20 test, hence this nudge.
+Claude saves memories on its own; Codex tends not to, hence this nudge at the end of a turn.
 """
 import json
 import sys
