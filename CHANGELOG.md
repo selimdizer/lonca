@@ -6,9 +6,9 @@ versions follow [Semantic Versioning](https://semver.org/).
 ## [0.2.0] - 2026-11-21
 
 - macOS: timers as launchd agents; portable `date`/`stat`/`realpath`/hash; Python 3.9+ (no `tomllib` needed).
-- The installer asks which harnesses get Lonca: Codex, omp, OpenCode, Gemini CLI, Antigravity, Copilot CLI, Amp, Grok,
-  Crush, goose, pi (Claude Code always).
-- Lane agents for OpenCode, Copilot, Gemini, Antigravity, pi, Grok and goose.
+- The installer asks which harnesses get Lonca: Codex, omp, OpenCode, Antigravity, Copilot CLI, Amp, Grok,
+  Crush, pi (Claude Code always).
+- Lane agents for OpenCode, Copilot, Antigravity, pi and Grok (each run end to end).
 - Projects found by `lonca.toml` (walk up from the repo, like mise/EditorConfig); no fixed projects folder.
 - Logo, icons and social preview.
 

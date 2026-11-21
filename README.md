@@ -56,7 +56,7 @@ force-push, or grant themselves that permission.
 |---|---|---|
 | Claude Code, git, gh, Python ≥ 3.9 (standard library only; macOS ships it) | everything | required |
 | [Herdr](https://herdr.dev) + herdr-core (`hc`) | visible lanes and their messages | `lane` refuses to start: no hidden agents, by design |
-| Other harnesses, any you like: Codex, omp, OpenCode, Gemini CLI, Antigravity, Copilot CLI, Amp, Grok, Crush, goose, pi | lanes on other model families (cross-family review needs at least one) | everything runs on Claude |
+| Other harnesses, any you like: Codex, omp, OpenCode, Antigravity, Copilot CLI, Amp, Grok, Crush, pi | lanes on other model families (cross-family review needs at least one) | everything runs on Claude |
 | [Kanzo](https://github.com/emanuele-em/kanzo) | the board | card steps are skipped |
 | [deja](https://github.com/vshulcz/deja-vu) | search across past sessions | the lead asks you instead |
 
@@ -134,7 +134,7 @@ skills go in `<project root>/.claude/skills/`, next to the repos rather than ins
 names are then allowed in that repo's commits and PRs; co-author lines are still rejected.
 
 **Lane agents:** `claude:<role>`, `codex:<model>[:<effort>]`, `omp:<provider/model>`, `opencode:<provider/model>`,
-`copilot:<model>`, `gemini:<model>`, `agy:<model>` (Antigravity), `pi:<provider/model>`, `grok:<model>`, `goose:<model>`.
+`copilot:<model>`, `agy:<model>` (Antigravity), `pi:<provider/model>`, `grok:<model>`.
 Crush and Amp take no starting prompt, so they get the rules and skills but don't run lanes.
 
 ## Herdr plugin

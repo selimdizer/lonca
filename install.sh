@@ -26,7 +26,7 @@ if [ $UN = 1 ]; then
   fi
   [ "$(uname)" = Darwin ] && python3 "$SRC/bin/launchd-units" uninstall
   for d in "$HOME/.claude/skills" "$HOME/.agents/skills" "$HOME/.claude/agents" "$HOME/.local/bin" "$HOME/.config/systemd/user" \
-           "$HOME/.codex" "$HOME/.codex/rules" "$HOME/.omp/agent" "$HOME/.omp/agent/extensions" "$HOME/.config/opencode" "$HOME/.gemini" "$HOME/.gemini/skills" "$HOME/.copilot" "$HOME/.config/crush" "$HOME/.pi/agent" "$HOME/.config/amp" "$HOME/.config/agents/skills" "$HOME/.grok" "$HOME/.config/goose" "$HOME/Library/LaunchAgents"; do
+           "$HOME/.codex" "$HOME/.codex/rules" "$HOME/.omp/agent" "$HOME/.omp/agent/extensions" "$HOME/.config/opencode" "$HOME/.gemini" "$HOME/.gemini/skills" "$HOME/.copilot" "$HOME/.config/crush" "$HOME/.pi/agent" "$HOME/.config/amp" "$HOME/.config/agents/skills" "$HOME/.grok" "$HOME/Library/LaunchAgents"; do
     for f in "$d"/* "$d"/.[!.]*; do
       [ -L "$f" ] || continue
       case $(readlink -f "$f" 2>/dev/null) in "$SRC"/*|"$SRC") rm "$f" ;; esac
@@ -72,9 +72,8 @@ done
 # 3. Skills, agents, rules, commands, hooks
 # Other harnesses: you choose which ones get Lonca (rules + skills; Claude Code always does)
 found=
-for h in codex omp opencode gemini agy copilot amp grok crush goose pi; do
+for h in codex omp opencode agy copilot amp grok crush pi; do
   command -v $h >/dev/null || continue
-  [ $h = goose ] && goose --help 2>&1 | grep -q "DBSTRING" && continue   # pressly/goose (DB migrations), not the agent
   found="$found $h"
 done
 pick=$found
@@ -88,11 +87,9 @@ for h in $pick; do
     codex)    link "$L/AGENTS.md" "$HOME/.codex/AGENTS.md"; link "$L/config/codex-rules/default.rules" "$HOME/.codex/rules/default.rules" ;;
     omp)      link "$L/AGENTS.md" "$HOME/.omp/agent/RULES.md"; link "$L/config/omp-guard" "$HOME/.omp/agent/extensions/lonca-guard" ;;
     opencode) link "$L/AGENTS.md" "$HOME/.config/opencode/AGENTS.md" ;;
-    gemini)   link "$L/AGENTS.md" "$HOME/.gemini/AGENTS.md" ;;            # + context.fileName below
     agy)      link "$L/AGENTS.md" "$HOME/.gemini/AGENTS.md"; sk="$sk $HOME/.gemini/skills" ;;   # Antigravity CLI
     amp)      link "$L/AGENTS.md" "$HOME/.config/amp/AGENTS.md"; sk="$sk $HOME/.config/agents/skills" ;;
     grok)     link "$L/AGENTS.md" "$HOME/.grok/AGENTS.md" ;;               # xAI Grok Build; global file name from docs, unverified
-    goose)    link "$L/AGENTS.md" "$HOME/.config/goose/AGENTS.md" ;;
     copilot)  link "$L/AGENTS.md" "$HOME/.copilot/copilot-instructions.md" ;;
     crush)    link "$L/AGENTS.md" "$HOME/.config/crush/CRUSH.md" ;;
     pi)       link "$L/AGENTS.md" "$HOME/.pi/agent/AGENTS.md" ;;
@@ -105,7 +102,7 @@ for s in "$L"/skills/*/ $HOME/lonca-local/skills/*/; do
   [ -f "$s/SKILL.md" ] || continue
   n=$(basename "$s")
   link "$s" "$HOME/.claude/skills/$n"        # Claude Code
-  [ -n "$pick" ] && link "$s" "$HOME/.agents/skills/$n"   # read by Codex, omp, opencode, Gemini, Copilot, Crush, pi
+  [ -n "$pick" ] && link "$s" "$HOME/.agents/skills/$n"   # read by Codex, omp, OpenCode, Copilot, Crush, Grok, pi
   for d in $sk; do link "$s" "$d/$n"; done
 done
 for a in "$L"/agents/*.md $HOME/lonca-local/agents/*.md; do
@@ -155,18 +152,13 @@ m["lonca"] = {"source": {"source": "directory", "path": f"{L}/plugins"}}
 save(p, s)
 
 HS = os.environ.get("LONCA_HARNESSES", "").split()
-if "gemini" in HS:   # read ~/.gemini/AGENTS.md as well as GEMINI.md
-    p = f"{H}/.gemini/settings.json"; g = load(p); names = g.setdefault("context", {}).setdefault("fileName", ["GEMINI.md"])
-    if isinstance(names, str): names = g["context"]["fileName"] = [names]
-    if "AGENTS.md" not in names: names.insert(0, "AGENTS.md")
-    save(p, g)
 if "codex" in HS:
     p = f"{H}/.codex/hooks.json"; c = load(p); hk = c.setdefault("hooks", {})
     add_hook(hk, "SessionStart", "startup|resume|clear|compact", "cat ~/ai-memory/MEMORY.md")
     add_hook(hk, "SessionStart", "startup|resume|clear|compact", f"{L}/bin/memory-context")
     add_hook(hk, "Stop", None, f"python3 {L}/config/memory-nudge.py")
     save(p, c)
-print("settings: Claude" + "".join(f" + {h.capitalize()}" for h in ("codex", "gemini") if h in HS) + " updated (backups *.lonca-bak)")
+print("settings: Claude" + "".join(f" + {h.capitalize()}" for h in ("codex",) if h in HS) + " updated (backups *.lonca-bak)")
 EOF
 
 # 5. Shared memory
