@@ -16,7 +16,7 @@ Plain Markdown in git. Every agent (Claude, Codex, omp, opencode) loads `MEMORY.
 - Then add one index line: project notes go in that group's `INDEX.md` (create it with the first note; add one line for the project under its own heading in `MEMORY.md`) (loaded only in that project's sessions); `owner/`, `setup/`, `personal/` notes go under their heading in `MEMORY.md`: `- [Title](group/file.md) — hook`. Keep `MEMORY.md` under 150 lines.
 - Before writing, look for an existing note on the topic and update it instead of adding a duplicate. Delete notes that turned out wrong.
 - Convert relative dates to absolute ones ("Thursday" → 2026-11-26).
-- Never save passwords, tokens, keys, customer data or personal data of third parties. Credentials stay in `~/.config/ai-secrets/` and are never copied here.
+- Never save passwords, tokens, keys, customer data or personal data of third parties. Keep credentials out of memory, in your own secret store.
 - No need to commit: a timer commits `~/ai-memory` every hour (history and undo come from git).
 
 ## Reading

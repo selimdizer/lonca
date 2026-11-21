@@ -28,7 +28,7 @@ Only cards tagged `night` (status todo, not `human`, nothing open in `waits_on`)
 `night-merge <repo-dir> <pr-number> <run-dir> <lane>` (`--dry-run` first). It re-checks everything and refuses otherwise; never merge another way, never retry a refusal by changing evidence. Merge in a sensible order; rebase and re-gate a lane whose base moved.
 
 ## 5. After the merges
-One full gate on each merged target branch (the project's verify skill on main, including its slow/live tier). A failure: stop merging (delete your `<kanzo-project>.json`; `~/.cache/ai-runs/night/OFF` stops every project and is the owner's), open a card with the failure, and fix forward only if the fix is itself a card tagged `night`.
+One full gate on each merged target branch (the project's verify skill on that branch, including its slow/live tier). A failure: stop merging (delete your `<kanzo-project>.json`; `~/.cache/ai-runs/night/OFF` stops every project and is the owner's), open a card with the failure, and fix forward only if the fix is itself a card tagged `night`.
 
 ## 6. Morning report
 A Kanzo card "Night report <date>" (human): merged PRs, PRs ready but not merged and why, parked cards with their question, gate results, the `~/.cache/ai-runs/night/log` lines, quota used. At most 30 lines, with "Not verified". Then delete your `<kanzo-project>.json` and remove the `night` tag from the cards (done ones keep their status).

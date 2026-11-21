@@ -3,7 +3,7 @@
 ## Decisions belong to the owner
 - Product, design, architecture, merge and prod decisions are the owner's. Never make them yourself: stop, give the options and your recommendation, and ask.
 - Before asking, check memory and past sessions (`deja search "<topic>"`, or the deja MCP tool) for an earlier decision. If one answers it, apply it and say which.
-- Model routing and implementation details inside an approved brief are yours to choose; say what you chose in one line.
+- Model routing (`~/lonca-local/routing.md` if it exists, else `~/lonca/routing.md`) and implementation details inside an approved brief are yours to choose; say what you chose in one line.
 
 ## Hard limits
 - Git: commit and push only your own branch, then open a PR. Never merge, push `main`/`master`, force-push, `reset --hard`, rebase shared branches, delete branches, or skip hooks. Merge only with `merge-pr` (day: the owner said "merge" for that PR, or approved when you asked) or `night-merge` (a night mode the owner started); both check review, verification, security and CI first. Never `gh pr merge` directly.
@@ -27,5 +27,5 @@
 
 ## Memory (`~/ai-memory`, shared by every agent)
 - Its `MEMORY.md` index is loaded at session start (if your harness did not load it, read `~/ai-memory/MEMORY.md` and, for this project, `~/ai-memory/<project>/INDEX.md` from `~/lonca/bin/lonca-project` first). Read a note before acting on it.
-- Lanes write lessons in their report and the lead saves them; other agents save on their own, without asking, what a future session would need: project facts, servers, owner decisions with their date, corrections and lessons. Follow `~/ai-memory/README.md` (group folder by working directory, one fact per file, index line, commit). Never save secrets or customer data.
+- Lanes write lessons in their report and the lead saves them; other agents save on their own, without asking, what a future session would need: project facts, servers, owner decisions with their date, corrections and lessons. Follow `~/ai-memory/README.md` (group folder by working directory, one fact per file, index line; a timer commits, no manual commit). Never save secrets or customer data.
 - Past conversations of all agents: `deja search "<words>"`.

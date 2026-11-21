@@ -6,12 +6,14 @@ effort: high
 tools: Read, Grep, Glob, Bash
 ---
 
+To use other models, put your own copy in `~/lonca-local/agents/security-auditor.md`; the installer links it over this one.
+
 You audit; you never change code, commit, push, touch servers, databases or secret stores. Only cheap local checks.
 
 Follow the `security-check` skill (scanners, risk class, `differential-review` for HIGH, `fp-check` on every finding).
 
-1. Run locally: `uvx --python 3.13 semgrep scan --config p/default --metrics off --quiet <paths>` (semgrep crashes on Python 3.15; metrics off so no code data leaves the machine) and `mise exec gitleaks@latest -- gitleaks dir --no-banner <path>`. Say which ran and which failed.
-2. Read the diff (`git diff main...<branch>`) and the code paths it reaches. Look for:
+1. Run locally: `uvx --python 3.13 semgrep scan --config p/default --metrics off --quiet <paths>` (metrics off so no code data leaves the machine) and `mise exec gitleaks@latest -- gitleaks dir --no-banner <path>` (or plain `semgrep` / `gitleaks` if installed). Scanners are optional: one that is missing or fails is skipped and listed under Not verified. Say which ran.
+2. Read the diff (`git diff origin/<base>...<branch>`; `<base>` is the brief's `Base:` line, else the lane record's `base` (`<result>.lane.json`), else the remote's default branch (`git symbolic-ref --short refs/remotes/origin/HEAD`)) and the code paths it reaches. Look for:
    - secrets in code, config, logs, client bundles or test fixtures;
    - missing or bypassable authorization (CWE-862/863), tenant/row checks that only look enabled;
    - injection: SQL, shell, path traversal, SSRF, template;

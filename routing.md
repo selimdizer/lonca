@@ -1,31 +1,26 @@
 # Model routing
 
-Source: Artificial Analysis 2026-11-19 + subscription accounting (quota = model-weighted tokens).
-The lead routes mechanically by this table and writes the choice + one-line reason in each brief.
-Review is always done by the family that did NOT write the code (Claude ↔ OpenAI).
+Your own routing goes in `~/lonca-local/routing.md`; agents read that file instead of this one when it exists. This is the generic template; a filled-in example is `examples/routing.example.md`.
 
-| Work | Primary | Fallback |
+The lead routes by this table and writes the choice + a one-line reason in each brief. "Family" means a model vendor (e.g. Claude, OpenAI); A is the lead's family, B the other one you have.
+
+| Work | Model | Why |
 |---|---|---|
-| Lead, plan, hard calls | Claude `fable` effort medium (Opus high was tried as lead; Fable plans better per token) | Codex `gpt-6.2-sol` xhigh |
-| Plan second opinion (big or architectural) | Codex `gpt-6.2-astra` high | Claude `opus` high |
-| Implementation: frontend/UI, user-facing product features, anything the owner will look at | Claude `implementer` (`opus` high) — Opus's visible work is the strongest | Codex `gpt-6.2-sol` xhigh |
-| Implementation: backend plumbing, scripts, infra, tests, migrations | Codex `gpt-6.2-sol` xhigh | Claude `implementer` |
-| Implementation: very hard or cross-service | Codex `gpt-6.2-astra` high, or Claude `opus` xhigh when it is UI/product | the other one |
-| Mechanical (renames, boilerplate, test scaffolding) | Codex `gpt-6.2-sol` medium | omp `opencode-go/deepseek-v4.1-flash` |
-| Code reading, codebase questions, research and summaries, first read of PRs/logs (read-only) | omp `opencode-go/deepseek-v4.1-flash` as a read lane (`lane --read`, `dispatch`); a review/check that needs commands is a normal omp lane — opencode-go is a flat monthly plan, use it first | Claude Explore / `sonnet` subagent |
-| Review (code by Claude) | Codex `gpt-6.2-astra` high, read-only | Codex `exec review` |
-| Review (code by Codex) | Claude subagent `reviewer` (`opus` high) | `fable` high |
-| Verification (run tests and app) | Claude subagent `verifier` (`opus` medium) | — |
-| Security (auth, SQL, secrets, LLM tools, money) | Claude subagent `security-auditor` (`fable` high) + semgrep/gitleaks | Codex `gpt-6.2-astra` high |
-| Research needing judgment or web synthesis | Claude `sonnet` subagent | omp `opencode-go/deepseek-v4.1-flash` read-only |
-| Client-critical work (the project's memory names the allowed provider) | only that provider, for every role (e.g. omp `github-copilot/*`) | — |
+| Lead, plan, hard calls | your strongest model of family A, medium effort | planning quality decides every lane; medium effort keeps it affordable |
+| Plan second opinion (big or architectural plans) | your strongest model of family B, high effort | another family catches blind spots the lead shares with its own family |
+| Implementation: frontend, UI, user-facing product work | the strongest model for visible work, high effort | what the owner looks at needs the best taste and polish |
+| Implementation: backend plumbing, scripts, infra, tests, migrations | a strong, cheaper coding model, high effort | correctness matters more than taste; cost per lane adds up |
+| Mechanical (renames, boilerplate, test scaffolding) | a cheap model of either family, medium effort | the task is fully specified; a big model wastes quota |
+| Code reading, research, summaries, first read of PRs/logs (read-only) | a cheap or flat-rate model as a read lane (`lane --read`) | reading is high volume and low risk |
+| Review | a strong model of the family that did NOT write the code, read-only | a model rarely spots its own family's mistakes |
+| Verification (run tests and app) | Claude subagent `verifier` or any strong model with shell access | needs to run things and report evidence, not to write code |
+| Security (auth, SQL, secrets, LLM tools, money) | your strongest model, high effort (`security-auditor`) + local scanners | a missed finding costs more than the tokens |
+| Client work (the project's memory names the allowed provider) | only that provider, for every role | the client's code may only go there |
 
 ## Rules
-- opencode-go (a flat-rate plan): only small models; big ones use up the limit fast. Measured 2026-11 on read-only questions: `deepseek-v4.1-flash` best (7-20 s, ~43k requests / 5 h); `hy4-flash-free` as good (free, unlimited for a limited time) but free models may train on the data: only for non-client, non-sensitive code; `qwen3.8-flash` slower; `mimo-v2.6-flash` timed out, `longcat-2.5-free` too slow (171 s).
-- Which implementation row: by what the change touches; mixed changes go to the row of their riskiest part. Say the row in the brief. When unsure between Opus and Sol, pick Opus.
-- Data behind the rows (Artificial Analysis, 2026-11-21, per task): Sol xhigh II 55.7 / TB4 56.1 / FrontierCode 42.8, $0.65, 6 min; Opus high 51.8 / 56.6 / 35.9, $3.46, 9 min (writes 107 tok/s vs 66); Opus xhigh 57.4 / 59.6 / 43.8, $6.05, 16 min; Astra high 60.1 / 60.1 / 47.1, $2.07, 6 min. The owner's experience with Opus counts too; `~/lonca-local/model-log.jsonl` decides after two weeks of real lanes.
-- Never Max effort, never fast mode.
-- Cap the lead model's share of your weekly Claude quota (e.g. half). Near that limit, the lead role moves to Codex (`gpt-6.2-sol` xhigh) with the same `orchestrate` skill.
+- Review is always done by the family that did not write the code.
+- Which implementation row: by what the change touches; mixed changes go to the row of their riskiest part. Say the row in the brief.
+- Never max effort, never fast mode.
 - A rate-limit or quota error moves that lane to the other family; note it in the report.
-- Small task (one file, under ~30 minutes): one implementer, no plan ceremony. Every delegation costs the lead ~5–7k tokens.
-- Monthly: update this table from `~/lonca-local/model-log.jsonl` + fresh Artificial Analysis data; propose the change to the owner, apply after approval.
+- Small task (one file, under ~30 minutes): one implementer, no plan ceremony. Every delegation costs the lead tokens.
+- Monthly: update the table from `~/lonca-local/model-log.jsonl` (and fresh benchmark data if you use it); propose the change to the owner, apply after approval.
