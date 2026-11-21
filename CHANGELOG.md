@@ -3,6 +3,21 @@
 All notable changes to Lonca. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-11-22
+
+Merging sized to the risk, approved in two words (decided after a three-family council review).
+- `merge-tier`: the PR's risk tier from its own diff. High: CI/deploy/infra, migrations and SQL, dependency manifests
+  and lock files, env/secrets, auth/payment paths, agent instructions, renames/deletes, `lonca.toml`. Low: only docs and
+  tests, at most 10 files and 100 lines. Medium: the rest. Projects can raise the floor (`min_tier`) or add
+  `high_paths`; the lead can only raise a tier.
+- Evidence by tier: PERF required for high, and for medium when a perf check ran; low ignores it.
+- `merge-pr` approvals: an `ok-merge` grant; low-tier PRs merge by themselves where `lonca.toml` says
+  `auto_merge_low = true` (capped by `auto_merge_daily`, default 10); otherwise it prints a code bound to the PR's
+  head for one hour, and the owner approves with `evet <code>` in chat. Every merge is logged with its tier and how
+  it was approved.
+- Night mode starts the same way: the lead runs `night-on --request …` and the owner answers `başla <code>`; the merge
+  cap can be `unlimited`. The morning report also goes to the lead's session.
+
 ## [0.3.2] - 2026-11-22
 
 Fixes from an independent council review (three model families):
@@ -59,6 +74,7 @@ First public release.
 - `kanzo-sync`, `lane-watch`, `ai-cleanup` and their timers.
 - `install.sh` (with `--uninstall`) and the Herdr plugin.
 
+[0.4.0]: https://github.com/selimdizer/lonca/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/selimdizer/lonca/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/selimdizer/lonca/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/selimdizer/lonca/compare/v0.2.0...v0.3.0

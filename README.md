@@ -25,14 +25,14 @@ In an Ottoman craft guild (*lonca*) there were three ranks and one rule:
 | 🧒 **Çırak** (apprentice) | works at their own bench | **lanes**: one agent each, in its own git worktree and branch, in a terminal you can watch |
 
 **The rule:** nothing leaves the shop without inspection. A PR merges only after verification, a review by a *different*
-model family, a security pass and green CI, and only when you grant it. Deny rules, command shims and git hooks stop
-agents from running `gh pr merge`, pushing to `main`, force-pushing or running the grant commands. These are guard
+model family, a security pass and green CI, and only with your approval. Deny rules, command shims and git hooks stop
+agents from running `gh pr merge`, pushing to `main`, force-pushing or granting merges themselves. These are guard
 rails, not a sandbox: lanes run with full permissions as your user, so a determined agent could get around them.
 
 ```
              you (usta)
                 │ "build X"                         ▲ "PR #12 ready: verify ✔ review ✔ security ✔ CI ✔"
-                ▼                                   │  ok-merge acme/shop#12    ← only you can run this
+                ▼                                   │  you: "evet 4f2"           ← the code for that PR
          ┌──── lead (kalfa) ───────────────────────┴──┐
          │ plan → split → route → brief → check → PR  │
          └──┬────────────────┬────────────────┬───────┘
@@ -45,8 +45,8 @@ rails, not a sandbox: lanes run with full permissions as your user, so a determi
 ## What it does
 
 - 🧵 **Lanes you can see.** `lane` starts an agent in its own worktree as a [Herdr](https://herdr.dev) terminal. It reports back with `DONE: <outcome>` or asks `QUESTION: …`, and `lane-watch` tells the lead when one goes quiet.
-- 🔏 **One way to merge.** `merge-pr` merges only the PR's *exact* head commit, and only after your one-time grant (`ok-merge`), evidence files from verify, review and security for that commit, green CI, and a PR with no AI attribution.
-- 🌙 **Night mode.** The lead asks every question up front. You give one start line and go to bed; the lead works through the tagged cards and merges green PRs within the limits you set.
+- 🔏 **One way to merge, sized to the risk.** `merge-pr` merges only the PR's *exact* head commit, after CI and evidence from verify, review and security for that commit. A script reads the diff and sets the risk tier (docs/tests = low, auth/payments/migrations/CI/dependencies = high, the rest medium); low needs fewer checks, and you can let low-tier PRs merge themselves per project. Everything else waits for your `evet <code>` in chat.
+- 🌙 **Night mode.** The lead asks every question up front and prepares tonight's limits (end time, merge cap or unlimited, which repos). You answer `başla <code>` and go to bed; the lead works through the tagged cards, merges green PRs within those limits, and leaves you the night's summary and open questions for the morning.
 - 🧠 **Memory you only fill once.** `~/ai-memory` is plain Markdown that every agent loads at start, with one group per project. Agents save decisions as they go; an optional background review catches the ones they missed.
 - 📋 **A board that keeps itself current.** With [Kanzo](https://github.com/emanuele-em/kanzo), cards move by themselves: *doing* when a lane starts, *review* when its PR opens, *done* when it merges. Issues and PRs your account opens in a project's linked repos get a card too.
 - 🛡️ **Guards.** Deny rules, `gh`/`git` shims and git hooks block direct merges, pushes to the default branch, force-pushes, branch deletes, co-author lines and "Generated with" lines.
@@ -85,7 +85,7 @@ again, and it backs up every file it changes as `*.lonca-bak`. What it changes:
 - **Git:** a global `core.hooksPath` with Lonca's `commit-msg` and `pre-push`; every other hook name runs the repo's own
   `.git/hooks/<name>`, so your pre-commit hooks keep working. Repos that set their own `core.hooksPath` (husky,
   lefthook) keep theirs, and Lonca's hooks don't run there.
-- **Commands** in `~/.local/bin`: `lane`, `lanes`, `lonca-project`, `merge-pr`, `night-merge`, `ok-merge`, `night-on`, `kanzo-sync`.
+- **Commands** in `~/.local/bin`: `lane`, `lanes`, `lonca-project`, `merge-pr`, `merge-tier`, `night-merge`, `ok-merge`, `night-on`, `kanzo-sync`.
 - **Memory:** `~/ai-memory` from a template, if you don't have one.
 - **Timers** (systemd on Linux, launchd on macOS): `lane-watch` (needs `hc`), `kanzo-sync`, `kanzo-backup` and
   `monthly-card` (need Kanzo), `ai-cleanup`, `ai-memory-commit`, `deja-index` (needs deja).
@@ -109,12 +109,13 @@ The lead asks what is still open and writes a short plan. It then opens lanes (y
 verified, reviewed by the other model family and security-checked. Finally it opens the PR and comes back with one line:
 
 ```
-PR #12 ready (verify PASS · review SHIP · security CLEAN · CI green)
-ok-merge acme/shop#12
+acme/shop#12 → main, head 9c1e4a2, tier medium (14 files, 220 lines)
+verify PASS · review SHIP · security CLEAN · CI green. My opinion: safe to merge; it only touches the settings page.
+To merge, write: evet 4f2
 ```
 
-You run that line, and the lead merges exactly that commit. If someone pushes after the checks, the evidence no longer
-matches the PR's head, so the checks run again before any merge.
+You answer `evet 4f2`, and the lead merges exactly that commit. The code is good for that PR's current head for one
+hour: if someone pushes after the checks, the evidence no longer matches, the checks run again and you get a new code.
 
 ## Configuration
 
@@ -122,7 +123,11 @@ matches the PR's head, so the checks run again before any merge.
 that holds them (anywhere on disk). It is a one-line file:
 
 ```toml
-name = "shop"    # memory group ~/ai-memory/shop/ and Kanzo project slug; default: the folder's name
+name = "shop"              # memory group ~/ai-memory/shop/ and Kanzo project slug; default: the folder's name
+auto_merge_low = true      # optional: low-tier PRs (docs/tests) merge after their checks without asking
+auto_merge_daily = 10      # optional: at most this many auto-merges a day
+min_tier = "medium"        # optional: nothing in this project counts as low
+high_paths = ["src/pay/*"] # optional: more paths that make a PR high tier
 ```
 
 Lonca finds it the way mise and EditorConfig find theirs: a lane's worktree counts as its main repo, Lonca walks up from
@@ -156,7 +161,8 @@ skills go in `<project root>/.claude/skills/`, next to the repos rather than ins
 | `lonca.toolNamesOk true` (per repo) | lifts `strictTraces` in a repo whose subject is AI tools |
 | `lonca.mergeMethod merge\|squash\|rebase` (per repo) | how `merge-pr` merges; default: what the repo allows, in that order |
 
-A repo without CI checks only merges with an `ok-merge --fast` grant.
+A repo without CI checks only merges with an `ok-merge --fast` grant. `ok-merge <owner/repo>#<pr> [<pr> …]` is your
+shortcut to approve PRs up front from a terminal (`--fast` also lets still-running CI jobs pass).
 
 **Lane agents:** `claude:<role>`, `codex:<model>[:<effort>]`, `omp:<provider/model>`, `opencode:<provider/model>`,
 `copilot:<model>`, `agy:<model>` (Antigravity), `pi:<provider/model>`, `grok:<model>`.
@@ -188,8 +194,9 @@ lead out of the code leaves its context free for planning and checking, and ever
 **Why does review use a different model family?** A model tends to approve its own habits. So Claude's code goes to Codex
 for review, and Codex and omp code goes to a Claude reviewer.
 
-**Isn't `ok-merge` slow?** It's one line. `ok-merge --fast a/b#1 2 3` grants a whole batch without waiting for long CI
-jobs, though a failed check still blocks. You choose the speed; agents ask for it.
+**Isn't approving every PR slow?** Low-risk PRs can merge themselves (`auto_merge_low`), and the rest take two words
+in chat. The code proves the answer came from you, for that PR's current state: a lane message or an old "yes" can't
+merge anything. These are guard rails for honest mistakes, not a sandbox against a hostile agent.
 
 **Do I need every tool?** No: see [Requirements](#requirements). Herdr is the only one lanes insist on, because you can't
 stop an agent you can't see.

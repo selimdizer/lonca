@@ -1,20 +1,27 @@
 #!/bin/sh
 # The only way an agent may merge.
-#   merge-pr    [--dry-run] <repo-dir> <pr-number> <run-dir> <lane>   needs the owner's grant: ok-merge <owner/repo>#<pr>
-#   night-merge [--dry-run] <repo-dir> <pr-number> <run-dir> <lane>   needs tonight's night file: night-on …
-# Both refuse unless the PR is open, not a draft and mergeable; every CI check is green (with an `ok-merge --fast`
-# grant, checks still running are fine but a failed one is not; a repo without CI needs --fast); the lane's evidence
-# files in <run-dir> say PASS / SHIP / PERF OK / no HIGH security finding for the PR's current head commit; and the
-# PR title/body carry no AI attribution. Night mode also checks the end time, the merge count and the repo/base list.
+#   merge-pr    [--dry-run] [--code <c>] <repo-dir> <pr-number> <run-dir> <lane>
+#   night-merge [--dry-run] <repo-dir> <pr-number> <run-dir> <lane>       (night mode, started with night-on)
+# Checks first, always: the PR is open, not a draft, mergeable; every CI check is green (an `ok-merge --fast` grant
+# lets checks that are still running pass, never a failed one; a repo without CI needs --fast); the lane's evidence
+# files fit the PR's risk tier (bin/merge-tier) for its current head commit (bin/merge-evidence); no AI attribution
+# in the PR title/body. Then the approval (merge-pr):
+#   - an owner grant (ok-merge <owner/repo>#<pr>), or
+#   - a low-tier PR in a project whose lonca.toml says auto_merge_low = true (at most auto_merge_daily a day, default 10), or
+#   - an approval code: without one, merge-pr prints a fresh code bound to this head (valid 1 h) and exits 3; the lead
+#     shows the owner the PR, tier and its opinion, the owner answers "evet <code>" in chat, and the lead reruns with --code.
+# Night mode instead checks tonight's file (end time, merge count, repo/base list). One merge at a time (a lock).
 # The merge method follows the repo: merge commit if allowed, else squash, else rebase (git config lonca.mergeMethod
-# overrides). It merges exactly the checked head (--match-head-commit).
+# overrides). It merges exactly the checked head (--match-head-commit). Log: ~/.cache/ai-runs/night/log.
 set -eu
 for v in $(env | cut -d= -f1 | grep -E '^(CLAUDECODE|CLAUDE_[A-Z_]*|CODEX_COMPANION_[A-Z_]*)$'); do unset "$v"; done
-dry=0; [ "${1:-}" = --dry-run ] && { dry=1; shift; }
+dry=0 code=
+while [ $# -gt 0 ]; do case $1 in --dry-run) dry=1; shift ;; --code) code=${2:-}; shift 2 ;; *) break ;; esac; done
 me=$(basename "$0")
-[ $# -eq 4 ] || { echo "usage: $me [--dry-run] <repo-dir> <pr-number> <run-dir> <lane>   (see the header of $0)" >&2; exit 2; }
+[ $# -eq 4 ] || { echo "usage: $me [--dry-run] [--code <c>] <repo-dir> <pr-number> <run-dir> <lane>   (see the header of $0)" >&2; exit 2; }
 repo=$(realpath "$1") pr=$2 run=$3 lane=$4
 N=$HOME/.cache/ai-runs/night
+A=$HOME/.local/state/lonca/approvals
 no() { echo "$me: refused PR #$pr: $*" >&2; echo "$(date -Iseconds) refused $repo #$pr: $*" >> "$N/log" 2>/dev/null || true; exit 1; }
 # the real gh, not the guard shim
 GH=$(PATH=$(printf '%s' "$PATH" | tr ':' '\n' | grep -v "lonca/shims" | paste -sd: -) command -v gh)
@@ -44,7 +51,8 @@ for f in sorted(glob.glob(os.path.join(N,"*.json"))):
     log=os.path.join(N,"log")
     since=os.path.getmtime(f)   # count only merges since tonight's grant was written
     done=sum(1 for l in open(log) if f" merged [{p}] " in l and datetime.datetime.fromisoformat(l.split()[0]).timestamp()>=since) if os.path.exists(log) else 0
-    assert done < int(n.get("max_merges",5))
+    mx=n.get("max_merges",5)
+    assert mx in (0,"unlimited") or done < int(mx)
     print(p); break
 else: sys.exit(1)
 EOF
@@ -53,13 +61,31 @@ EOF
 info=$(cd "$repo" && "$GH" pr view "$pr" --json state,isDraft,mergeable,title,body,statusCheckRollup,headRefOid 2>/dev/null) || no "cannot read the PR"
 head=$(printf '%s' "$info" | python3 -I -c 'import json,sys;print(json.load(sys.stdin)["headRefOid"])')
 nwo=$(cd "$repo" && "$GH" repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || no "cannot read the repo name"
-# day mode: the owner's own grant (ok-merge <owner/repo>#<pr>), at most 24 h old, used once
-G=$HOME/.local/state/lonca/merge-grants/$(printf '%s' "$nwo" | tr '/' '_')_$pr
-fast=0
+# Risk tier (from the PR's diff; the lead may only raise it) and the project's settings
+t=$("$HOME/lonca/bin/merge-tier" "$repo" "$pr" "$run" "$lane" 2>&1) || no "$t"
+tier=${t%%	*} why=${t#*	}
+cfg=$("$HOME/lonca/bin/merge-tier" --config "$repo" "$base" 2>/dev/null) || cfg='{}'
+key=$(printf '%s' "$nwo" | tr '/' '_')_$pr
+G=$HOME/.local/state/lonca/merge-grants/$key
+how=night fast=0
 if [ $day = 1 ]; then
-  [ -f "$G" ] || no "no owner grant: the owner runs  ok-merge $nwo#$pr"
-  [ $(( $(date +%s) - $(date -r "$G" +%s) )) -lt 86400 ] || no "owner grant older than 24 h; ask again"
-  grep -q fast "$G" && fast=1   # ok-merge --fast: still-running CI does not block, a failed check still does
+  if [ -f "$G" ] && [ $(( $(date +%s) - $(date -r "$G" +%s) )) -lt 86400 ]; then
+    how=grant; grep -q fast "$G" && fast=1   # ok-merge --fast: still-running CI does not block, a failed check still does
+  elif [ -n "$code" ]; then
+    [ -f "$A/$key" ] || no "no approval request for $nwo#$pr: run $me without --code first"
+    set -- $(cat "$A/$key")   # <code> <head> <epoch>
+    [ "$1" = "$code" ] || no "approval code '$code' does not match the one asked for $nwo#$pr"
+    [ "$2" = "$head" ] || no "the PR changed since the owner approved it (head ${2%"${2#???????}"} -> ${head%"${head#???????}"}): ask again"
+    [ $(( $(date +%s) - $3 )) -lt 3600 ] || no "approval code older than 1 h: ask again"
+    how=code
+  elif [ "$tier" = low ] && printf '%s' "$cfg" | python3 -I -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("auto_merge_low") is True else 1)'; then
+    cap=$(printf '%s' "$cfg" | python3 -I -c 'import json,sys; print(int(json.load(sys.stdin).get("auto_merge_daily") or 10))')
+    today=$(grep -c "^$(date +%Y-%m-%d).* merged \[auto\] " "$N/log" 2>/dev/null || true)
+    [ "${today:-0}" -lt "$cap" ] || no "auto-merge cap reached today ($cap): ask the owner"
+    how=auto proj=auto
+  else
+    how=ask
+  fi
 fi
 err=$(printf '%s' "$info" | FAST=$fast python3 -I -c '
 import json,os,sys; p=json.load(sys.stdin); fast=os.environ["FAST"]=="1"
@@ -72,18 +98,27 @@ assert fast or p["statusCheckRollup"], "no CI checks on the PR"
 assert not bad, "checks not green: "+str(bad)
 ' 2>&1) || no "$(printf '%s' "$err" | tail -1)"
 
-# Evidence: one file per checker (<lane>.verify.md, .review.md, .security.md), written by the lead from the
-# checker's own result, each with a HEAD: <sha> line. The LAST verdict line in each file counts, and every
-# file's HEAD must be the PR head now: a push after the checks voids them.
-evd=$("$HOME/lonca/bin/merge-evidence" "$run" "$lane" "$head" 2>&1) || no "$(printf '%s' "$evd" | tail -1)"
+# Evidence: one file per checker (<lane>.verify.md, .review.md, .security.md), what the tier asks for, each verdict
+# followed by the HEAD it judged (bin/merge-evidence). A push after the checks voids them.
+evd=$("$HOME/lonca/bin/merge-evidence" "$run" "$lane" "$head" "$tier" 2>&1) || no "$(printf '%s' "$evd" | tail -1)"
 printf '%s' "$info" | python3 -I -c 'import json,sys;p=json.load(sys.stdin);print(p["title"]);print(p["body"])' | "$HOME/lonca/bin/ai-trace-check" 2>/dev/null || no "PR title/body has AI traces"
 
-[ $dry = 1 ] && { echo "$me: dry run OK for #$pr ($repo -> $base, $( [ $day = 1 ] && echo "day, owner said merge" || echo "night file $proj.json"))"; exit 0; }
+short=${head%"${head#???????}"}
+if [ $dry = 1 ]; then echo "$me: dry run OK for $nwo#$pr -> $base, tier $tier ($why), approval: $how"; exit 0; fi
+if [ "$how" = ask ]; then
+  mkdir -p "$A"
+  c=$(python3 -I -c 'import secrets; print("".join(secrets.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(3)))')
+  echo "$c $head $(date +%s)" > "$A/$key"
+  echo "$me: checks passed; ask the owner. Show: $nwo#$pr -> $base, head $short, tier $tier ($why), your opinion$( [ "$tier" = high ] && echo ' and the risks')."
+  echo "They approve by writing:  evet $c     then run:  $me --code $c $repo $pr $run $lane   (this head only, 1 h)"
+  exit 3
+fi
 method=$(git -C "$repo" config lonca.mergeMethod || true)
 [ -n "$method" ] || method=$(cd "$repo" && "$GH" repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed \
   -q 'if .mergeCommitAllowed then "merge" elif .squashMergeAllowed then "squash" else "rebase" end' 2>/dev/null) || method=merge
 (cd "$repo" && "$GH" pr merge "$pr" "--$method" --match-head-commit "$head") || no "gh merge ($method) failed"
-[ $day = 1 ] && rm -f "$G"
-echo "$(date -Iseconds) merged [$proj] $repo #$pr -> $base (lane $lane)" >> "$N/log"
+[ "$how" = grant ] && rm -f "$G"
+[ "$how" = code ] && rm -f "$A/$key"
+echo "$(date -Iseconds) merged [$proj] $repo #$pr -> $base (lane $lane, tier $tier, $how)" >> "$N/log"
 "$HOME/lonca/bin/kanzo-sync" >/dev/null 2>&1 || true   # its card -> done now, not at the next timer run
-echo "$me: merged #$pr into $base ($method)"
+echo "$me: merged $nwo#$pr into $base ($method, tier $tier, $how)"

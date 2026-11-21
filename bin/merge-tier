@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""merge-tier <repo-dir> <pr> [<run-dir> <lane>]: the PR's risk tier, from its own diff. Prints "<tier>\t<why>".
+
+  high    any changed path is risky: CI and deploy files, infra, DB migrations or SQL, dependency manifests and lock
+          files, env and secrets config, auth/login/session/permission/payment/billing/crypto paths, agent instructions
+          (AGENTS.md, CLAUDE.md, .claude/, skills/), git hooks, lonca.toml, the project's own `high_paths`; or a file
+          that is renamed, copied or deleted
+  low     every path is plain docs (*.md, *.txt, docs/; not SECURITY or INSTALL docs) or a test file, at most 10
+          files and 100 changed lines
+  medium  everything else
+The project (`lonca-project`) can raise the floor with `min_tier = "medium"` in its lonca.toml. When lonca.toml is
+inside the repo, the base branch's copy is read, never the PR's. The lead can only raise the tier, by writing high or
+medium into <run-dir>/<lane>.tier.
+Other lonca.toml keys merge-pr reads: auto_merge_low = true (merge low-tier PRs without asking), auto_merge_daily = 10.
+merge-tier --config <repo-dir> <base> prints the project's settings as JSON.
+"""
+import fnmatch, json, os, re, subprocess, sys
+
+RANK = {"low": 0, "medium": 1, "high": 2}
+HIGH = [".github/*", ".gitlab-ci*", ".circleci/*", "Jenkinsfile", "Dockerfile*", "*docker-compose*", "deploy/*",
+        "infra/*", "terraform/*", "*.tf", "k8s/*", "helm/*", "charts/*", "migrations/*", "*/migrations/*", "*.sql",
+        "package.json", "*/package.json", "*.lock", "package-lock.json", "pnpm-lock.yaml", "npm-shrinkwrap.json", "go.mod", "go.sum", "pyproject.toml", "requirements*.txt",
+        "Cargo.toml", "Cargo.lock", "Gemfile*", "Move.toml", "*.env", ".env*", "*secret*", "*credential*",
+        "AGENTS.md", "CLAUDE.md", ".claude/*", "skills/*", ".husky/*", "lonca.toml", ".lonca.toml"]
+RISKY_WORDS = re.compile(r"auth|login|session|permission|rbac|acl|payment|billing|checkout|crypto|token|password", re.I)
+TEST = re.compile(r"(^|/)(tests?|__tests__|spec)/|(_test\.go|\.test\.[jt]sx?|\.spec\.[jt]sx?|(^|/)test_[^/]+\.py|_test\.py)$")
+DOCS = re.compile(r"(^|/)docs/|\.(md|txt)$", re.I)
+
+
+def gh(repo, *a):
+    r = subprocess.run(["gh", *a], capture_output=True, text=True, cwd=repo)
+    if r.returncode:
+        sys.exit(f"merge-tier: gh {' '.join(a[:3])} failed: {r.stderr.strip()[-200:]}")
+    return json.loads(r.stdout)
+
+
+def toml_values(text):
+    """name = value lines: strings, numbers, true/false and lists of strings (the keys Lonca reads)."""
+    out = {}
+    for line in text.splitlines():
+        m = re.match(r"\s*([A-Za-z_][\w-]*)\s*=\s*(.+?)\s*(#.*)?$", line)
+        if not m:
+            continue
+        v = m.group(2)
+        if v in ("true", "false"):
+            out[m.group(1)] = v == "true"
+        elif v.startswith("["):
+            out[m.group(1)] = re.findall(r'"([^"]*)"', v)
+        else:
+            out[m.group(1)] = v.strip('"\'')
+    return out
+
+
+def project_config(repo, base):
+    r = subprocess.run([os.path.expanduser("~/lonca/bin/lonca-project"), repo], capture_output=True, text=True)
+    root = r.stdout.strip().split("\t")[-1] if r.returncode == 0 else ""
+    for name in ("lonca.toml", ".lonca.toml"):
+        path = os.path.join(root, name)
+        if root and os.path.isfile(path):
+            if root == repo or path.startswith(repo + os.sep):   # inside the repo: the base branch's copy
+                rel = os.path.relpath(path, repo)
+                g = subprocess.run(["git", "-C", repo, "show", f"origin/{base}:{rel}"], capture_output=True, text=True)
+                return toml_values(g.stdout) if g.returncode == 0 else {}
+            return toml_values(open(path).read())
+    return {}
+
+
+def tier_of(files, cfg):
+    """files: [{path, additions, deletions, changeType?}] -> (tier, why)"""
+    extra = cfg.get("high_paths") or []
+    for f in files:
+        p = f["path"]
+        name = os.path.basename(p)
+        if any(fnmatch.fnmatch(p, g) or fnmatch.fnmatch(name, g) for g in HIGH + extra):
+            return "high", f"{p} is a high-risk path"
+        if RISKY_WORDS.search(p) and not DOCS.search(p) and not TEST.search(p):
+            return "high", f"{p} looks like auth/payment/secrets code"
+        if f.get("changeType") in ("RENAMED", "DELETED", "COPIED"):
+            return "high", f"{p} is {f['changeType'].lower()}"
+    lines = sum(f.get("additions", 0) + f.get("deletions", 0) for f in files)
+    docs_or_tests = all((DOCS.search(f["path"]) and not re.search(r"(^|/)(SECURITY|INSTALL)", f["path"], re.I))
+                        or TEST.search(f["path"]) for f in files)
+    if files and docs_or_tests and len(files) <= 10 and lines <= 100:
+        return "low", f"{len(files)} docs/test files, {lines} lines"
+    return "medium", f"{len(files)} files, {lines} lines"
+
+
+if __name__ == "__main__":
+    if sys.argv[1:2] == ["--config"]:   # merge-tier --config <repo-dir> <base>: the project's lonca.toml as JSON
+        print(json.dumps(project_config(os.path.realpath(sys.argv[2]), sys.argv[3]))); sys.exit(0)
+    if len(sys.argv) < 3 or sys.argv[1] in ("-h", "--help"):
+        print(__doc__.strip()); sys.exit(0 if len(sys.argv) > 1 else 2)
+    repo, pr = os.path.realpath(sys.argv[1]), sys.argv[2]
+    run, lane = (sys.argv[3], sys.argv[4]) if len(sys.argv) > 4 else (None, None)
+    pr_info = gh(repo, "pr", "view", pr, "--json", "files,baseRefName")
+    cfg = project_config(repo, pr_info["baseRefName"])
+    tier, why = tier_of(pr_info["files"], cfg)
+    floor = cfg.get("min_tier")
+    if floor in RANK and RANK[floor] > RANK[tier]:
+        tier, why = floor, f"project floor ({why})"
+    if run and lane and os.path.isfile(os.path.join(run, f"{lane}.tier")):
+        raised = open(os.path.join(run, f"{lane}.tier")).read().split()[:1]
+        if raised and raised[0] in RANK and RANK[raised[0]] > RANK[tier]:
+            tier, why = raised[0], f"raised by the lead ({why})"
+    print(f"{tier}\t{why}")

@@ -6,7 +6,7 @@
 - Model routing (`~/lonca-local/routing.md` if it exists, else `~/lonca/routing.md`) and implementation details inside an approved brief are yours to choose; say what you chose in one line.
 
 ## Hard limits
-- Git: commit and push only your own branch, then open a PR. Never merge, push `main`/`master`, force-push, `reset --hard`, rebase shared branches, delete branches, or skip hooks. Merge only with `merge-pr` (day: the owner said "merge" for that PR, or approved when you asked) or `night-merge` (a night mode the owner started); both check review, verification, security and CI first. Never `gh pr merge` directly.
+- Git: commit and push only your own branch, then open a PR. Never merge, push `main`/`master`, force-push, `reset --hard`, rebase shared branches, delete branches, or skip hooks. Merge only with `merge-pr` or `night-merge`: they check CI, verification, cross-family review and security for the exact head first, then need the owner's approval (their `evet <code>`, an `ok-merge` grant, `auto_merge_low` in the project's lonca.toml, or a night mode the owner started with `başla <code>`). Never `gh pr merge` directly.
 - No AI traces in any PR, issue, comment or commit message, in any project: no AI tool or model names as authors or reviewers, no "Generated with", no co-author lines. Describe checks without naming the tools ("independent review: approved").
 - A permission rule or hook blocked you: don't get the same thing done another way (another agent, another tool, editing the rule). Tell the owner what was blocked and let them decide.
 - Parallel work on the same repo: every agent uses its own `git worktree` and branch. Never edit a working tree another agent or the owner is using.

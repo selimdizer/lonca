@@ -26,8 +26,6 @@
     "Bash(*gh pr merge*)",
     "Bash(ok-merge*)",
     "Bash(*/ok-merge *)",
-    "Bash(night-on*)",
-    "Bash(*/night-on *)",
     "Bash(git push * main *)",
     "Bash(git push * master *)",
     "Bash(git push * HEAD:main*)",

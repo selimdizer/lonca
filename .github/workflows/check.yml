@@ -45,6 +45,30 @@ jobs:
           if ev $B; then echo "HIGH finding accepted"; exit 1; fi
           rm $T/x.security.md
           if ev $B; then echo "missing file accepted"; exit 1; fi
+      - name: Risk tiers
+        run: |
+          python3 - <<'PY'
+          import importlib.machinery, importlib.util
+          l = importlib.machinery.SourceFileLoader("mt", "bin/merge-tier")
+          m = importlib.util.module_from_spec(importlib.util.spec_from_loader("mt", l)); l.exec_module(m)
+          F = lambda p, a=5, c="MODIFIED": {"path": p, "additions": a, "deletions": 0, "changeType": c}
+          cases = [([F("README.md", 20)], "low"), ([F("docs/a.md"), F("tests/test_x.py")], "low"),
+                   ([F("SECURITY.md")], "medium"), ([F("src/ui/Button.tsx")], "medium"), ([F("README.md", 150)], "medium"),
+                   ([F("src/ui/Block.tsx")], "medium"), ([F("src/auth/login.ts")], "high"), ([F("package.json")], "high"),
+                   ([F("yarn.lock")], "high"), ([F(".github/workflows/ci.yml")], "high"), ([F("db/migrations/1.sql")], "high"),
+                   ([F("docs/a.md", 1, "RENAMED")], "high"), ([F("AGENTS.md")], "high"), ([], "medium")]
+          bad = [(f, w, m.tier_of(f, {})) for f, w in cases if m.tier_of(f, {})[0] != w]
+          assert not bad, bad
+          assert m.tier_of([F("src/app.py")], {"high_paths": ["src/app.py"]})[0] == "high"
+          PY
+      - name: Night mode needs the code
+        run: |
+          H=$(mktemp -d); R=$(mktemp -d); git init -q "$R"
+          out=$(HOME=$H sh bin/night-on --request demo 23:59 unlimited "$R:main")
+          c=$(printf '%s' "$out" | sed -n 's/.*başla \([a-z0-9]\{3\}\) .*/\1/p')
+          if HOME=$H sh bin/night-on --code zzz demo; then echo "wrong code accepted"; exit 1; fi
+          HOME=$H sh bin/night-on --code "$c" demo
+          grep -q '"max_merges": "unlimited"' "$H/.cache/ai-runs/night/demo.json"
       - name: AI-trace check (default and strict)
         run: |
           echo "add anthropic client" | bin/ai-trace-check
