@@ -1,12 +1,17 @@
 #!/bin/sh
-# Agents may push their own branches and open PRs; nobody pushes main/master
-# except the owner on purpose:  ALLOW_MAIN_PUSH=1 git push ...
-[ "$ALLOW_MAIN_PUSH" = "1" ] && exit 0
-while read -r local_ref local_sha remote_ref remote_sha; do
-  case "$remote_ref" in
-    refs/heads/main|refs/heads/master)
-      echo "pre-push: push to ${remote_ref#refs/heads/} is blocked. Push a branch and open a PR; the owner merges." >&2
-      exit 1 ;;
-  esac
-done
+# Agents push their own branches and open PRs; nobody pushes the default branch (main, master or the remote's
+# HEAD branch) except the owner on purpose:  ALLOW_MAIN_PUSH=1 git push ...   Then the repo's own pre-push hook.
+input=$(cat)
+if [ "${ALLOW_MAIN_PUSH:-}" != 1 ]; then
+  def=$(git symbolic-ref -q --short "refs/remotes/$1/HEAD" 2>/dev/null); def=${def#"$1"/}
+  printf '%s\n' "$input" | while read -r local_ref local_sha remote_ref remote_sha; do
+    case "${remote_ref#refs/heads/}" in
+      main|master|"${def:-main}")
+        echo "pre-push: push to ${remote_ref#refs/heads/} is blocked. Push a branch and open a PR; the owner merges." >&2
+        exit 1 ;;
+    esac
+  done || exit 1
+fi
+own="$(git rev-parse --git-common-dir)/hooks/pre-push"
+[ -x "$own" ] && [ "$(readlink -f "$own")" != "$(readlink -f "$0")" ] && { printf '%s\n' "$input" | "$own" "$@"; exit; }
 exit 0

@@ -13,8 +13,8 @@
     "Bash(killall *)",
     "Bash(gh pr merge*)",
     "Bash(gh api *merge*)",
-    "Bash(git push * main*)",
-    "Bash(git push * master*)",
+    "Bash(git push * main)",
+    "Bash(git push * master)",
     "Bash(git push *:main*)",
     "Bash(git push *:master*)",
     "Bash(git push *--no-verify*)",
@@ -27,6 +27,15 @@
     "Bash(ok-merge*)",
     "Bash(*/ok-merge *)",
     "Bash(night-on*)",
-    "Bash(*/night-on *)"
+    "Bash(*/night-on *)",
+    "Bash(git push * main *)",
+    "Bash(git push * master *)",
+    "Bash(git push * HEAD:main*)",
+    "Bash(git push * HEAD:master*)",
+    "Bash(git push *--delete*)",
+    "Bash(git push * -d *)",
+    "Edit(~/.local/state/lonca/**)",
+    "Edit(~/.cache/ai-runs/night/**)",
+    "Bash(*merge-grants*)"
   ]
 }

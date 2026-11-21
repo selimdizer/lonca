@@ -2,5 +2,6 @@
 Description=Commit changes in ~/ai-memory (agents only write files)
 
 [Service]
+Environment=PATH=%h/.local/share/mise/command-wrappers/bin:%h/.local/share/mise/shims:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Type=oneshot
 ExecStart=/bin/sh -c 'cd %h/ai-memory && git add -A && { git diff --cached --quiet || git -c user.name=memory-bot -c user.email=noreply@localhost commit -qm "memory: auto-commit $(date +%%F\\ %%H:%%M)"; }'

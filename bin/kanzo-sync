@@ -12,7 +12,11 @@ import datetime, json, os, re, subprocess, sys, time
 DRY = "--dry-run" in sys.argv
 LOG = os.path.expanduser("~/.cache/ai-runs/setup/kanzo-sync.log")
 URL = re.compile(r"https://([^/]+)/([^/]+/[^/]+)/(pull|issues)/(\d+)")
-GH = [os.path.join(d, "gh") for d in os.environ["PATH"].split(":") if "lonca/shims" not in d and os.path.exists(os.path.join(d, "gh"))][0]
+GH = next((os.path.join(d, "gh") for d in os.environ["PATH"].split(":") if "lonca/shims" not in d and os.path.exists(os.path.join(d, "gh"))), None)
+if sys.argv[1:2] in (["-h"], ["--help"]):
+    print(__doc__.strip()); sys.exit(0)
+if not GH:
+    sys.exit("kanzo-sync: gh (GitHub CLI) is not on PATH")
 
 
 class Kanzo:

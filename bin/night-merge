@@ -1,18 +1,21 @@
 #!/bin/sh
-# The only way an agent may merge: any project, after checks.
-#   merge-pr   [--dry-run] <repo-dir> <pr-number> <run-dir> <lane>   day: the owner said "merge" for this PR (or approved when asked)
-#   night-merge [--dry-run] ...                                       night mode: also needs tonight's grant file
-# Both refuse unless the PR is open/not draft/mergeable with every check green, the lane's evidence says
-# PASS / SHIP / PERF OK / no HIGH security finding, and the PR title/body carry no AI traces.
-# Refuses unless: night file exists and is in time, no OFF file, merge count below max, repo+base allowed
-# tonight, PR open/not draft/mergeable with every check green, and the lane's evidence files say
+# The only way an agent may merge.
+#   merge-pr    [--dry-run] <repo-dir> <pr-number> <run-dir> <lane>   needs the owner's grant: ok-merge <owner/repo>#<pr>
+#   night-merge [--dry-run] <repo-dir> <pr-number> <run-dir> <lane>   needs tonight's night file: night-on …
+# Both refuse unless the PR is open, not a draft and mergeable; every CI check is green (with an `ok-merge --fast`
+# grant, checks still running are fine but a failed one is not; a repo without CI needs --fast); the lane's evidence
+# files in <run-dir> say PASS / SHIP / PERF OK / no HIGH security finding for the PR's current head commit; and the
+# PR title/body carry no AI attribution. Night mode also checks the end time, the merge count and the repo/base list.
+# The merge method follows the repo: merge commit if allowed, else squash, else rebase (git config lonca.mergeMethod
+# overrides). It merges exactly the checked head (--match-head-commit).
 set -eu
-for v in $(env | sed -n 's/^\(CLAUDECODE\|CLAUDE_[A-Z_]*\|CODEX_COMPANION_[A-Z_]*\)=.*/\1/p'); do unset "$v"; done
+for v in $(env | cut -d= -f1 | grep -E '^(CLAUDECODE|CLAUDE_[A-Z_]*|CODEX_COMPANION_[A-Z_]*)$'); do unset "$v"; done
 dry=0; [ "${1:-}" = --dry-run ] && { dry=1; shift; }
-[ $# -eq 4 ] || { echo "usage: night-merge [--dry-run] <repo-dir> <pr-number> <run-dir> <lane>" >&2; exit 2; }
+me=$(basename "$0")
+[ $# -eq 4 ] || { echo "usage: $me [--dry-run] <repo-dir> <pr-number> <run-dir> <lane>   (see the header of $0)" >&2; exit 2; }
 repo=$(realpath "$1") pr=$2 run=$3 lane=$4
 N=$HOME/.cache/ai-runs/night
-no() { echo "night-merge: refused PR #$pr: $*" >&2; echo "$(date -Iseconds) refused $repo #$pr: $*" >> "$N/log" 2>/dev/null || true; exit 1; }
+no() { echo "$me: refused PR #$pr: $*" >&2; echo "$(date -Iseconds) refused $repo #$pr: $*" >> "$N/log" 2>/dev/null || true; exit 1; }
 # the real gh, not the guard shim
 GH=$(PATH=$(printf '%s' "$PATH" | tr ':' '\n' | grep -v "lonca/shims" | paste -sd: -) command -v gh)
 
@@ -68,9 +71,12 @@ assert not bad, "checks not green: "+str(bad)
 evd=$("$HOME/lonca/bin/merge-evidence" "$run" "$lane" "$head" 2>&1) || no "$(printf '%s' "$evd" | tail -1)"
 printf '%s' "$info" | python3 -I -c 'import json,sys;p=json.load(sys.stdin);print(p["title"]);print(p["body"])' | "$HOME/lonca/bin/ai-trace-check" 2>/dev/null || no "PR title/body has AI traces"
 
-[ $dry = 1 ] && { echo "merge: dry run OK for #$pr ($repo -> $base, $( [ $day = 1 ] && echo "day, owner said merge" || echo "night file $proj.json"))"; exit 0; }
-(cd "$repo" && "$GH" pr merge "$pr" --merge --match-head-commit "$head") || no "gh merge failed"
+[ $dry = 1 ] && { echo "$me: dry run OK for #$pr ($repo -> $base, $( [ $day = 1 ] && echo "day, owner said merge" || echo "night file $proj.json"))"; exit 0; }
+method=$(git -C "$repo" config lonca.mergeMethod || true)
+[ -n "$method" ] || method=$(cd "$repo" && "$GH" repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed \
+  -q 'if .mergeCommitAllowed then "merge" elif .squashMergeAllowed then "squash" else "rebase" end' 2>/dev/null) || method=merge
+(cd "$repo" && "$GH" pr merge "$pr" "--$method" --match-head-commit "$head") || no "gh merge ($method) failed"
 [ $day = 1 ] && rm -f "$G"
 echo "$(date -Iseconds) merged [$proj] $repo #$pr -> $base (lane $lane)" >> "$N/log"
 "$HOME/lonca/bin/kanzo-sync" >/dev/null 2>&1 || true   # its card -> done now, not at the next timer run
-echo "night-merge: merged #$pr into $base"
+echo "$me: merged #$pr into $base ($method)"

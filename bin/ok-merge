@@ -1,13 +1,21 @@
 #!/bin/sh
 # Owner only: allow merge-pr to merge these PRs (each used once, valid 24 h).
-#   ok-merge [--fast] <owner/repo>#<pr> [#<pr> ...]
-#   --fast: don't wait for CI still running (a failed check still blocks); the lead runs the full check on main after.
+#   ok-merge [--fast] <owner/repo>#<pr> [#<pr> | <owner/repo>#<pr> ...]
+#   A bare #N belongs to the repo named before it. --fast: don't wait for CI that is still running (a failed check
+#   still blocks); the lead runs the full check on the target branch after the batch.
 set -eu
-fast=; [ "${1:-}" = --fast ] && { fast=fast; shift; }
-case ${1:-} in */*#[0-9]*) ;; *) echo "usage: ok-merge [--fast] <owner/repo>#<pr> [#<pr> ...]   e.g. ok-merge --fast acme/shop#12 #14" >&2; exit 2 ;; esac
-nwo=${1%#*}
+usage() { echo "usage: ok-merge [--fast] <owner/repo>#<pr> [#<pr> | <owner/repo>#<pr> ...]   e.g. ok-merge --fast acme/shop#12 #14 acme/api#3" >&2; exit 2; }
+case ${1:-} in -h|--help|"") usage ;; esac
+fast=; [ "$1" = --fast ] && { fast=fast; shift; }
+case ${1:-} in */*#[0-9]*) ;; *) usage ;; esac
 d=$HOME/.local/state/lonca/merge-grants; mkdir -p "$d"
+nwo=
 for a in "$@"; do
+  case $a in
+    */*#*) nwo=${a%#*} ;;
+    \#*) ;;
+    *) echo "ok-merge: '$a' is neither <owner/repo>#<pr> nor #<pr>" >&2; exit 2 ;;
+  esac
   pr=${a##*#}
   case $pr in ''|*[!0-9]*) echo "ok-merge: bad PR '$a'" >&2; exit 2 ;; esac
   echo "$(date -Iseconds) $fast" > "$d/$(printf '%s' "$nwo" | tr '/' '_')_$pr"

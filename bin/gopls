@@ -1,4 +1,0 @@
-#!/bin/sh
-# All Claude/omp sessions share one gopls daemon (one ~2.6 GB process on a large Go repo instead of one per lane).
-# The real binary is ~/.local/bin/gopls.real (reinstall: GOBIN=~/.local/bin go install golang.org/x/tools/gopls@latest && mv ~/.local/bin/gopls ~/.local/bin/gopls.real).
-exec "$HOME/.local/bin/gopls.real" -remote=auto "$@"

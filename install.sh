@@ -1,16 +1,27 @@
 #!/bin/sh
-# install.sh [--yes] [--uninstall]: set Lonca up for this user (or take it out again). Safe to re-run; backs up every config file it changes (*.lonca-bak).
-#   Links skills/agents into Claude Code, Codex and omp; the rules (AGENTS.md) into every harness; commands into
-#   ~/.local/bin; git hooks; merges Lonca's deny rules and hooks into ~/.claude/settings.json and ~/.codex/hooks.json;
-#   creates ~/ai-memory from the template; installs the systemd user timers (Linux). Your private layer, if you have
-#   one, lives in ~/lonca-local (skills/, agents/): linked on top.
+# install.sh [--yes] [--memory-review] [--agent-tmpdir] [--sui] [--uninstall]: set Lonca up for this user (or take it out).
+#   --yes             accept the defaults without asking (all harnesses found; timers on; the two opt-ins below off)
+#   --memory-review   turn on the background memory review (every 2 h it sends your recent messages to Sonnet)
+#   --agent-tmpdir    point Claude sessions' TMPDIR at Lonca's temp dir (for a RAM-backed or small /tmp)
+#   --sui             extras/sui: lanes run sui/move-analyzer at each repo's CI SUI_VERSION; Move LSP plugin
+#   --uninstall       remove what this script added (keeps ~/ai-memory, ~/lonca-local and the *.lonca-bak backups)
+# Safe to re-run; backs up every config file it changes as *.lonca-bak. What it does: links the skills and agents
+# into Claude Code and the harnesses you pick, the rules (AGENTS.md) into each; commands into ~/.local/bin; a global
+# git core.hooksPath (repos' own hooks still run); Lonca's deny rules and hooks in ~/.claude/settings.json and, for
+# Codex, ~/.codex/hooks.json; ~/ai-memory from the template; timers (systemd on Linux, launchd on macOS).
+# Your private layer, ~/lonca-local (skills/, agents/, shims/, routing.md), is linked on top.
 set -eu
-YES=0 UN=0
-for arg in "$@"; do case $arg in --yes) YES=1 ;; --uninstall) UN=1 ;; *) echo "usage: install.sh [--yes] [--uninstall]" >&2; exit 2 ;; esac; done
+YES=0 UN=0 MR=0 TMPQ=0 SUI=0
+usage() { echo "usage: install.sh [--yes] [--memory-review] [--agent-tmpdir] [--sui] [--uninstall]   (--help: what each does)" >&2; }
+for arg in "$@"; do case $arg in
+  --yes) YES=1 ;; --uninstall) UN=1 ;; --memory-review) MR=1 ;; --agent-tmpdir) TMPQ=1 ;; --sui) SUI=1 ;;
+  -h|--help) sed -n '2,/^set -eu/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
+  *) usage; exit 2 ;; esac; done
 SRC=$(cd "$(dirname "$0")" && pwd -P)
 L=$HOME/lonca
 say() { printf '%s\n' "$*"; }
 ask() { [ $YES = 1 ] && return 0; printf '%s [y/N] ' "$1"; read -r a; [ "$a" = y ] || [ "$a" = Y ]; }
+opt_in() { [ "$1" = 1 ] && return 0; [ $YES = 1 ] && return 1; printf '%s [y/N] ' "$2"; read -r a; [ "$a" = y ] || [ "$a" = Y ]; }
 link() { # target link-path: never overwrites a real file
   mkdir -p "$(dirname "$2")"
   if [ -L "$2" ]; then ln -sfn "$1" "$2"
@@ -26,7 +37,7 @@ if [ $UN = 1 ]; then
   fi
   [ "$(uname)" = Darwin ] && python3 "$SRC/bin/launchd-units" uninstall
   for d in "$HOME/.claude/skills" "$HOME/.agents/skills" "$HOME/.claude/agents" "$HOME/.local/bin" "$HOME/.config/systemd/user" \
-           "$HOME/.codex" "$HOME/.codex/rules" "$HOME/.omp/agent" "$HOME/.omp/agent/extensions" "$HOME/.config/opencode" "$HOME/.gemini" "$HOME/.gemini/skills" "$HOME/.copilot" "$HOME/.config/crush" "$HOME/.pi/agent" "$HOME/.config/amp" "$HOME/.config/agents/skills" "$HOME/.grok" "$HOME/Library/LaunchAgents"; do
+           "$HOME/.codex" "$HOME/.codex/rules" "$HOME/.omp/agent" "$HOME/.omp/agent/extensions" "$HOME/.config/opencode" "$HOME/.gemini" "$HOME/.gemini/skills" "$HOME/.copilot" "$HOME/.config/crush" "$HOME/.pi/agent" "$HOME/.config/amp" "$HOME/.config/agents/skills" "$HOME/.grok" "$HOME/lonca-local/shims" "$HOME/Library/LaunchAgents"; do
     for f in "$d"/* "$d"/.[!.]*; do
       [ -L "$f" ] || continue
       case $(readlink -f "$f" 2>/dev/null) in "$SRC"/*|"$SRC") rm "$f" ;; esac
@@ -45,13 +56,15 @@ def strip(p, deny=False):
         s.get("permissions", {})["deny"] = [r for r in s.get("permissions", {}).get("deny", []) if r not in ours]
         s.get("extraKnownMarketplaces", {}).pop("lonca", None)
     for ev, groups in s.get("hooks", {}).items():
-        for g in groups: g["hooks"] = [h for h in g.get("hooks", []) if L not in h.get("command", "").replace("~/", H + "/")]
+        ours = (L, "cat ~/ai-memory/MEMORY.md")
+        for g in groups: g["hooks"] = [h for h in g.get("hooks", []) if not any(o in h.get("command", "").replace("~/lonca", L).replace("~/", H + "/") or o == h.get("command") for o in ours)]
         s["hooks"][ev] = [g for g in groups if g["hooks"]]
     json.dump(s, open(p, "w"), indent=2)
 strip(f"{H}/.claude/settings.json", deny=True); strip(f"{H}/.codex/hooks.json")
 EOF2
   [ -L "$L" ] && rm "$L"
-  say "Lonca removed. Kept: ~/ai-memory, ~/lonca-local, your settings backups (*.lonca-bak) and this checkout ($SRC)."
+  say "Lonca removed. Kept: ~/ai-memory, ~/lonca-local, the *.lonca-bak backups, this checkout ($SRC), and these"
+  say "settings it set in ~/.claude/settings.json: attribution off, env.TMPDIR (if you chose it), autoMemoryDirectory."
   exit 0
 fi
 
@@ -112,12 +125,23 @@ grep -qsF "@~/lonca/AGENTS.md" "$HOME/.claude/CLAUDE.md" || {
   mkdir -p "$HOME/.claude"; [ -f "$HOME/.claude/CLAUDE.md" ] && cp "$HOME/.claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md.lonca-bak"
   { cat "$HOME/.claude/CLAUDE.md" 2>/dev/null || true; echo "@~/lonca/AGENTS.md"; } > "$HOME/.claude/CLAUDE.md.new"
   mv "$HOME/.claude/CLAUDE.md.new" "$HOME/.claude/CLAUDE.md"; }
-for c in lane merge-pr night-merge night-on ok-merge kanzo-sync; do link "$L/bin/$c" "$HOME/.local/bin/$c"; done
-link "$L/bin/move-analyzer" "$HOME/.local/bin/lonca-move-analyzer"   # for the optional move-lsp plugin
+for c in lane lanes lonca-project merge-pr night-merge night-on ok-merge kanzo-sync; do link "$L/bin/$c" "$HOME/.local/bin/$c"; done
+export LONCA_SUI=
+if command -v suiup >/dev/null || [ $SUI = 1 ]; then
+  if opt_in $SUI "Sui Move extra: lanes run sui/move-analyzer at each repo's CI SUI_VERSION, plus a Move LSP plugin for Claude?"; then
+    link "$L/extras/sui/sui-pick" "$HOME/lonca-local/shims/sui"                  # lanes put ~/lonca-local/shims on PATH
+    link "$L/extras/sui/move-analyzer" "$HOME/.local/bin/lonca-move-analyzer"   # what the plugin starts
+    LONCA_SUI=1; say "  Sui extra on"
+  fi
+fi
 hp=$(git config --global core.hooksPath || true)
 case $hp in ""|*/lonca/git-hooks) git config --global core.hooksPath "$L/git-hooks" ;;
   *) say "  git core.hooksPath is $hp: left alone; add $L/git-hooks/* to it yourself" ;; esac
-mkdir -p /var/tmp/agents "$HOME/lonca-local" 2>/dev/null || true   # lonca-local: your private layer (model-log.jsonl, own skills)
+AT=$("$L/bin/lonca-config" tmpdir "$HOME/.cache/lonca/tmp")   # agents' temp dir (lanes always use it)
+mkdir -p "$AT" "$HOME/lonca-local"   # lonca-local: your private layer (model-log.jsonl, own skills)
+export LONCA_CLAUDE_TMPDIR=
+opt_in $TMPQ "Claude sessions write temp files to $AT instead of /tmp (useful when /tmp is RAM or small)?" && LONCA_CLAUDE_TMPDIR=$AT
+case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) say "  note: $HOME/.local/bin is not on your PATH; add it so lane, merge-pr and ok-merge are found" ;; esac
 
 # 4. Claude and Codex settings: add Lonca's deny rules and hooks, keep everything else
 python3 -I - "$L" <<'EOF'
@@ -144,11 +168,12 @@ deny += [r for r in json.load(open(f"{L}/config/claude-permissions.json"))["deny
 hooks = s.setdefault("hooks", {})
 add_hook(hooks, "SessionStart", "startup|resume|clear|compact", f"{L}/bin/memory-context")
 add_hook(hooks, "PreToolUse", "Bash", f"{L}/bin/ai-trace-gh --hook")
-s.setdefault("env", {}).setdefault("TMPDIR", "/var/tmp/agents")
+if os.environ.get("LONCA_CLAUDE_TMPDIR"):
+    s.setdefault("env", {}).setdefault("TMPDIR", os.environ["LONCA_CLAUDE_TMPDIR"])
 s["attribution"] = {"commit": "", "pr": ""}; s["includeCoAuthoredBy"] = False
 s.setdefault("autoMemoryDirectory", "~/ai-memory")
-m = s.setdefault("extraKnownMarketplaces", {})
-m["lonca"] = {"source": {"source": "directory", "path": f"{L}/plugins"}}
+if os.environ.get("LONCA_SUI"):
+    s.setdefault("extraKnownMarketplaces", {})["lonca"] = {"source": {"source": "directory", "path": f"{L}/extras/sui/plugins"}}
 save(p, s)
 
 HS = os.environ.get("LONCA_HARNESSES", "").split()
@@ -168,24 +193,32 @@ if [ ! -d "$HOME/ai-memory" ]; then
     git -C "$M" -c user.name=Lonca -c user.email=lonca@localhost commit -qm "memory: start from the Lonca template" && say "created ~/ai-memory"
 fi
 
-# 6. Timers (Linux, systemd user)
+# 6. Timers. Each is skipped when its tool is missing; the memory review only when you opt in.
+skip=
+command -v hc >/dev/null || skip="$skip lane-watch"
+command -v kanzo >/dev/null || skip="$skip kanzo-sync kanzo-backup monthly-card"
+command -v deja >/dev/null || skip="$skip deja-index"
+opt_in $MR "Background memory review: every 2 h, send your messages from Claude sessions since the last run (all projects) to Sonnet on your Claude plan, which saves lasting decisions to ~/ai-memory. Turn on?" || skip="$skip memory-review"
 if command -v systemctl >/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
-  if ask "Install the timers (lane-watch, kanzo-sync, kanzo-backup, monthly-card, ai-cleanup, memory-review, ai-memory-commit, deja-index)?"; then
+  if ask "Install the timers (lane-watch, kanzo-sync, ai-cleanup, ai-memory-commit, …; skipped:${skip:- none})?"; then
     U=$HOME/.config/systemd/user; mkdir -p "$U"
     for f in "$L"/config/systemd/*.service "$L"/config/systemd/*.timer; do link "$f" "$U/$(basename "$f")"; done
     systemctl --user daemon-reload
     for t in "$L"/config/systemd/*.timer; do
       n=$(basename "$t" .timer)
-      case $n in kanzo-sync|kanzo-backup|monthly-card) command -v kanzo >/dev/null || continue ;; deja-index) command -v deja >/dev/null || continue ;; esac
+      case " $skip " in *" $n "*) continue ;; esac
       systemctl --user enable --now "$n.timer" >/dev/null 2>&1 && say "  timer on: $n"
     done
   fi
 elif [ "$(uname)" = Darwin ]; then
-  if ask "Install the timers as launchd agents (lane-watch, kanzo-sync, ai-cleanup, memory-review, ai-memory-commit, …)?"; then
-    miss=; command -v kanzo >/dev/null || miss="kanzo-sync kanzo-backup monthly-card"; command -v deja >/dev/null || miss="$miss deja-index"
-    python3 "$L/bin/launchd-units" install $miss
+  if ask "Install the timers as launchd agents (lane-watch, kanzo-sync, ai-cleanup, ai-memory-commit, …; skipped:${skip:- none})?"; then
+    python3 "$L/bin/launchd-units" install $skip
   fi
 else
-  say "No systemd or launchd: run bin/lane-watch, bin/kanzo-sync, bin/ai-cleanup, bin/memory-review from cron yourself."
+  say "No systemd or launchd: run bin/lane-watch, bin/kanzo-sync and bin/ai-cleanup from cron yourself."
+fi
+# Kanzo board: the lead and kanzo-sync talk to it over MCP
+if command -v kanzo >/dev/null && ! grep -qs '"kanzo"' "$HOME/.claude.json"; then
+  claude mcp add --scope user kanzo -- kanzo mcp >/dev/null 2>&1 && say "  Kanzo MCP added to Claude Code" || say "  add Kanzo to Claude yourself: claude mcp add --scope user kanzo -- kanzo mcp"
 fi
 say "Lonca is set up. Start a lead in a project folder:  claude --agent lead"

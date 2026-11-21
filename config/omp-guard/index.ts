@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 
-// Same hard limits as ~/lonca/AGENTS.md and the Claude/Codex/opencode deny lists.
+// Same hard limits as ~/lonca/AGENTS.md, the Claude deny rules and the PATH shims every lane gets.
 // shortcut: regex on the command text, not a shell parser; the pre-push hook backs up the git rules.
 const BLOCKED: Array<[RegExp, string]> = [
   [/\bgit\s+push\b[^\n;&|]*\s(--force(-with-lease)?|-f)\b/, "no force-push"],

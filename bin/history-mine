@@ -5,11 +5,12 @@ Writes ~/.cache/ai-runs/setup/history-mining/owner-messages-<date>.md for the mo
 subagent turns it into candidates with ~/lonca/config/history-candidates.prompt.md; the owner approves each one.
 Only the owner's typed text: no tool output, system reminders or pasted blocks; one copy of each message.
 """
-import glob, hashlib, json, os, re, sys, time
+import calendar, glob, hashlib, json, os, re, sys, time
 
 days = int(sys.argv[sys.argv.index("--days") + 1]) if "--days" in sys.argv else 31
 since = time.time() - days * 86400
 out = os.path.expanduser(f"~/.cache/ai-runs/setup/history-mining/owner-messages-{time.strftime('%Y-%m-%d')}.md")
+# decision wording in English and Turkish; add your language's words here
 kw = re.compile(r"\b(never|always|from now on|don't|must|rule|decide|prefer|asla|hiç ?bir zaman|her zaman|bundan sonra|artık|karar|kural|yapma|yapmayın|olmasın|olmamalı|"
                 r"istemiyorum|unutma|sakın|önemli|şart|zorunlu|yasak|izin ver|onaylıyorum|kesinlikle|tercih)\w*", re.I)
 seen, rows = set(), []
@@ -26,7 +27,7 @@ for f in glob.glob(os.path.expanduser("~/.claude/projects/*/*.jsonl")):
             continue
         ts = m.get("timestamp", "")
         try:
-            if time.mktime(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S")) < since:
+            if calendar.timegm(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S")) < since:
                 continue
         except ValueError:
             pass

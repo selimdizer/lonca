@@ -16,7 +16,9 @@ case $name in
     "$HOME/lonca/bin/ai-trace-gh" "$@" || exit 126 ;;
   git)
     case $args in
-      *" push "*" --force"*|*" push "*" -f "*|*" push --force"*|*" push -f "*) deny "no force-push" ;;
+      *" push "*" --force"*|*" push "*" -f "*|*" push --force"*|*" push -f "*|*" push "*" +"*) deny "no force-push" ;;
+      *" push "*" --delete"*|*" push "*" -d "*|*" push "*" :"*) deny "no branch deletion" ;;
+      *"core.hooksPath="*|*"core.hookspath="*) deny "don't bypass git hooks" ;;
       *" push "*" --no-verify"*) deny "don't skip the pre-push hook" ;;
       *" reset --hard"*|*" reset "*" --hard"*) deny "no reset --hard" ;;
       *" clean "*) deny "no git clean" ;;

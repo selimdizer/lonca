@@ -14,7 +14,10 @@ for k in [k for k in os.environ if k == "CLAUDECODE" or k.startswith(("CLAUDE_",
     del os.environ[k]                      # never start the hc core with an agent's variables
 
 def hc(*a):
-    r = subprocess.run(["hc", *a], capture_output=True, text=True)
+    try:
+        r = subprocess.run(["hc", *a], capture_output=True, text=True)
+    except FileNotFoundError:
+        sys.exit("lane-watch: herdr-core (hc) is not installed")
     return r.returncode, r.stdout
 
 def newest_change(path):
@@ -31,7 +34,10 @@ def newest_change(path):
 
 now = time.time()
 for rec_path in glob.glob(os.path.expanduser("~/.cache/ai-runs/**/*.lane.json"), recursive=True):
-    rec = json.load(open(rec_path))
+    try:
+        rec = json.load(open(rec_path))
+    except (OSError, ValueError):
+        continue
     if rec.get("done"):
         continue
     if os.path.exists(rec["result"]) and os.path.getsize(rec["result"]) > 0:

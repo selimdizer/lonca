@@ -10,6 +10,10 @@ t blocked git push origin x --force
 t blocked git reset --hard
 t blocked git clean -fdx
 t blocked git branch -D x
+t blocked git push origin +x
+t blocked git push origin --delete x
+t blocked git push origin :x
+t blocked git -c core.hooksPath=/dev/null push origin x
 t ok      git --version
 t ok      git status --short
 t blocked pkill -f nothing-xyz

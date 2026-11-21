@@ -1,0 +1,6 @@
+#!/bin/sh
+# A global core.hooksPath hides each repo's own .git/hooks. Every hook name Lonca doesn't use links here and just
+# runs the repo's own hook of that name, so pre-commit and friends keep working.
+own="$(git rev-parse --git-common-dir 2>/dev/null)/hooks/$(basename "$0")"
+[ -x "$own" ] && [ "$(readlink -f "$own")" != "$(readlink -f "$0")" ] && exec "$own" "$@"
+exit 0
