@@ -3,6 +3,15 @@
 All notable changes to Lonca. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-11-21
+
+- macOS: timers as launchd agents; portable `date`/`stat`/`realpath`/hash; Python 3.9+ (no `tomllib` needed).
+- The installer asks which harnesses get Lonca: Codex, omp, OpenCode, Gemini CLI, Antigravity, Copilot CLI, Amp, Grok,
+  Crush, goose, pi (Claude Code always).
+- Lane agents for OpenCode, Copilot, Gemini, Antigravity, pi, Grok and goose.
+- Projects found by `lonca.toml` (walk up from the repo, like mise/EditorConfig); no fixed projects folder.
+- Logo, icons and social preview.
+
 ## [0.1.0] - 2026-11-21
 
 First public release.
