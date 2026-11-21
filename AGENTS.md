@@ -26,6 +26,6 @@
 - Every report and PR body has a "Not verified" section. PRs say "Closes #N" or "Part of #N".
 
 ## Memory (`~/ai-memory`, shared by every agent)
-- Its `MEMORY.md` index is loaded at session start. Read a note before acting on it.
+- Its `MEMORY.md` index is loaded at session start (if your harness did not load it, read `~/ai-memory/MEMORY.md` and, for this project, `~/ai-memory/<project>/INDEX.md` from `~/lonca/bin/lonca-project` first). Read a note before acting on it.
 - Lanes write lessons in their report and the lead saves them; other agents save on their own, without asking, what a future session would need: project facts, servers, owner decisions with their date, corrections and lessons. Follow `~/ai-memory/README.md` (group folder by working directory, one fact per file, index line, commit). Never save secrets or customer data.
 - Past conversations of all agents: `deja search "<words>"`.

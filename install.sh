@@ -26,7 +26,7 @@ if [ $UN = 1 ]; then
   fi
   [ "$(uname)" = Darwin ] && python3 "$SRC/bin/launchd-units" uninstall
   for d in "$HOME/.claude/skills" "$HOME/.agents/skills" "$HOME/.claude/agents" "$HOME/.local/bin" "$HOME/.config/systemd/user" \
-           "$HOME/.codex" "$HOME/.codex/rules" "$HOME/.omp/agent" "$HOME/.omp/agent/extensions" "$HOME/.config/opencode" "$HOME/Library/LaunchAgents"; do
+           "$HOME/.codex" "$HOME/.codex/rules" "$HOME/.omp/agent" "$HOME/.omp/agent/extensions" "$HOME/.config/opencode" "$HOME/.gemini" "$HOME/.copilot" "$HOME/.config/crush" "$HOME/.pi/agent" "$HOME/Library/LaunchAgents"; do
     for f in "$d"/* "$d"/.[!.]*; do
       [ -L "$f" ] || continue
       case $(readlink -f "$f" 2>/dev/null) in "$SRC"/*|"$SRC") rm "$f" ;; esac
@@ -65,16 +65,37 @@ git -C "$L" config lonca.toolNamesOk true   # Lonca's own commits may name the t
 # 2. Tools
 say "Tools:"
 for t in claude git gh python3; do command -v $t >/dev/null || { say "  missing (required): $t"; exit 1; }; done
-for t in codex omp herdr hc kanzo deja; do
+for t in herdr hc kanzo deja; do
   if command -v $t >/dev/null; then say "  ok       $t"; else say "  missing  $t (optional; see README: what works without it)"; fi
 done
 
 # 3. Skills, agents, rules, commands, hooks
+# Other harnesses: you choose which ones get Lonca (rules + skills; Claude Code always does)
+found=; for h in codex omp opencode gemini copilot crush pi; do command -v $h >/dev/null && found="$found $h"; done
+pick=$found
+if [ -n "$found" ] && [ $YES = 0 ]; then
+  printf 'Harnesses found:%s\nWhich get Lonca? (space-separated, Enter = all, "none" = none): ' "$found"; read -r a
+  case $a in "") ;; none) pick= ;; *) pick=$a ;; esac
+fi
+for h in $pick; do
+  case $h in
+    codex)    link "$L/AGENTS.md" "$HOME/.codex/AGENTS.md"; link "$L/config/codex-rules/default.rules" "$HOME/.codex/rules/default.rules" ;;
+    omp)      link "$L/AGENTS.md" "$HOME/.omp/agent/RULES.md"; link "$L/config/omp-guard" "$HOME/.omp/agent/extensions/lonca-guard" ;;
+    opencode) link "$L/AGENTS.md" "$HOME/.config/opencode/AGENTS.md" ;;
+    gemini)   link "$L/AGENTS.md" "$HOME/.gemini/AGENTS.md" ;;            # + context.fileName below
+    copilot)  link "$L/AGENTS.md" "$HOME/.copilot/copilot-instructions.md" ;;
+    crush)    link "$L/AGENTS.md" "$HOME/.config/crush/CRUSH.md" ;;
+    pi)       link "$L/AGENTS.md" "$HOME/.pi/agent/AGENTS.md" ;;
+    *) say "  unknown harness: $h (skipped)"; continue ;;
+  esac
+  say "  linked: $h"
+done
+export LONCA_HARNESSES="$pick"   # read by the settings step
 for s in "$L"/skills/*/ $HOME/lonca-local/skills/*/; do
   [ -f "$s/SKILL.md" ] || continue
   n=$(basename "$s")
   link "$s" "$HOME/.claude/skills/$n"        # Claude Code
-  link "$s" "$HOME/.agents/skills/$n"        # Codex and omp
+  [ -n "$pick" ] && link "$s" "$HOME/.agents/skills/$n"   # read by Codex, omp, opencode, Gemini, Copilot, Crush, pi
 done
 for a in "$L"/agents/*.md $HOME/lonca-local/agents/*.md; do
   [ -f "$a" ] && link "$a" "$HOME/.claude/agents/$(basename "$a")"
@@ -83,9 +104,6 @@ grep -qsF "@~/lonca/AGENTS.md" "$HOME/.claude/CLAUDE.md" || {
   mkdir -p "$HOME/.claude"; [ -f "$HOME/.claude/CLAUDE.md" ] && cp "$HOME/.claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md.lonca-bak"
   { cat "$HOME/.claude/CLAUDE.md" 2>/dev/null || true; echo "@~/lonca/AGENTS.md"; } > "$HOME/.claude/CLAUDE.md.new"
   mv "$HOME/.claude/CLAUDE.md.new" "$HOME/.claude/CLAUDE.md"; }
-[ -d "$HOME/.codex" ] && { link "$L/AGENTS.md" "$HOME/.codex/AGENTS.md"; link "$L/config/codex-rules/default.rules" "$HOME/.codex/rules/default.rules"; }
-[ -d "$HOME/.omp/agent" ] && { link "$L/AGENTS.md" "$HOME/.omp/agent/RULES.md"; link "$L/config/omp-guard" "$HOME/.omp/agent/extensions/lonca-guard"; }
-[ -d "$HOME/.config/opencode" ] && link "$L/AGENTS.md" "$HOME/.config/opencode/AGENTS.md"
 for c in lane merge-pr night-merge night-on ok-merge kanzo-sync; do link "$L/bin/$c" "$HOME/.local/bin/$c"; done
 link "$L/bin/move-analyzer" "$HOME/.local/bin/lonca-move-analyzer"   # for the optional move-lsp plugin
 hp=$(git config --global core.hooksPath || true)
@@ -125,13 +143,19 @@ m = s.setdefault("extraKnownMarketplaces", {})
 m["lonca"] = {"source": {"source": "directory", "path": f"{L}/plugins"}}
 save(p, s)
 
-if os.path.isdir(f"{H}/.codex"):
+HS = os.environ.get("LONCA_HARNESSES", "").split()
+if "gemini" in HS:   # read ~/.gemini/AGENTS.md as well as GEMINI.md
+    p = f"{H}/.gemini/settings.json"; g = load(p); names = g.setdefault("context", {}).setdefault("fileName", ["GEMINI.md"])
+    if isinstance(names, str): names = g["context"]["fileName"] = [names]
+    if "AGENTS.md" not in names: names.insert(0, "AGENTS.md")
+    save(p, g)
+if "codex" in HS:
     p = f"{H}/.codex/hooks.json"; c = load(p); hk = c.setdefault("hooks", {})
     add_hook(hk, "SessionStart", "startup|resume|clear|compact", "cat ~/ai-memory/MEMORY.md")
     add_hook(hk, "SessionStart", "startup|resume|clear|compact", f"{L}/bin/memory-context")
     add_hook(hk, "Stop", None, f"python3 {L}/config/memory-nudge.py")
     save(p, c)
-print("settings: Claude" + (" + Codex" if os.path.isdir(f"{H}/.codex") else "") + " updated (backups *.lonca-bak)")
+print("settings: Claude" + "".join(f" + {h.capitalize()}" for h in ("codex", "gemini") if h in HS) + " updated (backups *.lonca-bak)")
 EOF
 
 # 5. Shared memory

@@ -4,6 +4,7 @@
 #   lane --read <repo-dir> <name> omp:<provider/model> <brief-file> <result-file>
 #     read-only lane: no worktree, runs in <repo-dir> with read/grep/glob only; its answer is the report
 #   agent: claude:<role> (implementer|reviewer|verifier|security-auditor) | codex:<model>[:<effort>] (default xhigh) | omp:<provider/model>
+#          | opencode:<provider/model> | copilot:<model> | gemini:<model> | pi:<provider/model>
 # The agent writes its final report to <result-file>; the lead waits for that file, not for herdr state.
 # The branch starts from a fresh origin/<base> (default: the remote's default branch); an existing branch is reused.
 # Needs herdr-core (hc): no silent headless fallback.
@@ -43,6 +44,11 @@ case $agent in
   # Copilot lanes (client work limited to Copilot): helpers stay on Copilot too, so no code goes to DeepSeek/GLM
   omp:github-copilot/*) cmd="omp --model ${agent#omp:} --smol github-copilot/claude-sonnet-5.5 --slow github-copilot/claude-opus-5.5" ;;
   omp:*)    cmd="omp --model ${agent#omp:}" ;;
+  copilot:*) cmd="copilot --model ${agent#copilot:} --yolo -i" ;;            # -i: runs the prompt, stays interactive
+  gemini:*)  cmd="gemini -m ${agent#gemini:} --approval-mode=yolo -i" ;;
+  pi:*)      cmd="pi --model ${agent#pi:}" ;;                                # pi has no approvals to bypass
+  # opencode: no --model on the TUI; the model comes in as config, and --prompt only fills the box (Enter sent below)
+  opencode:*) cmd="env OPENCODE_CONFIG_CONTENT='{\"model\":\"${agent#opencode:}\"}' opencode --standalone --auto --prompt" ;;
   *) echo "unknown agent: $agent" >&2; exit 2 ;;
 esac
 quoted=$(printf '%s' "$prompt" | sed "s/'/'\\\\''/g")
@@ -91,6 +97,9 @@ name=$(printf '%s-%s' "$(basename "$(realpath "$repo")" | cut -c1-8)" "$branch" 
   # --outlive-parent: a lane keeps running if the lead's session ends; its exit is noted in the lead's input
   hc run --bg --outlive-parent --name "$name" --cwd "$wt" "$@" \
     -- sh -c "PATH=$HOME/lonca/shims:\$PATH $run" >/dev/null
+  case $agent in opencode:*)   # submit the prefilled prompt once the TUI shows it
+    hc wait "$name" --output "Read the brief" --timeout 60 >/dev/null 2>&1 && hc keys "$name" enter >/dev/null 2>&1 || echo "lane: press Enter in $name to start it" >&2 ;;
+  esac
   # lane record for lane-watch and a restarted lead
   printf '{"name":"%s","worktree":"%s","lead":"%s","agent":"%s","base":"%s","result":"%s","started":%s,"card":"%s","branch":"%s","repo":"%s"}\n' \
     "$name" "$wt" "${HC_TERMINAL_ID:-}" "$agent" "$base" "$result" "$(date +%s)" "$card" "$( [ $ro = 1 ] || printf '%s' "$branch")" "$(realpath "$repo")" > "$result.lane.json"
