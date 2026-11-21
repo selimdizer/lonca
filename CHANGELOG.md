@@ -5,21 +5,21 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [0.4.0] - 2026-11-22
 
-Merging sized to the risk, approved in two words (decided after a three-family council review).
+Merging, simplified (after a three-family council review): risk tiers for the checks, one setting for approval.
 - `merge-tier`: the PR's risk tier from its own diff. High: CI/deploy/infra, migrations and SQL, dependency manifests
-  and lock files, env/secrets, auth/payment paths, agent instructions, renames/deletes, `lonca.toml`. Low: only docs and
-  tests, at most 10 files and 100 lines. Medium: the rest. Projects can raise the floor (`min_tier`) or add
-  `high_paths`; the lead can only raise a tier.
-- Evidence by tier: PERF required for high, and for medium when a perf check ran; low ignores it.
-- `merge-pr` approvals: an `ok-merge` grant; auto-merge up to the tier set by `auto_merge = "off|low|medium|all"`
-  (per project in `lonca.toml`, default in `~/.config/lonca/config.toml`; capped by `auto_merge_daily`, default 10);
-  otherwise it prints a code bound to the PR's head for one hour, and the owner approves with `evet <code>` in chat.
-  PRs asked within five minutes share one code, so a batch is one answer. Every merge is logged with its tier and how
-  it was approved.
-- Night mode starts the same way: the lead runs `night-on --request …` and the owner answers `başla <code>`; the merge
-  cap can be `unlimited`. The morning report also goes to the lead's session.
-- `lane-watch` closes a lane that wrote its report 10+ min ago and left nothing behind (no commits, no changes: review,
-  council or test lanes), and removes its worktree and never-pushed branch. Before, such lanes stayed open forever.
+  and lock files, env/secrets, auth/payment paths, agent instructions, renames/deletes, `lonca.toml`. Low: only docs
+  and tests, at most 10 files and 100 lines. Medium: the rest. Projects can raise the floor (`min_tier`) or add
+  `high_paths`; the lead can only raise a tier. Evidence follows the tier (PERF required for high, and for medium
+  when a perf check ran).
+- `merge-pr` is the only merge command. Approval: the project's `auto_merge` (off | low | medium | all; per project in
+  `lonca.toml`, default in `~/.config/lonca/config.toml`), the project's night mode, or the owner's `evet <code>` in
+  chat: a code bound to the PR's head for one hour; PRs asked together share one code.
+- Night mode is per project: the lead runs `night-on --request <project> <HH:MM> [<max>]`, the owner answers
+  `başla <code>`; until the end time every PR of the project that passes its checks merges. `night-on --off` ends it.
+- `wait_for_ci = false` (per project) lets still-running CI checks pass; a failed check always blocks.
+- Removed: `ok-merge` and its `--fast` grant, `night-merge`, per-night repo lists, merge caps per day.
+- `lane-watch` closes a lane that wrote its report 10+ min ago and left nothing behind (no commits, no changes:
+  review, council or test lanes), and removes its worktree and never-pushed branch.
 
 ## [0.3.2] - 2026-11-22
 

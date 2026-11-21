@@ -46,7 +46,7 @@ rails, not a sandbox: lanes run with full permissions as your user, so a determi
 
 - 🧵 **Lanes you can see.** `lane` starts an agent in its own worktree as a [Herdr](https://herdr.dev) terminal. It reports back with `DONE: <outcome>` or asks `QUESTION: …`, and `lane-watch` tells the lead when one goes quiet.
 - 🔏 **One way to merge, sized to the risk.** `merge-pr` merges only the PR's *exact* head commit, after CI and evidence from verify, review and security for that commit. A script reads the diff and sets the risk tier (docs/tests = low, auth/payments/migrations/CI/dependencies = high, the rest medium); low needs fewer checks, and you choose per project which tiers merge themselves (none, low, medium or all). Everything else waits for your `evet <code>` in chat.
-- 🌙 **Night mode.** The lead asks every question up front and prepares tonight's limits (end time, merge cap or unlimited, which repos). You answer `başla <code>` and go to bed; the lead works through the tagged cards, merges green PRs within those limits, and leaves you the night's summary and open questions for the morning.
+- 🌙 **Night mode.** The lead asks every question up front and proposes tonight's work for its project. You answer `başla <code>` and go to bed: until the end time, every PR of that project that passes its checks merges without asking. In the morning you get what was done and the questions that came up.
 - 🧠 **Memory you only fill once.** `~/ai-memory` is plain Markdown that every agent loads at start, with one group per project. Agents save decisions as they go; an optional background review catches the ones they missed.
 - 📋 **A board that keeps itself current.** With [Kanzo](https://github.com/emanuele-em/kanzo), cards move by themselves: *doing* when a lane starts, *review* when its PR opens, *done* when it merges. Issues and PRs your account opens in a project's linked repos get a card too.
 - 🛡️ **Guards.** Deny rules, `gh`/`git` shims and git hooks block direct merges, pushes to the default branch, force-pushes, branch deletes, co-author lines and "Generated with" lines.
@@ -85,7 +85,7 @@ again, and it backs up every file it changes as `*.lonca-bak`. What it changes:
 - **Git:** a global `core.hooksPath` with Lonca's `commit-msg` and `pre-push`; every other hook name runs the repo's own
   `.git/hooks/<name>`, so your pre-commit hooks keep working. Repos that set their own `core.hooksPath` (husky,
   lefthook) keep theirs, and Lonca's hooks don't run there.
-- **Commands** in `~/.local/bin`: `lane`, `lanes`, `lonca-project`, `merge-pr`, `merge-tier`, `night-merge`, `ok-merge`, `night-on`, `kanzo-sync`.
+- **Commands** in `~/.local/bin`: `lane`, `lanes`, `lonca-project`, `merge-pr`, `merge-tier`, `night-on`, `kanzo-sync`.
 - **Memory:** `~/ai-memory` from a template, if you don't have one.
 - **Timers** (systemd on Linux, launchd on macOS): `lane-watch` (needs `hc`), `kanzo-sync`, `kanzo-backup` and
   `monthly-card` (need Kanzo), `ai-cleanup`, `ai-memory-commit`, `deja-index` (needs deja).
@@ -125,7 +125,7 @@ that holds them (anywhere on disk). It is a one-line file:
 ```toml
 name = "shop"              # memory group ~/ai-memory/shop/ and Kanzo project slug; default: the folder's name
 auto_merge = "low"         # optional: merge PRs up to this tier without asking: off | low | medium | all
-auto_merge_daily = 10      # optional: at most this many auto-merges a day ("unlimited" for no cap)
+wait_for_ci = false        # optional: CI checks still running don't block a merge (a failed one always does)
 min_tier = "medium"        # optional: nothing in this project counts as low
 high_paths = ["src/pay/*"] # optional: more paths that make a PR high tier
 ```
@@ -142,7 +142,7 @@ skills go in `<project root>/.claude/skills/`, next to the repos rather than ins
 | Shared memory | `~/ai-memory/` (`MEMORY.md` index + one folder per project) |
 | Your own skills, agents, notes | `~/lonca-local/` (linked on top of Lonca's) |
 | Run folders (briefs, reports, evidence) | `~/.cache/ai-runs/<project>/` |
-| Merge grants | `~/.local/state/lonca/merge-grants/` |
+| Approval codes, merge log | `~/.local/state/lonca/approvals/`, `~/.cache/ai-runs/night/log` |
 | Settings (optional) | `~/.config/lonca/config.toml`: `tmpdir`, `cleanup_tmp_dirs` (see `lonca-config --help`) |
 
 **Environment variables:**
@@ -161,8 +161,7 @@ skills go in `<project root>/.claude/skills/`, next to the repos rather than ins
 | `lonca.toolNamesOk true` (per repo) | lifts `strictTraces` in a repo whose subject is AI tools |
 | `lonca.mergeMethod merge\|squash\|rebase` (per repo) | how `merge-pr` merges; default: what the repo allows, in that order |
 
-A repo without CI checks only merges with an `ok-merge --fast` grant. `ok-merge <owner/repo>#<pr> [<pr> …]` is your
-shortcut to approve PRs up front from a terminal (`--fast` also lets still-running CI jobs pass).
+A repo without CI checks needs `wait_for_ci = false` in its project's `lonca.toml` to merge at all.
 
 **Lane agents:** `claude:<role>`, `codex:<model>[:<effort>]`, `omp:<provider/model>`, `opencode:<provider/model>`,
 `copilot:<model>`, `agy:<model>` (Antigravity), `pi:<provider/model>`, `grok:<model>`.

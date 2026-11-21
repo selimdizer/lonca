@@ -1,41 +1,36 @@
 #!/bin/sh
-# Start night mode for one project, on the owner's word.
-#   night-on --request <project> <until HH:MM> <max-merges|unlimited> <repo-dir>:<base> [<repo-dir>:<base> ...]
-#       the lead prepares tonight's limits; prints a code (valid 1 h) for the owner to answer "başla <code>" in chat
-#   night-on --code <code> <project>
-#       the lead passes the owner's code; night mode starts with exactly the prepared limits
-# night-merge then merges green, checked PRs of that project until the end time or the merge cap.
+# Night mode for one project, started by the owner's word. While it is on, merge-pr merges every PR of the project
+# that passes its checks (as if auto_merge were "all"), until the end time and, if one was set, up to a cap.
+#   night-on --request <project> <until HH:MM> [<max-merges>]
+#       the lead prepares tonight; prints a code (valid 1 h) for the owner to answer "başla <code>" in chat
+#   night-on --code <code> <project>          the lead passes the owner's code: night mode starts
+#   night-on --off <project>                  ends it early
+# <project> is the name `lonca-project` prints for the project's repos.
 set -eu
 N=$HOME/.cache/ai-runs/night A=$HOME/.local/state/lonca/approvals
-usage() { echo "usage: night-on --request <project> <HH:MM> <max|unlimited> <repo-dir>:<base> ...  |  night-on --code <code> <project>" >&2; exit 2; }
+usage() { echo "usage: night-on --request <project> <HH:MM> [<max>]  |  night-on --code <code> <project>  |  night-on --off <project>" >&2; exit 2; }
 case ${1:-} in
   --request)
-    [ $# -ge 5 ] || usage
-    shift; mkdir -p "$A"
+    [ $# -eq 3 ] || [ $# -eq 4 ] || usage
+    mkdir -p "$A"
     c=$(python3 -I -c 'import secrets; print("".join(secrets.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(3)))')
-    python3 -I - "$A/night_$1.json" "$c" "$@" <<'PY'
-import datetime, json, os, sys, time
-out, code, proj, until, mx, *allow = sys.argv[1:]
-assert mx == "unlimited" or mx.isdigit(), "max merges: a number or 'unlimited'"
+    python3 -I - "$A/night_$2.json" "$c" "$2" "$3" "${4:-unlimited}" <<'PY'
+import datetime, json, sys, time
+out, code, proj, until, mx = sys.argv[1:]
+assert mx == "unlimited" or mx.isdigit(), "max merges: a number, or leave it out for no cap"
 now = datetime.datetime.now().astimezone(); h, m = map(int, until.split(":"))
 end = now.replace(hour=h, minute=m, second=0, microsecond=0)
 if end <= now: end += datetime.timedelta(days=1)
-items = []
-for a in allow:
-    repo, base = a.rsplit(":", 1); repo = os.path.realpath(os.path.expanduser(repo))
-    assert os.path.exists(os.path.join(repo, ".git")), f"not a repo: {repo}"
-    items.append({"repo": repo, "base": base})
-night = {"until": end.isoformat(), "max_merges": mx if mx == "unlimited" else int(mx), "allow": items}
+night = {"until": end.isoformat(), "max_merges": mx if mx == "unlimited" else int(mx)}
 json.dump({"code": code, "asked": time.time(), "night": night}, open(out, "w"))
-print(f"night mode for {proj} prepared: until {end:%d.%m %H:%M}, max merges {mx}, "
-      + ", ".join(f"{os.path.basename(i['repo'])}->{i['base']}" for i in items))
+print(f"night mode for {proj} prepared: until {end:%d.%m %H:%M}" + ("" if mx == "unlimited" else f", at most {mx} merges"))
 print(f"The owner starts it by writing:  başla {code}     then run:  night-on --code {code} {proj}   (1 h)")
 PY
     ;;
   --code)
     [ $# -eq 3 ] || usage
     f=$A/night_$3.json
-    [ -f "$f" ] || { echo "night-on: no night mode prepared for $3 (night-on --request first)" >&2; exit 1; }
+    [ -f "$f" ] || { echo "night-on: nothing prepared for $3 (night-on --request first)" >&2; exit 1; }
     mkdir -p "$N"
     python3 -I - "$f" "$2" "$N/$3.json" <<'PY'
 import json, os, sys, time
@@ -45,8 +40,11 @@ if r["code"] != code: sys.exit(f"night-on: code '{code}' does not match the one 
 if time.time() - r["asked"] > 3600: sys.exit("night-on: the code is older than 1 h; prepare again")
 json.dump(r["night"], open(out, "w")); os.remove(f)
 n = r["night"]
-print(f"night mode on until {n['until'][11:16]}, max merges {n['max_merges']}")
+print(f"night mode on until {n['until'][11:16]}" + ("" if n["max_merges"] == "unlimited" else f", at most {n['max_merges']} merges"))
 PY
     ;;
+  --off)
+    [ $# -eq 2 ] || usage
+    rm -f "$N/$2.json" && echo "night mode off for $2" ;;
   *) usage ;;
 esac

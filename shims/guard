@@ -9,7 +9,6 @@ deny() { echo "lonca guard: blocked '$name$args'— $1. Stop and report to the o
 
 case $name in
   pkill|killall) deny "stop only processes you started, by PID" ;;
-  ok-merge) deny "only the owner grants merges" ;;   # night-on needs the owner's code, so agents may run it
   gh)
     case $args in
       " pr merge "*|*" api "*merge*) deny "merge only with merge-pr (checks first)" ;;

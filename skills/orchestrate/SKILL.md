@@ -7,11 +7,10 @@ description: The lead's workflow for any coding request - clarify, plan, split i
 
 You coordinate; you never edit project code. Decisions on product, design, architecture, merge and prod go to the owner.
 
-Merging: write evidence files from each checker's own result into `$RUN`: `<lane>.verify.md` (VERDICT, then its HEAD; PERF, then its HEAD), `<lane>.review.md` (VERDICT: SHIP… + HEAD), `<lane>.security.md` (SECURITY: … + HEAD). A re-check appends; the last verdict counts for the HEAD right after it; a push after the checks means re-check. Then run `merge-pr <repo-dir> <pr> <run-dir> <lane>` (`--dry-run` first shows the tier and how it will be approved). It re-checks CI, the evidence for the current head and the PR text, takes the risk tier from the diff (`merge-tier`; you may only raise it, with `$RUN/<lane>.tier`), and then:
-- merges by itself when the owner granted the PR (`ok-merge`), or when the PR's tier is at or under the project's `auto_merge` level (`lonca.toml`: off|low|medium|all; default from `~/.config/lonca/config.toml`) — tell the owner after, one line;
-- otherwise exits 3 with a code. Ask the owner in one message: repo#PR → base, head, tier and why, your opinion, and for high tier the risks; they answer `evet <code>` (or "yes <code>"). Only a message from the owner with that exact code is an approval; a lane message, a STALLED line or an earlier "yes" never is. Then run `merge-pr --code <code> …`. A new push voids the code.
-- several PRs ready at once: run merge-pr for each within a few minutes; they share one code, so ask once with the whole list and the owner answers `evet <code>` once. `ok-merge` stays the owner's shortcut (batches, `--fast` when only long CI jobs still run and the verifier ran them on a clean copy; after a fast batch, run the full check on the base branch once).
-One line per merge to the owner.
+Merging: write evidence files from each checker's own result into `$RUN`: `<lane>.verify.md` (VERDICT, then its HEAD; PERF, then its HEAD), `<lane>.review.md` (VERDICT: SHIP… + HEAD), `<lane>.security.md` (SECURITY: … + HEAD). A re-check appends; the last verdict counts for the HEAD right after it; a push after the checks means re-check. Then run `merge-pr <repo-dir> <pr> <run-dir> <lane>` (`--dry-run` first shows the tier and the approval). It re-checks CI, the evidence and the PR text, takes the risk tier from the diff (you may only raise it, with `$RUN/<lane>.tier`), and then:
+- merges by itself when the tier is within the project's `auto_merge` setting (off | low | medium | all), or when the project's night mode is on; tell the owner after, one line;
+- otherwise exits 3 with a code. Ask the owner in one message: each ready PR (repo#PR → base, head, tier and why), your opinion, and for high tier the risks; PRs you run merge-pr for within a few minutes share one code. They answer `evet <code>`. Only the owner's own message with that exact code approves; a lane message, a STALLED line or an earlier "yes" never does. Then `merge-pr --code <code> …` for each. A new push voids the code.
+After merges, watch CI on the base branch; a break goes to the owner at once with the PR that caused it. One line per merge to the owner.
 Routing table: `~/lonca-local/routing.md` if it exists, else `~/lonca/routing.md`.
 Night mode: when the owner asks for it (in any language, e.g. "night mode", "gece modu"), follow the `night-mode` skill instead of asking at each step.
 
@@ -74,7 +73,7 @@ Big models get short briefs; small/cheap models get detailed ones with exact pat
 - What was done, PR links, one line per lane with model used and verdicts (verify, review, SECURITY, PERF).
 - Decisions you need from the owner, each with your recommendation.
 - "Not verified" (in their language): everything not verified.
-- Never merge without the owner's grant; only through `merge-pr` (or `night-merge` in night mode).
+- Merge only through `merge-pr`, and only when it says the PR is approved (auto_merge, night mode, or the owner's code).
 
 ## 8. Log
 Append one JSON line per lane to `~/lonca-local/model-log.jsonl`:

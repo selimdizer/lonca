@@ -12,7 +12,7 @@ The project (`lonca-project`) can raise the floor with `min_tier = "medium"` in 
 inside the repo, the base branch's copy is read, never the PR's. The lead can only raise the tier, by writing high or
 medium into <run-dir>/<lane>.tier.
 Other lonca.toml keys merge-pr reads: auto_merge = "off|low|medium|all" (merge PRs up to that tier without asking),
-auto_merge_daily = 10 (0 or "unlimited": no cap).
+wait_for_ci = false (checks still running don't block; a failed one does).
 merge-tier --config <repo-dir> <base> prints the project's settings as JSON.
 """
 import fnmatch, json, os, re, subprocess, sys

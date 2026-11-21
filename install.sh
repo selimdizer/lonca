@@ -125,7 +125,7 @@ grep -qsF "@~/lonca/AGENTS.md" "$HOME/.claude/CLAUDE.md" || {
   mkdir -p "$HOME/.claude"; [ -f "$HOME/.claude/CLAUDE.md" ] && cp "$HOME/.claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md.lonca-bak"
   { cat "$HOME/.claude/CLAUDE.md" 2>/dev/null || true; echo "@~/lonca/AGENTS.md"; } > "$HOME/.claude/CLAUDE.md.new"
   mv "$HOME/.claude/CLAUDE.md.new" "$HOME/.claude/CLAUDE.md"; }
-for c in lane lanes lonca-project merge-pr merge-tier night-merge night-on ok-merge kanzo-sync; do link "$L/bin/$c" "$HOME/.local/bin/$c"; done
+for c in lane lanes lonca-project merge-pr merge-tier night-on kanzo-sync; do link "$L/bin/$c" "$HOME/.local/bin/$c"; done
 export LONCA_SUI=
 if command -v suiup >/dev/null || [ $SUI = 1 ]; then
   if opt_in $SUI "Sui Move extra: lanes run sui/move-analyzer at each repo's CI SUI_VERSION, plus a Move LSP plugin for Claude?"; then
@@ -141,7 +141,7 @@ AT=$("$L/bin/lonca-config" tmpdir "$HOME/.cache/lonca/tmp")   # agents' temp dir
 mkdir -p "$AT" "$HOME/lonca-local"   # lonca-local: your private layer (model-log.jsonl, own skills)
 export LONCA_CLAUDE_TMPDIR=
 opt_in $TMPQ "Claude sessions write temp files to $AT instead of /tmp (useful when /tmp is RAM or small)?" && LONCA_CLAUDE_TMPDIR=$AT
-case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) say "  note: $HOME/.local/bin is not on your PATH; add it so lane, merge-pr and ok-merge are found" ;; esac
+case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) say "  note: $HOME/.local/bin is not on your PATH; add it so lane and merge-pr are found" ;; esac
 
 # 4. Claude and Codex settings: add Lonca's deny rules and hooks, keep everything else
 python3 -I - "$L" <<'EOF'

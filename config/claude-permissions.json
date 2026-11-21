@@ -24,8 +24,6 @@
     "Bash(git config *--unset*hooksPath*)",
     "Bash(*/gh pr merge*)",
     "Bash(*gh pr merge*)",
-    "Bash(ok-merge*)",
-    "Bash(*/ok-merge *)",
     "Bash(git push * main *)",
     "Bash(git push * master *)",
     "Bash(git push * HEAD:main*)",
@@ -33,7 +31,6 @@
     "Bash(git push *--delete*)",
     "Bash(git push * -d *)",
     "Edit(~/.local/state/lonca/**)",
-    "Edit(~/.cache/ai-runs/night/**)",
-    "Bash(*merge-grants*)"
+    "Edit(~/.cache/ai-runs/night/**)"
   ]
 }

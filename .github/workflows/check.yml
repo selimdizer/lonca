@@ -22,14 +22,6 @@ jobs:
           done
       - name: Guard shim cases
         run: sh shims/check.sh
-      - name: ok-merge grants (several repos, bare numbers, bad input)
-        run: |
-          H=$(mktemp -d); G=$H/.local/state/lonca/merge-grants
-          HOME=$H sh bin/ok-merge --fast a/b#1 2 '#5' c/d#3
-          for f in a_b_1 a_b_2 a_b_5 c_d_3; do test -f "$G/$f" || { echo "missing grant $f"; exit 1; }; done
-          if test -e "$G/a_b_3"; then echo "grant leaked to the wrong repo"; exit 1; fi
-          grep -q fast "$G/c_d_3"
-          if HOME=$H sh bin/ok-merge a/b#1 x; then echo "bad input accepted"; exit 1; fi
       - name: Merge evidence (head pairing, stale head, HIGH finding, missing file)
         run: |
           T=$(mktemp -d); A=aaaaaaa1111; B=bbbbbbb2222
@@ -63,12 +55,13 @@ jobs:
           PY
       - name: Night mode needs the code
         run: |
-          H=$(mktemp -d); R=$(mktemp -d); git init -q "$R"
-          out=$(HOME=$H sh bin/night-on --request demo 23:59 unlimited "$R:main")
+          H=$(mktemp -d)
+          out=$(HOME=$H sh bin/night-on --request demo 23:59)
           c=$(printf '%s' "$out" | sed -n 's/.*başla \([a-z0-9]\{3\}\) .*/\1/p')
           if HOME=$H sh bin/night-on --code zzz demo; then echo "wrong code accepted"; exit 1; fi
           HOME=$H sh bin/night-on --code "$c" demo
           grep -q '"max_merges": "unlimited"' "$H/.cache/ai-runs/night/demo.json"
+          HOME=$H sh bin/night-on --off demo && test ! -e "$H/.cache/ai-runs/night/demo.json"
       - name: AI-trace check (default and strict)
         run: |
           echo "add anthropic client" | bin/ai-trace-check
