@@ -1,0 +1,26 @@
+id = "lonca"
+name = "Lonca"
+version = "0.1.0"
+min_herdr_version = "0.9.5"
+description = "A guild for coding agents: a lead plans and checks, lanes do the work in their own worktrees, nothing merges without review, verification, security and your word"
+platforms = ["linux", "macos"]
+
+[[actions]]
+id = "lead"
+title = "Lonca: start a lead here"
+contexts = ["workspace"]
+command = ["sh", "herdr/lead.sh"]
+
+[[panes]]
+id = "lanes"
+title = "Lonca: lanes"
+placement = "popup"
+width = "90%"
+height = "70%"
+command = ["sh", "herdr/lanes-pane.sh"]
+
+[[panes]]
+id = "setup"
+title = "Lonca: set up"
+placement = "tab"
+command = ["sh", "-c", "./install.sh; printf '\\nDone. Press Enter to close. '; read -r _"]

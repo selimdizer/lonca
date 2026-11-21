@@ -1,0 +1,7 @@
+[Unit]
+Description=Nightly cleanup of agent leftovers (merged worktrees, stale temp dirs) - ~/lonca/bin/ai-cleanup
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/share/mise/command-wrappers/bin:%h/.local/share/mise/shims:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/lonca/bin/ai-cleanup --tmp-age-hours 48

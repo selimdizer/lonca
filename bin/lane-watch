@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""lane-watch [--dry-run]: tell the lead about lanes that stopped without a report (systemd timer, every 10 min).
+
+Reads the <result>.lane.json records `lane` writes. A lane with an empty/missing result file is STALLED when
+its hc terminal is gone or finished, or when it is not working and its worktree has not changed for IDLE_MIN.
+The lead gets one `STALLED: <lane> — <why>` per lane and reason (hc send); no lead terminal → log only.
+"""
+import glob, json, os, subprocess, sys, time
+
+DRY = "--dry-run" in sys.argv
+IDLE_MIN = 30
+LOG = os.path.expanduser("~/.cache/ai-runs/setup/lane-watch.log")
+for k in [k for k in os.environ if k == "CLAUDECODE" or k.startswith(("CLAUDE_", "CODEX_COMPANION_"))]:
+    del os.environ[k]                      # never start the hc core with an agent's variables
+
+def hc(*a):
+    r = subprocess.run(["hc", *a], capture_output=True, text=True)
+    return r.returncode, r.stdout
+
+def newest_change(path):
+    t = 0
+    for root, dirs, files in os.walk(path):
+        dirs[:] = [d for d in dirs if d not in ("node_modules", ".git")]
+        for n in files:
+            try:
+                t = max(t, os.lstat(os.path.join(root, n)).st_mtime)
+            except OSError:
+                pass
+    r = subprocess.run(["git", "-C", path, "log", "-1", "--format=%ct"], capture_output=True, text=True)
+    return max(t, int(r.stdout.strip() or 0))
+
+now = time.time()
+for rec_path in glob.glob(os.path.expanduser("~/.cache/ai-runs/**/*.lane.json"), recursive=True):
+    rec = json.load(open(rec_path))
+    if rec.get("done"):
+        continue
+    if os.path.exists(rec["result"]) and os.path.getsize(rec["result"]) > 0:
+        rec["done"] = True
+    else:
+        code, out = hc("get", rec["name"], "--json")
+        term = json.loads(out) if code == 0 and out.strip() else {}
+        state = term.get("state")
+        status = (term.get("status") or {}).get("state") if isinstance(term.get("status"), dict) else term.get("status")
+        why = None
+        if not term or state == "finished":
+            why = f"its terminal {'is gone' if not term else 'finished'} and there is no report"
+        elif status != "working" and os.path.isdir(rec["worktree"]):
+            idle = (now - newest_change(rec["worktree"])) / 60
+            if idle >= IDLE_MIN and (now - rec.get("started", now)) / 60 >= IDLE_MIN:
+                why = f"{status or 'no status'}, nothing changed in its worktree for {int(idle)} min, no report"
+        if why and rec.get("notified") != why:
+            msg = f"STALLED: {rec['name']} — {why}. Check: hc read {rec['name']} --lines 40; worktree {rec['worktree']}"
+            print(msg)
+            if not DRY:
+                if rec.get("lead"):
+                    hc("send", rec["lead"], msg)
+                os.makedirs(os.path.dirname(LOG), exist_ok=True)
+                with open(LOG, "a") as f:
+                    f.write(time.strftime("%Y-%m-%d %H:%M ") + msg + "\n")
+                rec["notified"] = why
+    if not DRY:
+        json.dump(rec, open(rec_path, "w"))

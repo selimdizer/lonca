@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""Nightly cleanup of agent leftovers .
+
+ai-cleanup [--dry-run] [--tmp-age-hours N]
+
+1. Worktrees of every repo that has agent lanes (lane records, ~/.herdr/worktrees): remove a linked worktree (and its local branch) when its PR is
+   merged, it is clean, its HEAD is inside the merged PR head, no process uses it and it is not locked.
+   A detached worktree goes when it is clean, idle, untouched for the age below and its HEAD is on a
+   remote branch. Remote branches are never touched (GitHub's auto-delete handles those).
+2. Temp dirs in /tmp, /var/tmp and /var/tmp/agents owned by this user: removed when no file inside
+   changed for N hours (default 48) and no process has its cwd or an open file inside.
+   Claude's own /tmp/claude-<uid> and registered git worktrees are skipped.
+"""
+import json, os, pwd, shutil, subprocess, sys, time
+from pathlib import Path
+
+DRY = "--dry-run" in sys.argv
+AGE_H = int(sys.argv[sys.argv.index("--tmp-age-hours") + 1]) if "--tmp-age-hours" in sys.argv else 48
+HOME, UID = Path.home(), os.getuid()
+# never hand an agent session's variables to hc (it could start the core with them)
+for k in [k for k in os.environ if k == "CLAUDECODE" or k.startswith(("CLAUDE_", "CODEX_COMPANION_", "IMPECCABLE_"))]:
+    del os.environ[k]
+LOG = HOME / ".cache/ai-runs/setup/cleanup.log"
+SKIP_TMP = (f"claude-{UID}", "agents", "systemd-private", "tmux-", "herdr", "ssh-", ".X", ".ICE", ".font", "snap")
+now = time.time()
+out = []
+
+def say(msg):
+    out.append(msg); print(msg)
+
+def run(*a, cwd=None):
+    return subprocess.run(a, cwd=cwd, capture_output=True, text=True)
+
+def in_use_paths():
+    used = set()
+    for p in Path("/proc").iterdir():
+        if not p.name.isdigit():
+            continue
+        try:
+            used.add(os.readlink(p / "cwd"))
+            for fd in (p / "fd").iterdir():
+                used.add(os.readlink(fd))
+        except OSError:
+            pass
+        # a path only named in a process's env or args (a server's config dir) counts as in use too
+        for f in ("environ", "cmdline"):
+            try:
+                for part in (p / f).read_bytes().decode(errors="ignore").replace("=", "\0").replace(":", "\0").split("\0"):
+                    if part.startswith(("/tmp/", "/var/tmp/")):
+                        used.add(part.rstrip("/"))
+            except OSError:
+                pass
+    return used
+
+USED = in_use_paths()
+
+def busy(path):
+    s = str(path)
+    return any(u == s or u.startswith(s + "/") for u in USED)
+
+def touched_within(path, hours):
+    """Any change under path (the dir itself included) in the last `hours`: mtime OR ctime, since mv/tar/cp -a keep
+    old mtimes but set a fresh ctime."""
+    limit = now - hours * 3600
+    for root, dirs, files in os.walk(path):
+        for n in [""] + dirs + files:
+            try:
+                st = os.lstat(os.path.join(root, n) if n else root)
+                if max(st.st_mtime, st.st_ctime) > limit:
+                    return True
+            except OSError:
+                pass
+    return False
+
+def remove(path, why):
+    say(f"{'would remove' if DRY else 'removed'} {path} ({why})")
+    if not DRY:
+        shutil.rmtree(path, ignore_errors=True)
+
+# 1. worktrees
+def main_repo(path):
+    r = run("git", "rev-parse", "--path-format=absolute", "--git-common-dir", cwd=path)
+    d = r.stdout.strip()
+    return Path(d).parent if r.returncode == 0 and d.endswith("/.git") else None
+
+# repos that have agent worktrees: every lane record's repo, and the main repo of every lane worktree
+cands = set()
+for f in (HOME / ".cache/ai-runs").glob("**/*.lane.json"):
+    try:
+        rec = json.load(open(f))
+    except (OSError, ValueError):
+        continue
+    for k in ("repo", "worktree"):
+        if rec.get(k) and os.path.isdir(rec[k]):
+            cands.add(rec[k])
+cands |= {str(p) for p in (HOME / ".herdr/worktrees").glob("*/*") if p.is_dir()}
+repos = sorted({m for c in cands if (m := main_repo(c))})
+for repo in repos:
+    wl = run("git", "worktree", "list", "--porcelain", cwd=repo).stdout.strip().split("\n\n")[1:]
+    if not wl:
+        continue
+    prs = run("gh", "pr", "list", "--state", "merged", "--limit", "3000", "--json", "headRefName,headRefOid,number", cwd=repo)
+    merged = {}
+    if prs.returncode == 0:
+        for pr in json.loads(prs.stdout or "[]"):
+            merged.setdefault(pr["headRefName"], []).append(pr)
+    for block in wl:
+        info = dict((l.split(" ", 1) + [""])[:2] for l in block.splitlines())
+        path = Path(info.get("worktree", ""))
+        if not path.is_dir() or "locked" in info or str(path).startswith(f"/tmp/claude-{UID}"):
+            continue
+        branch = info.get("branch", "").removeprefix("refs/heads/")
+        if busy(path) and branch in merged:
+            # a lane left open after its PR merged: close its hc terminals, then the worktree can go
+            for t in json.loads(run("hc", "ls", "--json").stdout or '{"terminals":[]}').get("terminals", []):
+                if t.get("cwd", "").startswith(str(path)):
+                    say(f"{'would close' if DRY else 'closed'} lane terminal {t.get('name') or t['address']} in {path}")
+                    if not DRY:
+                        run("hc", "kill", t["address"])
+            if not DRY:
+                time.sleep(3)
+                USED.clear(); USED.update(in_use_paths())
+        if busy(path):
+            continue
+        if run("git", "status", "--porcelain", cwd=path).stdout.strip():
+            continue
+        head = run("git", "rev-parse", "HEAD", cwd=path).stdout.strip()
+        if branch:
+            pr = next((p for p in merged.get(branch, []) if p["headRefOid"] == head or
+                       run("git", "merge-base", "--is-ancestor", head, p["headRefOid"], cwd=repo).returncode == 0), None)
+            if not pr:
+                continue
+            say(f"{'would remove' if DRY else 'removed'} worktree {path} + branch {branch} (PR #{pr['number']} merged)")
+            if not DRY and run("git", "worktree", "remove", str(path), cwd=repo).returncode == 0:
+                run("git", "branch", "-D", branch, cwd=repo)
+        elif "detached" in info and not touched_within(path, AGE_H):
+            on_remote = run("git", "branch", "-r", "--contains", head, cwd=repo).stdout.strip()
+            if on_remote:
+                say(f"{'would remove' if DRY else 'removed'} detached worktree {path} (clean, idle, HEAD on {on_remote.split()[0]})")
+                if not DRY:
+                    run("git", "worktree", "remove", str(path), cwd=repo)
+    if not DRY:
+        run("git", "worktree", "prune", cwd=repo)
+
+# 2. temp dirs
+for base in (Path("/tmp"), Path("/var/tmp"), Path("/var/tmp/agents")):
+    if not base.is_dir():
+        continue
+    for d in base.iterdir():
+        try:
+            st = d.lstat()
+        except OSError:
+            continue
+        if st.st_uid != UID or not d.is_dir() or d.is_symlink() or d.name.startswith(SKIP_TMP):
+            continue
+        if (d / ".git").is_file() or busy(d) or touched_within(d, AGE_H):
+            continue
+        remove(d, f"untouched {AGE_H}h, not in use")
+
+if not DRY and out:
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    with open(LOG, "a") as f:
+        f.write(f"# {time.strftime('%Y-%m-%d %H:%M')}\n" + "\n".join(out) + "\n")

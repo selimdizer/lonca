@@ -1,0 +1,15 @@
+#!/bin/sh
+# Owner only: allow merge-pr to merge these PRs (each used once, valid 24 h).
+#   ok-merge [--fast] <owner/repo>#<pr> [#<pr> ...]
+#   --fast: don't wait for CI still running (a failed check still blocks); the lead runs the full check on main after.
+set -eu
+fast=; [ "${1:-}" = --fast ] && { fast=fast; shift; }
+case ${1:-} in */*#[0-9]*) ;; *) echo "usage: ok-merge [--fast] <owner/repo>#<pr> [#<pr> ...]   e.g. ok-merge --fast acme/shop#12 #14" >&2; exit 2 ;; esac
+nwo=${1%#*}
+d=$HOME/.local/state/lonca/merge-grants; mkdir -p "$d"
+for a in "$@"; do
+  pr=${a##*#}
+  case $pr in ''|*[!0-9]*) echo "ok-merge: bad PR '$a'" >&2; exit 2 ;; esac
+  echo "$(date -Is) $fast" > "$d/$(printf '%s' "$nwo" | tr '/' '_')_$pr"
+  echo "ok: $nwo#$pr may be merged once by merge-pr (24 h)${fast:+, without waiting for running CI}"
+done

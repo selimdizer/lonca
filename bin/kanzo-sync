@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""kanzo-sync: keep Kanzo cards in step with GitHub (systemd timer, every 10 min; merge-pr runs it after a merge).
+
+  kanzo-sync [--dry-run]           cards with a PR/issue URL: merged/closed -> done, open PR still todo/doing -> review;
+                                   issues/PRs the owner's account opened in a project's repos (last 3 days) without
+                                   a card -> new card (issue: todo, PR: review) with the URL
+  kanzo-sync set <id> <status>     one card, e.g. from `lane` when a lane starts (doing)
+Human cards are left alone. Writes go through `kanzo mcp`; reads use `kanzo export`. Log: ~/.cache/ai-runs/setup/kanzo-sync.log
+"""
+import datetime, json, os, re, subprocess, sys, time
+
+DRY = "--dry-run" in sys.argv
+LOG = os.path.expanduser("~/.cache/ai-runs/setup/kanzo-sync.log")
+URL = re.compile(r"https://([^/]+)/([^/]+/[^/]+)/(pull|issues)/(\d+)")
+GH = [os.path.join(d, "gh") for d in os.environ["PATH"].split(":") if "lonca/shims" not in d and os.path.exists(os.path.join(d, "gh"))][0]
+
+
+class Kanzo:
+    def __init__(self):
+        self.p = subprocess.Popen(["kanzo", "mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        self.i = 0
+        self.rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "kanzo-sync", "version": "1"}})
+        self.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+    def send(self, m):
+        self.p.stdin.write(json.dumps(m) + "\n"); self.p.stdin.flush()
+
+    def rpc(self, method, params):
+        self.i += 1
+        self.send({"jsonrpc": "2.0", "id": self.i, "method": method, "params": params})
+        while True:
+            r = json.loads(self.p.stdout.readline())
+            if r.get("id") == self.i:
+                if "error" in r or r.get("result", {}).get("isError"):
+                    raise RuntimeError(f"{method} {params}: {r}")
+                return r["result"]
+
+    def call(self, tool, **args):
+        res = self.rpc("tools/call", {"name": tool, "arguments": args})
+        return "".join(c.get("text", "") for c in res.get("content", []))
+
+
+def log(msg):
+    print(msg)
+    if not DRY:
+        os.makedirs(os.path.dirname(LOG), exist_ok=True)
+        with open(LOG, "a") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M ") + msg + "\n")
+
+
+def gh(path, host="github.com"):
+    r = subprocess.run([GH, "api", "--hostname", host, path], capture_output=True, text=True)
+    if r.returncode:
+        raise RuntimeError(r.stderr.strip()[-200:])
+    return json.loads(r.stdout)
+
+
+if sys.argv[1:2] == ["set"]:
+    Kanzo().call("update_task", id=sys.argv[2], status=sys.argv[3])
+    sys.exit(0)
+
+def link_lane_prs():
+    """A lane's PR -> its card's URL (the lane record names the card and branch); cards that already have a URL are kept."""
+    import glob
+    urls = {t["key"]: t.get("url") for p in board["projects"] for t in p.get("tasks", [])}
+    for f in glob.glob(os.path.expanduser("~/.cache/ai-runs/**/*.lane.json"), recursive=True):
+        rec = json.load(open(f))
+        card, branch, repo = rec.get("card"), rec.get("branch"), rec.get("repo")
+        if not (card and branch and repo) or card not in urls or urls[card]:
+            continue
+        r = subprocess.run([GH, "pr", "list", "--head", branch, "--state", "all", "--json", "url", "-q", ".[0].url"],
+                           capture_output=True, text=True, cwd=repo)
+        url = r.stdout.strip()
+        if url:
+            log(f"{card}: url -> {url} (lane {rec['name']})")
+            if k:
+                k.call("update_task", id=card, url=url)
+            urls[card] = url
+            for p in board["projects"]:          # so the status pass below sees it this run
+                for t in p.get("tasks", []):
+                    if t["key"] == card:
+                        t["url"] = url
+
+
+board = json.loads(subprocess.run(["kanzo", "export", "--format", "json"], capture_output=True, text=True, check=True).stdout)
+k = None if DRY else Kanzo()
+HOSTS = re.findall(r"Logged in to (\S+) account", subprocess.run([GH, "auth", "status"], capture_output=True, text=True).stdout
+                   + subprocess.run([GH, "auth", "status"], capture_output=True, text=True).stderr) or ["github.com"]
+me = {h: gh("user", h)["login"] for h in HOSTS}
+
+
+def host_of(repo):  # which GitHub holds this repo (github.com or a GitHub Enterprise host)
+    for h in HOSTS:
+        try:
+            gh(f"repos/{repo}", h)
+            return h
+        except RuntimeError:
+            pass
+link_lane_prs()
+since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=3)
+
+for proj in board["projects"]:
+    known, mentioned = set(), set()
+    for t in proj.get("tasks", []):
+        text = (t.get("title") or "") + (t.get("description") or "") + " ".join(c.get("body", "") for c in t.get("comments", []))
+        mentioned |= set(re.findall(r"#(\d+)", text))      # a card that already talks about #N covers it
+        m = URL.match(t.get("url") or "")
+        if not m:
+            continue
+        host, repo, kind, n = m.groups()
+        known.add((repo.lower(), n))
+        if t["status"] == "done" or t.get("human"):
+            continue
+        try:
+            it = gh(f"repos/{repo}/issues/{n}", host)
+        except RuntimeError as e:
+            log(f"{t['key']}: cannot read {repo}#{n}: {e}")
+            continue
+        is_pr = "pull_request" in it
+        new, why = None, None
+        if it["state"] == "closed":
+            merged = is_pr and it["pull_request"].get("merged_at")
+            new, why = "done", f"{'PR merged' if merged else ('PR closed without merge' if is_pr else 'issue closed')} ({repo}#{n})"
+        elif is_pr and t["status"] in ("todo", "doing"):
+            new, why = "review", f"PR open ({repo}#{n})"
+        if new:
+            log(f"{t['key']}: {t['status']} -> {new}: {why}")
+            if k:
+                k.call("update_task", id=t["key"], status=new)
+                k.call("add_comment", id=t["key"], body=why)
+    for repo in proj.get("repos") or []:
+        host = host_of(repo)
+        if not host:
+            log(f"{proj['slug']}: {repo} not found on {HOSTS}")
+            continue
+        try:
+            items = gh(f"repos/{repo}/issues?state=open&creator={me[host]}&per_page=50", host)
+        except RuntimeError as e:
+            log(f"{proj['slug']}: cannot list {repo}: {e}")
+            continue
+        for it in items:
+            created = datetime.datetime.fromisoformat(it["created_at"].replace("Z", "+00:00"))
+            if created < since or (repo.lower(), str(it["number"])) in known or str(it["number"]) in mentioned:
+                continue
+            is_pr = "pull_request" in it
+            status = "review" if is_pr else "todo"
+            log(f"{proj['slug']}: new card ({status}) for {repo}#{it['number']} {it['title'][:60]}")
+            if k:
+                out = k.call("create_task", project=proj["slug"], title=it["title"], status=status,
+                             description=f"Opened on GitHub: {it['html_url']}")
+                key = re.search(r"[a-z0-9_-]+#\d+", out).group(0)
+                k.call("update_task", id=key, url=it["html_url"])

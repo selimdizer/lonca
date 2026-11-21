@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+"""merge-evidence <run-dir> <lane> <pr-head-sha>: exit 0 when the lane's checks pass for exactly this head.
+
+Files (written by the lead from each checker's own result):
+  <lane>.verify.md    VERDICT: PASS|NEEDS_WORK   PERF: OK|REGRESSION|RISK   HEAD: <sha>
+  <lane>.review.md    VERDICT: SHIP|NEEDS_WORK|MAJOR_RETHINK                 HEAD: <sha>
+  <lane>.security.md  SECURITY: CLEAN | SECURITY: FINDINGS (n), highest: LOW|MEDIUM|HIGH   HEAD: <sha>
+The last matching line of each kind counts (a re-check appends); HEAD must be a prefix (>=7) of the PR head.
+"""
+import os, re, sys
+
+run, lane, head = sys.argv[1:4]
+
+def last(kind, pat):
+    path = os.path.join(run, f"{lane}.{kind}.md")
+    try:
+        lines = open(path).read().splitlines()
+    except OSError:
+        sys.exit(f"missing {lane}.{kind}.md")
+    heads = [l.split(":", 1)[1].strip() for l in lines if l.startswith("HEAD:")]
+    if not heads or len(heads[-1]) < 7 or not head.startswith(heads[-1]):
+        sys.exit(f"{lane}.{kind}.md judged {heads[-1][:12] if heads else 'no HEAD'}, the PR head is {head[:12]}: re-check")
+    found = [l.strip() for l in lines if re.match(pat, l.strip())]
+    if not found:
+        sys.exit(f"no '{pat}' line in {lane}.{kind}.md")
+    return found[-1]
+
+def need(ok, msg):
+    if not ok:
+        sys.exit(msg)
+
+v = last("verify", r"VERDICT: ");  need(v.startswith("VERDICT: PASS"), f"verify: {v}")
+p = last("verify", r"PERF: ");     need(p.startswith("PERF: OK"), f"perf: {p}")
+r = last("review", r"VERDICT: ");  need(r.startswith("VERDICT: SHIP"), f"review: {r}")
+s = last("security", r"SECURITY: ")
+need(s.startswith("SECURITY: CLEAN") or (s.startswith("SECURITY: FINDINGS") and not re.search(r"highest:\s*HIGH", s, re.I)),
+     f"security: {s}")
+print("evidence OK for", head[:12])

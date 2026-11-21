@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""Check a gh command that writes PR/issue text for AI traces.
+
+ai-trace-gh <gh args...>          from the gh guard shim (argv after "gh")
+ai-trace-gh --hook                as a Claude PreToolUse hook (tool JSON on stdin)
+Exit 0: fine or not a text-writing gh call. Exit 2 (hook) / 1 (shim): blocked, reason on stderr.
+"""
+import json, os, re, shlex, subprocess, sys
+
+CHECK = os.path.expanduser("~/lonca/bin/ai-trace-check")
+WRITES = re.compile(r"^(pr|issue) (create|edit|comment|review|close|merge)\b|^(release) (create|edit)\b|^api\b")
+
+def text_of(args):
+    """Words of the call plus the contents of --body-file/-F files."""
+    parts, i = [], 0
+    while i < len(args):
+        a = args[i]
+        if a in ("--body-file", "-F", "--file") and i + 1 < len(args):
+            v = args[i + 1].split("=", 1)[-1].lstrip("@")
+            try:
+                parts.append(open(os.path.expanduser(v)).read())
+            except OSError:
+                parts.append(args[i + 1])
+            i += 2
+            continue
+        if a.startswith("--body-file="):
+            try:
+                parts.append(open(os.path.expanduser(a.split("=", 1)[1])).read())
+            except OSError:
+                pass
+        parts.append(a)
+        i += 1
+    return "\n".join(parts)
+
+def check(args):
+    if not WRITES.match(" ".join(args[:2])):
+        return None
+    if args[0] == "api" and not any(k in " ".join(args) for k in ("body", "title", "comments", "issues", "pulls")):
+        return None
+    r = subprocess.run([CHECK], input=text_of(args), capture_output=True, text=True)
+    return r.stderr.strip() if r.returncode else None
+
+if sys.argv[1:2] == ["--hook"]:
+    data = json.load(sys.stdin)
+    cmd = (data.get("tool_input") or {}).get("command", "")
+    for seg in re.split(r"&&|\|\||;|\|", cmd):
+        try:
+            words = shlex.split(seg)
+        except ValueError:
+            words = seg.split()
+        while words and ("=" in words[0] and not words[0].startswith("-")):
+            words = words[1:]                      # VAR=value prefixes
+        if words and os.path.basename(words[0]) == "gh":
+            why = check(words[1:])
+            if why:
+                print(why, file=sys.stderr)
+                sys.exit(2)
+    sys.exit(0)
+
+why = check(sys.argv[1:])
+if why:
+    print(why, file=sys.stderr)
+    sys.exit(1)

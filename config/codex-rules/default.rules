@@ -1,0 +1,12 @@
+# Shared hard limits (see ~/lonca/AGENTS.md). Push/merge rules wait for the owner's decision.
+prefix_rule(pattern = ["git", "push", ["--force", "-f", "--force-with-lease"]], decision = "forbidden",
+    justification = "No force-push. Stop and report to the owner.", match = ["git push --force origin x", "git push -f"])
+prefix_rule(pattern = ["git", "reset", "--hard"], decision = "forbidden",
+    justification = "No reset --hard. Use git stash or a new branch.", match = ["git reset --hard HEAD~1"], not_match = ["git reset --soft HEAD~1"])
+prefix_rule(pattern = ["git", "clean"], decision = "forbidden", justification = "No git clean; remove specific files instead.", match = ["git clean -fdx"])
+prefix_rule(pattern = ["git", "branch", "-D"], decision = "forbidden", justification = "No branch deletion; the owner cleans up.", match = ["git branch -D x"])
+prefix_rule(pattern = [["pkill", "killall"]], decision = "forbidden", justification = "Stop only processes you started, by PID.", match = ["pkill -f node"])
+# Agents push branches and open PRs; only the owner merges (decision 2026-11-20).
+prefix_rule(pattern = ["gh", "pr", "merge"], decision = "forbidden", justification = "Only the owner merges. Open or update the PR instead.", match = ["gh pr merge 12 --squash"])
+prefix_rule(pattern = ["git", "push", "--no-verify"], decision = "forbidden", justification = "Don't skip the pre-push hook.", match = ["git push --no-verify origin x"])
+prefix_rule(pattern = ["git", "push", ["origin", "upstream"], ["main", "master", "HEAD:main", "HEAD:master"]], decision = "forbidden", justification = "Never push main; push your branch and open a PR.", match = ["git push origin main"], not_match = ["git push origin feat/x"])

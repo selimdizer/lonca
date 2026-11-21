@@ -1,0 +1,9 @@
+[Unit]
+Description=Hourly commit of ~/ai-memory
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target

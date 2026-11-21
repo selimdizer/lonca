@@ -1,0 +1,8 @@
+[Unit]
+Description=Hermes-style memory review: save the owner's new decisions to ~/ai-memory (Sonnet) - ~/lonca/bin/memory-review
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/share/mise/command-wrappers/bin:%h/.local/share/mise/shims:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/lonca/bin/memory-review
+TimeoutStartSec=40min

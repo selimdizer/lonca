@@ -1,0 +1,15 @@
+#!/bin/sh
+# Runs sui / move-analyzer at the version the repo's CI pins (SUI_VERSION: 'testnet-vX.Y.Z'
+# in .github/workflows), so Move.lock is not rewritten by a newer toolchain. No pin → suiup default (latest).
+# shortcut: pin is found from the start directory's git repo only; a session started outside the repo gets latest.
+name=$(basename "$0"); name=${name#lonca-}   # also installed as lonca-move-analyzer (move-lsp plugin)
+top=$(git rev-parse --show-toplevel 2>/dev/null)
+if [ -n "$top" ] && [ -d "$top/.github/workflows" ]; then
+  ver=$(grep -rhoE "SUI_VERSION: *['\"]?testnet-v[0-9]+\.[0-9]+\.[0-9]+" "$top/.github/workflows" | head -1 | sed 's/.*testnet-v//')
+  bin="$HOME/.local/share/suiup/binaries/testnet/$name-v$ver"
+  if [ -n "$ver" ]; then
+    [ -x "$bin" ] || { echo "sui-pick: $name $ver (pinned by CI) not installed: suiup install $name@testnet-$ver" >&2; exit 1; }
+    exec "$bin" "$@"
+  fi
+fi
+exec "$HOME/.local/bin/$name" "$@"

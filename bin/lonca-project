@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+"""lonca-project [dir]: which project a directory belongs to. Prints "<name>\t<root>"; nothing (exit 1) outside any project.
+
+Like mise/EditorConfig/direnv: a lane worktree counts as its main repo; from there walk up to / and the closest
+`lonca.toml` (or `.lonca.toml`) marks the project root, so one marker in a parent folder groups several repos.
+Its `name = "..."` names the project (memory group, Kanzo slug); default: the folder's name in lower case.
+No marker: the git repo is the project. LONCA_PROJECT overrides the name.
+"""
+import os, subprocess, sys, tomllib
+
+start = os.path.realpath(sys.argv[1] if len(sys.argv) > 1 else os.getcwd())
+r = subprocess.run(["git", "-C", start, "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, text=True)
+repo = os.path.dirname(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip().endswith("/.git") else None
+
+d = repo or start
+while True:
+    for n in ("lonca.toml", ".lonca.toml"):
+        if os.path.isfile(os.path.join(d, n)):
+            with open(os.path.join(d, n), "rb") as f:
+                name = tomllib.load(f).get("name") or os.path.basename(d).lower()
+            print(f"{os.environ.get('LONCA_PROJECT') or name}\t{d}")
+            sys.exit(0)
+    if d == "/":
+        break
+    d = os.path.dirname(d)
+if repo:
+    print(f"{os.environ.get('LONCA_PROJECT') or os.path.basename(repo).lower()}\t{repo}")
+    sys.exit(0)
+sys.exit(1)

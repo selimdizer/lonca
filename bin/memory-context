@@ -1,0 +1,18 @@
+#!/bin/sh
+# SessionStart hook: print the memory group index for the session's working directory (stdout becomes context).
+# Input: hook JSON on stdin with "cwd"; falls back to $PWD.
+# Project = `lonca-project` (closest lonca.toml up the tree, else the git repo); its memory group is ~/ai-memory/<name>/.
+cwd=$(python3 -I -c 'import json,sys
+try: print(json.load(sys.stdin).get("cwd",""))
+except Exception: print("")' 2>/dev/null)
+[ -n "$cwd" ] || cwd=$PWD
+p=$("$HOME/lonca/bin/lonca-project" "$cwd" 2>/dev/null) || exit 0   # project name<TAB>root (lonca.toml, else the git repo)
+g=${p%%	*} root=${p#*	}
+case $g in owner|setup|personal) exit 0 ;; esac   # indexed in MEMORY.md, already loaded
+f=$HOME/ai-memory/$g/INDEX.md
+if [ -f "$f" ]; then
+  echo "# Project memory index ($f; notes are files next to it)"; cat "$f"
+else
+  echo "# Project memory: $root (project \"$g\") has no memory group yet. Save its notes in ~/ai-memory/$g/ and index them in ~/ai-memory/$g/INDEX.md (see ~/ai-memory/README.md)."
+fi
+exit 0

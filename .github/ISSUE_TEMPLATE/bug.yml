@@ -1,0 +1,23 @@
+name: Bug report
+description: Something in Lonca did not work as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, what you got (exact output if you can).
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ./install.sh --yes
+        2. lane ...
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: OS, Lonca commit, and the tools involved (claude, codex, omp, herdr, hc).

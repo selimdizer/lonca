@@ -1,0 +1,21 @@
+#!/bin/sh
+# Owner only (their "start"): start night mode for one project.
+#   night-on <kanzo-project> <until HH:MM> <max-merges> <repo-dir>:<base> [<repo-dir>:<base> ...]
+set -eu
+[ $# -ge 4 ] || { echo "usage: night-on <project> <HH:MM> <max> <repo-dir>:<base> ..." >&2; exit 2; }
+proj=$1 until=$2 max=$3; shift 3
+d=$HOME/.cache/ai-runs/night; mkdir -p "$d"
+python3 -I - "$d/$proj.json" "$until" "$max" "$@" <<'PY'
+import json,sys,datetime,os
+out,until,mx,*allow=sys.argv[1:]
+now=datetime.datetime.now().astimezone(); h,m=map(int,until.split(":"))
+end=now.replace(hour=h,minute=m,second=0,microsecond=0)
+if end<=now: end+=datetime.timedelta(days=1)
+items=[]
+for a in allow:
+    repo,base=a.rsplit(":",1); repo=os.path.realpath(os.path.expanduser(repo))
+    assert os.path.isdir(os.path.join(repo,".git")) or os.path.isfile(os.path.join(repo,".git")), f"not a repo: {repo}"
+    items.append({"repo":repo,"base":base})
+json.dump({"until":end.isoformat(),"max_merges":int(mx),"allow":items},open(out,"w"))
+print(f"night mode on for {os.path.basename(out)[:-5]} until {end:%d.%m %H:%M}, max {mx} merges: "+", ".join(f"{os.path.basename(i['repo'])}->{i['base']}" for i in items))
+PY

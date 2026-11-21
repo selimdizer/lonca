@@ -1,0 +1,76 @@
+#!/bin/sh
+# The only way an agent may merge: any project, after checks.
+#   merge-pr   [--dry-run] <repo-dir> <pr-number> <run-dir> <lane>   day: the owner said "merge" for this PR (or approved when asked)
+#   night-merge [--dry-run] ...                                       night mode: also needs tonight's grant file
+# Both refuse unless the PR is open/not draft/mergeable with every check green, the lane's evidence says
+# PASS / SHIP / PERF OK / no HIGH security finding, and the PR title/body carry no AI traces.
+# Refuses unless: night file exists and is in time, no OFF file, merge count below max, repo+base allowed
+# tonight, PR open/not draft/mergeable with every check green, and the lane's evidence files say
+set -eu
+for v in $(env | sed -n 's/^\(CLAUDECODE\|CLAUDE_[A-Z_]*\|CODEX_COMPANION_[A-Z_]*\)=.*/\1/p'); do unset "$v"; done
+dry=0; [ "${1:-}" = --dry-run ] && { dry=1; shift; }
+[ $# -eq 4 ] || { echo "usage: night-merge [--dry-run] <repo-dir> <pr-number> <run-dir> <lane>" >&2; exit 2; }
+repo=$(realpath "$1") pr=$2 run=$3 lane=$4
+N=$HOME/.cache/ai-runs/night
+no() { echo "night-merge: refused PR #$pr: $*" >&2; echo "$(date -Is) refused $repo #$pr: $*" >> "$N/log" 2>/dev/null || true; exit 1; }
+# the real gh, not the guard shim
+GH=$(PATH=$(printf '%s' "$PATH" | tr ':' '\n' | grep -v "lonca/shims" | paste -sd: -) command -v gh)
+
+day=0; [ "$(basename "$0")" = merge-pr ] && day=1
+if [ $day = 0 ]; then
+  [ -e "$N/OFF" ] && no "night mode switched off ($N/OFF)"
+  ls "$N"/*.json >/dev/null 2>&1 || no "no night mode tonight (no $N/<project>.json; only the owner starts it)"
+fi
+base=$(cd "$repo" && "$GH" pr view "$pr" --json baseRefName -q .baseRefName 2>/dev/null) || no "cannot read the PR"
+# One night file per project (<kanzo-project>.json); the one that allows this repo+base decides, and counts its own merges
+proj=day
+[ $day = 1 ] || proj=$(python3 -I - "$N" "$repo" "$base" 2>/dev/null <<'EOF'
+import json,sys,datetime,os,glob
+N,repo,base=sys.argv[1:4]
+for f in sorted(glob.glob(os.path.join(N,"*.json"))):
+    n=json.load(open(f)); p=os.path.basename(f)[:-5]
+    if not any(os.path.realpath(os.path.expanduser(a["repo"]))==repo and a["base"]==base for a in n["allow"]): continue
+    assert datetime.datetime.now().astimezone() < datetime.datetime.fromisoformat(n["until"])
+    log=os.path.join(N,"log")
+    since=os.path.getmtime(f)   # count only merges since tonight's grant was written
+    done=sum(1 for l in open(log) if f" merged [{p}] " in l and datetime.datetime.fromisoformat(l.split()[0]).timestamp()>=since) if os.path.exists(log) else 0
+    assert done < int(n.get("max_merges",5))
+    print(p); break
+else: sys.exit(1)
+EOF
+) || no "repo/base not allowed tonight, past the end time, or max merges reached"
+
+info=$(cd "$repo" && "$GH" pr view "$pr" --json state,isDraft,mergeable,title,body,statusCheckRollup,headRefOid 2>/dev/null) || no "cannot read the PR"
+head=$(printf '%s' "$info" | python3 -I -c 'import json,sys;print(json.load(sys.stdin)["headRefOid"])')
+nwo=$(cd "$repo" && "$GH" repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || no "cannot read the repo name"
+# day mode: the owner's own grant (ok-merge <owner/repo>#<pr>), at most 24 h old, used once
+G=$HOME/.local/state/lonca/merge-grants/$(printf '%s' "$nwo" | tr '/' '_')_$pr
+fast=0
+if [ $day = 1 ]; then
+  [ -f "$G" ] || no "no owner grant: the owner runs  ok-merge $nwo#$pr"
+  [ $(( $(date +%s) - $(stat -c %Y "$G") )) -lt 86400 ] || no "owner grant older than 24 h; ask again"
+  grep -q fast "$G" && fast=1   # ok-merge --fast: still-running CI does not block, a failed check still does
+fi
+err=$(printf '%s' "$info" | FAST=$fast python3 -I -c '
+import json,os,sys; p=json.load(sys.stdin); fast=os.environ["FAST"]=="1"
+assert p["state"]=="OPEN" and not p["isDraft"], "not open, or draft"
+assert p["mergeable"]=="MERGEABLE", "not mergeable: "+p["mergeable"]
+def running(c): return c.get("status") not in (None,"COMPLETED") or c.get("state") in ("PENDING","EXPECTED")
+bad=[c.get("name") or c.get("context") for c in p["statusCheckRollup"]
+     if (c.get("conclusion") or c.get("state")) not in ("SUCCESS","SKIPPED","NEUTRAL") and not (fast and running(c))]
+assert fast or p["statusCheckRollup"], "no CI checks on the PR"
+assert not bad, "checks not green: "+str(bad)
+' 2>&1) || no "$(printf '%s' "$err" | tail -1)"
+
+# Evidence: one file per checker (<lane>.verify.md, .review.md, .security.md), written by the lead from the
+# checker's own result, each with a HEAD: <sha> line. The LAST verdict line in each file counts, and every
+# file's HEAD must be the PR head now: a push after the checks voids them.
+evd=$("$HOME/lonca/bin/merge-evidence" "$run" "$lane" "$head" 2>&1) || no "$(printf '%s' "$evd" | tail -1)"
+printf '%s' "$info" | python3 -I -c 'import json,sys;p=json.load(sys.stdin);print(p["title"]);print(p["body"])' | "$HOME/lonca/bin/ai-trace-check" 2>/dev/null || no "PR title/body has AI traces"
+
+[ $dry = 1 ] && { echo "merge: dry run OK for #$pr ($repo -> $base, $( [ $day = 1 ] && echo "day, owner said merge" || echo "night file $proj.json"))"; exit 0; }
+(cd "$repo" && "$GH" pr merge "$pr" --merge --match-head-commit "$head") || no "gh merge failed"
+[ $day = 1 ] && rm -f "$G"
+echo "$(date -Is) merged [$proj] $repo #$pr -> $base (lane $lane)" >> "$N/log"
+"$HOME/lonca/bin/kanzo-sync" >/dev/null 2>&1 || true   # its card -> done now, not at the next timer run
+echo "night-merge: merged #$pr into $base"

@@ -1,0 +1,31 @@
+#!/bin/sh
+# Command guard for agents started with full permissions (Codex bypass mode skips its own rules).
+# Symlinked as gh, git, pkill, killall in ~/lonca/shims; agent launches put that dir first in PATH.
+# Same hard limits as ~/lonca/AGENTS.md. shortcut: matches argv text, not a parser; the pre-push hook backs up git.
+name=$(basename "$0")
+args=" $* "
+deny() { echo "lonca guard: blocked '$name$args'— $1. Stop and report to the owner." >&2; exit 126; }
+
+case $name in
+  pkill|killall) deny "stop only processes you started, by PID" ;;
+  ok-merge|night-on) deny "only the owner grants merges" ;;
+  gh)
+    case $args in
+      " pr merge "*|*" api "*merge*) deny "merge only with merge-pr (checks first)" ;;
+    esac
+    "$HOME/lonca/bin/ai-trace-gh" "$@" || exit 126 ;;
+  git)
+    case $args in
+      *" push "*" --force"*|*" push "*" -f "*|*" push --force"*|*" push -f "*) deny "no force-push" ;;
+      *" push "*" --no-verify"*) deny "don't skip the pre-push hook" ;;
+      *" reset --hard"*|*" reset "*" --hard"*) deny "no reset --hard" ;;
+      *" clean "*) deny "no git clean" ;;
+      *" branch -D "*|*" branch "*" -D "*) deny "no branch deletion" ;;
+      *" core.hooksPath "?*) case $args in *"config"*) deny "don't change git hooks" ;; esac ;;
+    esac ;;
+esac
+
+# run the real binary: PATH without this shims dir
+here=$(dirname "$(readlink -f "$0")")
+real_path=$(printf '%s' "$PATH" | tr ':' '\n' | grep -vx "$here" | grep -vx "$(dirname "$0")" | paste -sd: -)
+exec env PATH="$real_path" "$name" "$@"

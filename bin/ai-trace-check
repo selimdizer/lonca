@@ -1,0 +1,16 @@
+#!/bin/sh
+# Rule: no AI traces in any PR, issue, comment or commit message (any project).
+# Reads text on stdin; exit 1 and name the hit if it carries one. Used by the commit-msg hook,
+# the gh guard shim, merge-pr and the Claude PreToolUse hook.
+# A repo about AI tools (Lonca itself) may name them: `git config lonca.toolNamesOk true` there; attribution
+# lines (co-author, "Generated with", bot sign-offs) are still refused.
+if [ "$(git config --bool lonca.toolNamesOk 2>/dev/null)" = true ]; then
+  hit=$(grep -v '^#' | grep -o -i -E 'co-authored-by:.*(claude|anthropic|openai|codex|gpt|glm|copilot|gemini|deepseek|opencode|cursor)|generated (with|by) .{0,40}(claude|ai\b|codex|gpt|copilot|llm)|🤖|noreply@anthropic\.com|(written|implemented|reviewed|authored|created) by (an? )?(ai|agent|model|llm|bot)\b' | head -1)
+else
+hit=$(grep -v '^#' | grep -o -i -E \
+ 'co-authored-by:.*(claude|anthropic|openai|codex|gpt|glm|copilot|gemini|deepseek|opencode|cursor)|generated (with|by) .{0,40}(claude|ai\b|codex|gpt|copilot|llm)|🤖|claude[- ]?(code|session)|\bclaude\b|anthropic|noreply@anthropic\.com|\b(opus|sonnet|fable) ?[0-9]|\bgpt-?[0-9]|\bcodex\b|\bglm\b|opencode|oh-my-pi|(written|implemented|reviewed|authored|created) by (an? )?(ai|agent|model|llm|bot)\b' \
+ | head -1)
+fi
+[ -z "$hit" ] && exit 0
+echo "AI trace in the text: \"$hit\". Owner rule: PRs, issues, comments and commits carry no AI tool, model or co-author lines; reword and try again." >&2
+exit 1

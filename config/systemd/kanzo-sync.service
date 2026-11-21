@@ -1,0 +1,7 @@
+[Unit]
+Description=Keep Kanzo cards in step with GitHub PRs and issues - ~/lonca/bin/kanzo-sync
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/share/mise/command-wrappers/bin:%h/.local/share/mise/shims:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/lonca/bin/kanzo-sync

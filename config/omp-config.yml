@@ -1,0 +1,40 @@
+defaultThinkingLevel: medium
+modelRoles:
+  default: github-copilot/claude-opus-5.5:medium
+  smol: opencode-go/deepseek-v4.1-flash:low
+  slow: opencode-go/deepseek-v4.1-flash:high      # advisor; only small models on opencode-go (limits)
+disabledProviders:
+  - openai-codex
+  - opencode
+retry:
+  modelFallback: false
+contextFiles:
+  extra:
+    - MEMORY.md
+edit:
+  mode: hashline
+  modelVariants:
+    glm-5.3-flash: replace
+lsp:
+  diagnosticsOnEdit: true
+compaction:
+  methodOrder:
+    - remote
+    - shake
+    - handoff
+task:
+  maxConcurrency: 4
+  maxRecursionDepth: 1
+  maxEffort: high
+magicKeywords:
+  enabled: false
+recap:
+  enabled: false
+dev:
+  autoqa: false
+mcp:
+  enableProjectConfig: false
+display:
+  showTokenUsage: true
+startup:
+  setupWizard: false

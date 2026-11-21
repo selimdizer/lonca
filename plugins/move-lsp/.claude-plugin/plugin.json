@@ -1,0 +1,13 @@
+{
+  "name": "move-lsp",
+  "description": "Sui Move language server (move-analyzer via suiup, at the repo's CI SUI_VERSION) for code intelligence",
+  "version": "1.0.2",
+  "lspServers": {
+    "move-analyzer": {
+      "command": "lonca-move-analyzer",
+      "extensionToLanguage": {
+        ".move": "move"
+      }
+    }
+  }
+}

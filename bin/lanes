@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+"""lanes [--all]: the lanes `lane` started, newest first: name, agent, state, card, report. Open ones only unless --all.
+
+Reads ~/.cache/ai-runs/**/*.lane.json (written by `lane`) and one `hc ls` for the terminals' state.
+"""
+import glob, json, os, subprocess, sys, time
+
+ALL = "--all" in sys.argv
+env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE" and not k.startswith(("CLAUDE_", "CODEX_COMPANION_"))}
+ls = subprocess.run(["hc", "ls", "--all", "--json"], capture_output=True, text=True, env=env)
+terms = {t["name"]: t for t in (json.loads(ls.stdout).get("terminals", []) if ls.returncode == 0 and ls.stdout.strip() else []) if t.get("name")}
+rows = []
+for f in glob.glob(os.path.expanduser("~/.cache/ai-runs/**/*.lane.json"), recursive=True):
+    try:
+        r = json.load(open(f))
+    except (OSError, ValueError):
+        continue
+    done = os.path.exists(r.get("result", "")) and os.path.getsize(r["result"]) > 0
+    term = terms.get(r["name"], {})
+    st = term.get("status")
+    st = st.get("state") if isinstance(st, dict) else st
+    state = "report" if done else (term.get("state") or "gone") if not st else st
+    if not ALL and (not term or term.get("state") == "finished") and done:
+        continue
+    age = int((time.time() - r.get("started", time.time())) / 60)
+    rows.append((r.get("started", 0), r["name"], r.get("agent", ""), state, r.get("card") or "-",
+                 f"{age // 60}h{age % 60:02d}m", os.path.basename(r.get("result", ""))))
+rows.sort(reverse=True)
+if not rows:
+    print("No open lanes." + ("" if ALL else "  (lanes --all: finished ones too)"))
+    sys.exit(0)
+w = [max(len(str(x[i])) for x in rows) for i in range(1, 7)]
+head = ("LANE", "AGENT", "STATE", "CARD", "AGE", "REPORT")
+w = [max(a, len(h)) for a, h in zip(w, head)]
+print("  ".join(h.ljust(n) for h, n in zip(head, w)))
+for x in rows:
+    print("  ".join(str(v).ljust(n) for v, n in zip(x[1:], w)))

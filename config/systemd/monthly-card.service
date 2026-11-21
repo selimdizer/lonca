@@ -1,0 +1,7 @@
+[Unit]
+Description=Monthly maintenance card on the Kanzo board
+
+[Service]
+Type=oneshot
+ExecStart=%h/lonca/bin/monthly-card
+Environment=PATH=%h/.local/share/mise/command-wrappers/bin:%h/.local/share/mise/shims:%h/.local/bin:/usr/local/bin:/usr/bin:/bin

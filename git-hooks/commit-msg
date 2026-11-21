@@ -1,0 +1,5 @@
+#!/bin/sh
+# Rule: no AI traces in commit messages of repos that are pushed anywhere.
+# Local-only repos (no remote, e.g. ~/lonca, ~/ai-memory) are the agents' own notes: skipped.
+[ -n "$(git remote)" ] || exit 0
+"$HOME/lonca/bin/ai-trace-check" < "$1" || exit 1

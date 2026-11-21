@@ -1,0 +1,99 @@
+#!/bin/sh
+# Start one lane as an interactive agent in its own git worktree, as a herdr-core (hc) terminal: visible in the Herdr app.
+#   lane <repo-dir> <branch> <agent> <brief-file> <result-file> [base-branch]
+#   lane --read <repo-dir> <name> omp:<provider/model> <brief-file> <result-file>
+#     read-only lane: no worktree, runs in <repo-dir> with read/grep/glob only; its answer is the report
+#   agent: claude:<role> (implementer|reviewer|verifier|security-auditor) | codex:<model>[:<effort>] (default xhigh) | omp:<provider/model>
+# The agent writes its final report to <result-file>; the lead waits for that file, not for herdr state.
+# The branch starts from a fresh origin/<base> (default: the remote's default branch); an existing branch is reused.
+# Needs herdr-core (hc): no silent headless fallback.
+set -eu
+# Drop the calling agent's session variables: a lane is its own session (else Claude skips its transcript),
+# and an hc core started from here must not carry them (they include the caller's messaging token).
+for v in $(env | sed -n 's/^\(CLAUDECODE\|CLAUDE_[A-Z_]*\|CODEX_COMPANION_[A-Z_]*\|IMPECCABLE_[A-Z_]*\)=.*/\1/p'); do unset "$v"; done
+# Agents run with full permissions; ~/lonca/shims (gh, git, pkill, killall guards) go first in PATH.
+export PATH="$HOME/lonca/shims:$PATH"
+# /tmp is RAM (tmpfs): agent temp files, Go builds and Node caches go to disk
+export TMPDIR=/var/tmp/agents; mkdir -p "$TMPDIR"
+ro=0; [ "${1:-}" = --read ] && { ro=1; shift; }
+[ $# -eq 5 ] || [ $# -eq 6 ] || { echo "usage: lane <repo-dir> <branch> <agent> <brief-file> <result-file> [base-branch]" >&2; exit 2; }
+repo=$1 branch=$2 agent=$3 brief=$(realpath "$4") result=$5 base=${6:-}
+command -v hc >/dev/null 2>&1 && hc server status >/dev/null 2>&1 || { echo "lane: herdr-core (hc) is not running; not starting a lane" >&2; exit 1; }
+mkdir -p "$(dirname "$result")"; result=$(realpath -m "$result")
+prompt="Read the brief at $brief and do the lane it describes. When you are done, or stopped, write your final report (at most 30 lines, with a Not verified section, ending with a Lessons section: facts a future session in this project would need, such as a gotcha, a command that works or a decision you learned, or none) to $result and end. Do not write to ~/ai-memory yourself; the lead saves your lessons."
+# Project skills live in the project root (the folder with lonca.toml, not a team repo): point the lane at them
+proot=$("$HOME/lonca/bin/lonca-project" "$repo" 2>/dev/null | cut -f2) || proot=
+psk="$proot/.claude/skills"
+[ -n "$proot" ] && [ "$proot" != "$(realpath "$repo")" ] && [ -d "$psk" ] && prompt="$prompt This project's own skills (follow the one that fits, e.g. its verify skill before you report done): $(ls -d "$psk"/*/SKILL.md 2>/dev/null | tr '\n' ' ')"
+# The brief's "Card:" line (Kanzo task, e.g. shop#44): the lane keeps that card current itself
+card=$(sed -n 's/^Card:[[:space:]]*\([A-Za-z0-9_-]*#[0-9][0-9]*\).*/\1/p' "$brief" | head -1)
+[ -n "$card" ] && prompt="$prompt Your Kanzo card is $card (kanzo MCP tools; in Claude load them with ToolSearch first): set it to doing now, add a short comment on what you did at each milestone, set its url to your PR when you open it, and move it to review when you finish or get stuck."
+
+case $agent in
+  claude:*) cmd="claude --agent ${agent#claude:} --permission-mode bypassPermissions" ;;
+  # codex: full permissions; its own rules don't apply in that mode, the shims below do
+  # interactive (not exec) so the Herdr app shows its status; --no-daemon is required under hc
+  # --disable apps: the ChatGPT GitHub connector may act as a different GitHub account; lanes use gh
+  codex:*)  m=${agent#codex:}; e=${m#*:}; [ "$e" = "$m" ] && e=xhigh; m=${m%%:*}   # codex:<model>[:<effort>], default xhigh (routing.md)
+            cmd="codex --no-daemon --dangerously-bypass-approvals-and-sandbox --disable apps -m $m -c model_reasoning_effort=$e"
+            # Codex asks folder trust for the worktree's main repo; trust it once (else the lane waits at a prompt)
+            main=$(realpath "$repo")
+            grep -qF "[projects.\"$main\"]" ~/.codex/config.toml 2>/dev/null ||
+              printf '\n[projects."%s"]\ntrust_level = "trusted"\n' "$main" >> ~/.codex/config.toml ;;
+  # Copilot lanes (client work limited to Copilot): helpers stay on Copilot too, so no code goes to DeepSeek/GLM
+  omp:github-copilot/*) cmd="omp --model ${agent#omp:} --smol github-copilot/claude-sonnet-5.5 --slow github-copilot/claude-opus-5.5" ;;
+  omp:*)    cmd="omp --model ${agent#omp:}" ;;
+  *) echo "unknown agent: $agent" >&2; exit 2 ;;
+esac
+quoted=$(printf '%s' "$prompt" | sed "s/'/'\\\\''/g")
+
+if [ $ro = 1 ]; then
+  case $agent in omp:*) ;; *) echo "lane --read: omp agents only (Claude read-only roles are subagents)" >&2; exit 2 ;; esac
+  wt=$(realpath "$repo") base=-
+  prompt="Read the brief at $brief and answer it from the code in this folder. Your final answer is saved as the report: at most 30 lines, with a Not verified section, ending with a Lessons section (facts a future session in this project would need, or none)."
+  quoted=$(printf '%s' "$prompt" | sed "s/'/'\\\\''/g")
+else
+# Worktrees live under ~/.herdr/worktrees: Claude already trusts that folder (no trust prompt in lanes).
+# <parent>-<repo> keeps same-named repos of different projects apart
+rkey="$(basename "$(dirname "$(realpath "$repo")")")-$(basename "$(realpath "$repo")")"
+wt="$HOME/.herdr/worktrees/$rkey/$(printf '%s' "$branch" | tr '/' '-')"
+mkdir -p "$(dirname "$wt")"
+git -C "$repo" fetch -q origin
+[ -n "$base" ] || base=$(git -C "$repo" symbolic-ref -q --short refs/remotes/origin/HEAD | sed 's|^origin/||')
+[ -n "$base" ] || base=main
+if [ -d "$wt" ] && git -C "$wt" rev-parse -q --verify HEAD >/dev/null 2>&1; then
+  :                                                         # worktree of an earlier run of this lane: reuse it
+elif git -C "$repo" show-ref -q --verify "refs/heads/$branch"; then
+  git -C "$repo" worktree add -q "$wt" "$branch"            # rerun of an existing lane branch
+else
+  git -C "$repo" worktree add -q "$wt" -b "$branch" "origin/$base"
+fi
+fi
+
+  # hc names are unique among live terminals: repo prefix + branch, then a short hash if it had to be cut
+name=$(printf '%s-%s' "$(basename "$(realpath "$repo")" | cut -c1-8)" "$branch" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_-' '-')
+[ ${#name} -gt 32 ] && name="$(printf '%s' "$name" | cut -c1-25)-$(printf '%s' "$rkey/$branch" | sha1sum | cut -c1-6)"
+  # Started from a lead inside the Herdr app: open the lane as its own tab in the lead's space
+  space=$( [ -n "${HC_TERMINAL_ID:-}" ] && hc get "$HC_TERMINAL_ID" --json 2>/dev/null | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("labels",{}).get("herdr.space",""))' 2>/dev/null || true)
+  # Started by a lead in an hc terminal: the lane reports DONE and asks questions there; the lead answers with hc send
+  if [ $ro = 1 ]; then
+    # print mode: the answer streams into the tab and the report file; DONE goes to the lead from here
+    run="omp -p --no-session --model ${agent#omp:} --tools read,grep,glob '$quoted' | tee '$result.part' && mv '$result.part' '$result'"
+    [ -n "${HC_TERMINAL_ID:-}" ] && run="$run && hc send $HC_TERMINAL_ID \"DONE: \$(grep -m1 . '$result' | cut -c1-120) — $result\""
+  elif [ -n "${HC_TERMINAL_ID:-}" ]; then
+    prompt="$prompt Talk to your lead (hc terminal $HC_TERMINAL_ID; hc adds your name itself) only in two cases: a question the brief does not answer -> hc send $HC_TERMINAL_ID 'QUESTION: <question>' and wait, the answer is typed into your input; after writing the report -> hc send $HC_TERMINAL_ID 'DONE: <one plain line for the owner: the outcome, e.g. PR #N opened, tests pass / 3 findings, 1 high / blocked on X> — $result'. No progress or status messages: those go in the report."
+    quoted=$(printf '%s' "$prompt" | sed "s/'/'\\\\''/g")
+  fi
+  [ $ro = 1 ] || run="exec $cmd '$quoted'"
+  set -- --label "repo=$(basename "$(realpath "$repo")")"
+  [ -n "$space" ] && set -- "$@" --label "herdr.space=$space" --label "herdr.tab=lane-$name"
+  [ $ro = 1 ] && set -- "$@" --no-notify   # it sends DONE itself and exits right after: no second "exited" note
+  # --outlive-parent: a lane keeps running if the lead's session ends; its exit is noted in the lead's input
+  hc run --bg --outlive-parent --name "$name" --cwd "$wt" "$@" \
+    -- sh -c "PATH=$HOME/lonca/shims:\$PATH $run" >/dev/null
+  # lane record for lane-watch and a restarted lead
+  printf '{"name":"%s","worktree":"%s","lead":"%s","agent":"%s","base":"%s","result":"%s","started":%s,"card":"%s","branch":"%s","repo":"%s"}\n' \
+    "$name" "$wt" "${HC_TERMINAL_ID:-}" "$agent" "$base" "$result" "$(date +%s)" "$card" "$( [ $ro = 1 ] || printf '%s' "$branch")" "$(realpath "$repo")" > "$result.lane.json"
+  [ -n "$card" ] && { "$HOME/lonca/bin/kanzo-sync" set "$card" doing >/dev/null 2>&1 || echo "lane: could not set $card to doing" >&2; }
+  [ $ro = 1 ] && { echo "lane: read-only $name in $wt (hc terminal $name) -> $result"; exit 0; }
+  echo "lane: $branch in $wt from origin/$base (hc terminal $name) -> $result"
