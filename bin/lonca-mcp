@@ -1,0 +1,53 @@
+#!/bin/sh
+# lonca-mcp add|remove <harness> <name> [<command> <args>...]: put Lonca's MCP servers (Kanzo, deja) into one agent
+# CLI's own MCP config, using its `mcp add` where it has one. Idempotent; a failure is reported, never fatal.
+# What it adds is listed in ~/.local/state/lonca/mcp-added, so uninstall removes only those, never an entry you or
+# another installer made.
+#   harnesses: claude codex omp opencode copilot agy grok pi
+set -u
+op=$1 h=$2 n=$3; shift 3
+R=$HOME/.local/state/lonca/mcp-added
+has() { grep -qs "$1" "$2"; }
+json() {  # json <file> <key> <command> <args...>: for CLIs with no `mcp add` (omp, pi); their documented mcpServers format
+  f=$1 key=$2; shift 2
+  python3 -I - "$f" "$key" "$op" "$n" "$@" <<'PY'
+import json, os, shutil, sys
+f, key, op, name, *cmd = sys.argv[1:]
+try: d = json.load(open(f))
+except (OSError, ValueError): d = {}
+servers = d.setdefault(key, {})
+if op == "remove":
+    if servers.pop(name, None) is None: sys.exit(0)
+elif name in servers: sys.exit(0)
+else:
+    servers[name] = {"command": cmd[0], "args": cmd[1:]}
+if os.path.exists(f): shutil.copy(f, f + ".lonca-bak")
+os.makedirs(os.path.dirname(f), exist_ok=True); json.dump(d, open(f, "w"), indent=2)
+PY
+}
+if [ "$op" = remove ] && ! grep -qx "$h $n" "$R" 2>/dev/null; then exit 0; fi   # not ours
+before=$(cat "$HOME/.claude.json" "$HOME/.codex/config.toml" "$HOME/.copilot/mcp-config.json" "$HOME/.gemini/config/mcp_config.json" \
+  "$HOME/.grok/config.toml" "$HOME/.omp/agent/mcp.json" "$HOME/.pi/agent/mcp.json" "$HOME/.config/opencode/opencode.json" 2>/dev/null | cksum)
+case $op:$h in
+  add:claude)    has "\"$n\"" "$HOME/.claude.json" || claude mcp add --scope user "$n" -- "$@" ;;
+  remove:claude) claude mcp remove --scope user "$n" ;;
+  add:codex)     has "^\[mcp_servers\.$n\]" "$HOME/.codex/config.toml" || codex mcp add "$n" -- "$@" ;;
+  remove:codex)  ! has "^\[mcp_servers\.$n\]" "$HOME/.codex/config.toml" || codex mcp remove "$n" ;;
+  add:copilot)   has "\"$n\"" "$HOME/.copilot/mcp-config.json" || copilot mcp add "$n" -- "$@" ;;
+  remove:copilot) ! has "\"$n\"" "$HOME/.copilot/mcp-config.json" || copilot mcp remove "$n" ;;
+  add:agy)       has "\"$n\"" "$HOME/.gemini/config/mcp_config.json" || agy mcp add "$n" "$@" ;;
+  remove:agy)    ! has "\"$n\"" "$HOME/.gemini/config/mcp_config.json" || agy mcp remove "$n" ;;
+  add:grok)      has "mcp_servers.$n\]" "$HOME/.grok/config.toml" || grok mcp add "$n" "$@" ;;
+  remove:grok)   ! has "mcp_servers.$n\]" "$HOME/.grok/config.toml" || grok mcp remove "$n" ;;
+  add:opencode)  has "\"$n\"" "$HOME/.config/opencode/opencode.json" || opencode mcp add --global "$n" -- "$@" ;;
+  remove:opencode) opencode mcp remove --global "$n" ;;
+  *:omp)         [ -d "$HOME/.omp/agent" ] && json "$HOME/.omp/agent/mcp.json" mcpServers "$@" ;;
+  *:pi)          [ -d "$HOME/.pi/agent" ] && json "$HOME/.pi/agent/mcp.json" mcpServers "$@" ;;
+  *) exit 0 ;;
+esac >/dev/null 2>&1 || { echo "  MCP $n: could not $op it for $h; do it in $h's own settings" >&2; exit 0; }
+after=$(cat "$HOME/.claude.json" "$HOME/.codex/config.toml" "$HOME/.copilot/mcp-config.json" "$HOME/.gemini/config/mcp_config.json" \
+  "$HOME/.grok/config.toml" "$HOME/.omp/agent/mcp.json" "$HOME/.pi/agent/mcp.json" "$HOME/.config/opencode/opencode.json" 2>/dev/null | cksum)
+mkdir -p "$(dirname "$R")"
+if [ "$op" = add ] && [ "$before" != "$after" ]; then echo "$h $n" >> "$R"; echo "  MCP $n added to $h"; fi
+if [ "$op" = remove ]; then grep -vx "$h $n" "$R" > "$R.new" 2>/dev/null; mv "$R.new" "$R"; fi
+exit 0

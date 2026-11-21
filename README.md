@@ -82,6 +82,9 @@ again, and it backs up every file it changes as `*.lonca-bak`. What it changes:
   memory; a PreToolUse hook that checks `gh` text for AI attribution; commit and PR attribution off;
   `autoMemoryDirectory` = `~/ai-memory`; the Kanzo MCP server (if Kanzo is installed).
 - **Codex** (if picked): the same memory hooks in `~/.codex/hooks.json`; `lane` marks each repo it runs Codex in as trusted.
+- **MCP servers:** Kanzo and deja (when installed) in every harness you picked, through its own `mcp add` command
+  (Claude Code, Codex, OpenCode, Copilot, Antigravity, Grok) or its documented `mcp.json` (omp, pi). Uninstall removes
+  only the entries Lonca added.
 - **Git:** a global `core.hooksPath` with Lonca's `commit-msg` and `pre-push`; every other hook name runs the repo's own
   `.git/hooks/<name>`, so your pre-commit hooks keep working. Repos that set their own `core.hooksPath` (husky,
   lefthook) keep theirs, and Lonca's hooks don't run there.

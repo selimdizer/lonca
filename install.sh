@@ -36,6 +36,7 @@ if [ $UN = 1 ]; then
     for t in "$SRC"/config/systemd/*.timer; do systemctl --user disable --now "$(basename "$t")" >/dev/null 2>&1 || true; done
   fi
   [ "$(uname)" = Darwin ] && python3 "$SRC/bin/launchd-units" uninstall
+  [ -f "$HOME/.local/state/lonca/mcp-added" ] && while read -r h srv; do "$SRC/bin/lonca-mcp" remove "$h" "$srv"; done < "$HOME/.local/state/lonca/mcp-added"
   for d in "$HOME/.claude/skills" "$HOME/.agents/skills" "$HOME/.claude/agents" "$HOME/.local/bin" "$HOME/.config/systemd/user" \
            "$HOME/.codex" "$HOME/.codex/rules" "$HOME/.omp/agent" "$HOME/.omp/agent/extensions" "$HOME/.config/opencode" "$HOME/.gemini" "$HOME/.gemini/skills" "$HOME/.copilot" "$HOME/.config/crush" "$HOME/.pi/agent" "$HOME/.config/amp" "$HOME/.config/agents/skills" "$HOME/.grok" "$HOME/lonca-local/shims" "$HOME/Library/LaunchAgents"; do
     for f in "$d"/* "$d"/.[!.]*; do
@@ -111,6 +112,11 @@ for h in $pick; do
   say "  linked: $h"
 done
 export LONCA_HARNESSES="$pick"   # read by the settings step
+# Lonca's MCP servers (Kanzo board, deja search) in every harness you picked, Claude Code included
+for srv in kanzo deja; do
+  exe=$(command -v $srv) || continue
+  for h in claude $pick; do "$L/bin/lonca-mcp" add "$h" "$srv" "$exe" mcp; done
+done
 for s in "$L"/skills/*/ $HOME/lonca-local/skills/*/; do
   [ -f "$s/SKILL.md" ] || continue
   n=$(basename "$s")
@@ -216,9 +222,5 @@ elif [ "$(uname)" = Darwin ]; then
   fi
 else
   say "No systemd or launchd: run bin/lane-watch, bin/kanzo-sync and bin/ai-cleanup from cron yourself."
-fi
-# Kanzo board: the lead and kanzo-sync talk to it over MCP
-if command -v kanzo >/dev/null && ! grep -qs '"kanzo"' "$HOME/.claude.json"; then
-  claude mcp add --scope user kanzo -- kanzo mcp >/dev/null 2>&1 && say "  Kanzo MCP added to Claude Code" || say "  add Kanzo to Claude yourself: claude mcp add --scope user kanzo -- kanzo mcp"
 fi
 say "Lonca is set up. Start a lead in a project folder:  claude --agent lead"
