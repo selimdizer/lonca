@@ -20,6 +20,13 @@ no() { echo "$me: refused PR #$pr: $*" >&2; echo "$(date -Iseconds) refused $rep
 GH=$(PATH=$(printf '%s' "$PATH" | tr ':' '\n' | grep -v "lonca/shims" | paste -sd: -) command -v gh)
 
 day=0; [ "$(basename "$0")" = merge-pr ] && day=1
+# one merge at a time on this machine: the night quota is counted and spent inside this lock
+mkdir -p "$N"; i=0
+until mkdir "$N/.merge.lock" 2>/dev/null; do
+  i=$((i + 1)); [ $i -gt 300 ] && { echo "$me: another merge has held $N/.merge.lock for 5 min (remove it if stale)" >&2; exit 1; }
+  sleep 1
+done
+trap 'rmdir "$N/.merge.lock" 2>/dev/null' EXIT INT TERM
 if [ $day = 0 ]; then
   [ -e "$N/OFF" ] && no "night mode switched off ($N/OFF)"
   ls "$N"/*.json >/dev/null 2>&1 || no "no night mode tonight (no $N/<project>.json; only the owner starts it)"

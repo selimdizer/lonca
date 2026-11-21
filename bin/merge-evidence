@@ -5,7 +5,9 @@ Files (written by the lead from each checker's own result):
   <lane>.verify.md    VERDICT: PASS|NEEDS_WORK   PERF: OK|REGRESSION|RISK   HEAD: <sha>
   <lane>.review.md    VERDICT: SHIP|NEEDS_WORK|MAJOR_RETHINK                 HEAD: <sha>
   <lane>.security.md  SECURITY: CLEAN | SECURITY: FINDINGS (n), highest: LOW|MEDIUM|HIGH   HEAD: <sha>
-The last matching line of each kind counts (a re-check appends); HEAD must be a prefix (>=7) of the PR head.
+The last line of each kind counts (a re-check appends), and it counts only for the commit in the first HEAD: line
+after it, which must be the PR head (at least 7 characters of it). So a PASS judged on commit A never passes for B,
+even when a later check appends HEAD: B to the same file.
 """
 import os, re, sys
 
@@ -14,16 +16,17 @@ run, lane, head = sys.argv[1:4]
 def last(kind, pat):
     path = os.path.join(run, f"{lane}.{kind}.md")
     try:
-        lines = open(path).read().splitlines()
+        lines = [l.strip() for l in open(path).read().splitlines()]
     except OSError:
         sys.exit(f"missing {lane}.{kind}.md")
-    heads = [l.split(":", 1)[1].strip() for l in lines if l.startswith("HEAD:")]
-    if not heads or len(heads[-1]) < 7 or not head.startswith(heads[-1]):
-        sys.exit(f"{lane}.{kind}.md judged {heads[-1][:12] if heads else 'no HEAD'}, the PR head is {head[:12]}: re-check")
-    found = [l.strip() for l in lines if re.match(pat, l.strip())]
-    if not found:
+    idx = [i for i, l in enumerate(lines) if re.match(pat, l)]
+    if not idx:
         sys.exit(f"no '{pat}' line in {lane}.{kind}.md")
-    return found[-1]
+    i = idx[-1]
+    judged = next((l.split(":", 1)[1].strip() for l in lines[i + 1:] if l.startswith("HEAD:")), "")
+    if len(judged) < 7 or not head.startswith(judged):
+        sys.exit(f"{lane}.{kind}.md: '{lines[i]}' judged {judged[:12] or 'no HEAD'}, the PR head is {head[:12]}: re-check")
+    return lines[i]
 
 def need(ok, msg):
     if not ok:

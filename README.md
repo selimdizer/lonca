@@ -188,7 +188,7 @@ lead out of the code leaves its context free for planning and checking, and ever
 **Why does review use a different model family?** A model tends to approve its own habits. So Claude's code goes to Codex
 for review, and Codex and omp code goes to a Claude reviewer.
 
-**Isn't `ok-merge` slow?** It's one line. `ok-merge --fast a/b#1 #2 #3` grants a whole batch without waiting for long CI
+**Isn't `ok-merge` slow?** It's one line. `ok-merge --fast a/b#1 2 3` grants a whole batch without waiting for long CI
 jobs, though a failed check still blocks. You choose the speed; agents ask for it.
 
 **Do I need every tool?** No: see [Requirements](#requirements). Herdr is the only one lanes insist on, because you can't

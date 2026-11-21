@@ -108,6 +108,8 @@ name=$(printf '%s-%s' "$(basename "$(realpath "$repo")" | cut -c1-8)" "$branch" 
       on_screen "Read the brief" && hc keys "$name" enter >/dev/null 2>&1 || echo "lane: press Enter in $name to start it" >&2 ;;
     claude:*)    # Claude asks to trust a folder it has not seen (a new worktree): "Yes, I trust this folder"
       on_screen "trust this folder" 8 && { hc keys "$name" down >/dev/null 2>&1; hc keys "$name" enter >/dev/null 2>&1; } || true ;;
+    agy:*)       # Antigravity asks to trust a new folder; "Yes, I trust this folder" is preselected
+      on_screen "trust the contents of this project" 15 && hc keys "$name" enter >/dev/null 2>&1 || true ;;
     copilot:*)   # interactive Copilot asks to trust each new folder: "Yes" for this session (nothing saved)
       on_screen "Confirm folder trust" 15 && hc keys "$name" enter >/dev/null 2>&1 || true ;;
   esac

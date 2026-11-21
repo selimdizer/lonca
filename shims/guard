@@ -19,6 +19,7 @@ case $name in
     case $args in
       *" push "*" --force"*|*" push "*" -f "*|*" push --force"*|*" push -f "*|*" push "*" +"*) deny "no force-push" ;;
       *" push "*" --delete"*|*" push "*" -d "*|*" push "*" :"*) deny "no branch deletion" ;;
+      *" push "*" main "*|*" push "*":main "*|*" push "*" master "*|*" push "*":master "*) deny "push a branch and open a PR; the default branch is the owner's" ;;
       *"core.hooksPath="*|*"core.hookspath="*) deny "don't bypass git hooks" ;;
       *" push "*" --no-verify"*) deny "don't skip the pre-push hook" ;;
       *" reset --hard"*|*" reset "*" --hard"*) deny "no reset --hard" ;;

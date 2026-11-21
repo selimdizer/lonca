@@ -11,6 +11,9 @@ t blocked git reset --hard
 t blocked git clean -fdx
 t blocked git branch -D x
 t blocked git push origin +x
+t blocked git push origin main
+t blocked git push origin HEAD:main
+t blocked git push -u origin master
 t blocked git push origin --delete x
 t blocked git push origin :x
 t blocked git -c core.hooksPath=/dev/null push origin x

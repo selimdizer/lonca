@@ -3,6 +3,17 @@
 All notable changes to Lonca. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.2] - 2026-11-22
+
+Fixes from an independent council review (three model families):
+- `merge-evidence`: each verdict counts only for the `HEAD:` line right after it. Before, a PASS judged on commit A
+  could pass for commit B once a later check appended `HEAD: B` to the same file.
+- `ok-merge`: PR numbers after the first are plain numbers (`a/b#1 2 3`); an unquoted `#2` is a shell comment, so the
+  documented batch form granted only the first PR. CI now really tests grants and the evidence gate.
+- `merge-pr`/`night-merge`: one merge at a time (a lock), so two lanes can't both take the night's last merge.
+- Guard shim also blocks `git push … main|master` (repos whose own hooksPath skips Lonca's pre-push).
+- Lanes answer Antigravity's folder-trust prompt.
+
 ## [0.3.1] - 2026-11-22
 
 - The guard shim and `ai-trace-gh` find Lonca from their own path, so they work from any checkout (CI has no `~/lonca`).
@@ -48,6 +59,7 @@ First public release.
 - `kanzo-sync`, `lane-watch`, `ai-cleanup` and their timers.
 - `install.sh` (with `--uninstall`) and the Herdr plugin.
 
+[0.3.2]: https://github.com/selimdizer/lonca/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/selimdizer/lonca/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/selimdizer/lonca/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/selimdizer/lonca/compare/v0.1.0...v0.2.0

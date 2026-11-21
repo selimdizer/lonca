@@ -25,9 +25,26 @@ jobs:
       - name: ok-merge grants (several repos, bare numbers, bad input)
         run: |
           H=$(mktemp -d); G=$H/.local/state/lonca/merge-grants
-          HOME=$H sh bin/ok-merge --fast a/b#1 #2 c/d#3
-          test -f $G/a_b_1 && test -f $G/a_b_2 && test -f $G/c_d_3 && test ! -e $G/a_b_3 && grep -q fast $G/c_d_3
-          ! HOME=$H sh bin/ok-merge a/b#1 x
+          HOME=$H sh bin/ok-merge --fast a/b#1 2 '#5' c/d#3
+          for f in a_b_1 a_b_2 a_b_5 c_d_3; do test -f "$G/$f" || { echo "missing grant $f"; exit 1; }; done
+          if test -e "$G/a_b_3"; then echo "grant leaked to the wrong repo"; exit 1; fi
+          grep -q fast "$G/c_d_3"
+          if HOME=$H sh bin/ok-merge a/b#1 x; then echo "bad input accepted"; exit 1; fi
+      - name: Merge evidence (head pairing, stale head, HIGH finding, missing file)
+        run: |
+          T=$(mktemp -d); A=aaaaaaa1111; B=bbbbbbb2222
+          ev() { python3 bin/merge-evidence "$T" x "$1" >/dev/null 2>&1; }
+          printf 'VERDICT: SHIP\nHEAD: %s\n' $B > $T/x.review.md
+          printf 'SECURITY: CLEAN\nHEAD: %s\n' $B > $T/x.security.md
+          printf 'VERDICT: PASS\nHEAD: %s\nPERF: OK\nHEAD: %s\n' $A $B > $T/x.verify.md
+          if ev $B; then echo "PASS on A counted for B"; exit 1; fi
+          printf 'VERDICT: PASS\nHEAD: %s\nPERF: OK\nHEAD: %s\n' $B $B > $T/x.verify.md
+          ev $B || { echo "good evidence refused"; exit 1; }
+          if ev $A; then echo "stale head accepted"; exit 1; fi
+          printf 'SECURITY: FINDINGS (1), highest: HIGH\nHEAD: %s\n' $B > $T/x.security.md
+          if ev $B; then echo "HIGH finding accepted"; exit 1; fi
+          rm $T/x.security.md
+          if ev $B; then echo "missing file accepted"; exit 1; fi
       - name: AI-trace check (default and strict)
         run: |
           echo "add anthropic client" | bin/ai-trace-check

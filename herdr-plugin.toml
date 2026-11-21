@@ -1,6 +1,6 @@
 id = "lonca"
 name = "Lonca"
-version = "0.3.1"
+version = "0.3.2"
 min_herdr_version = "0.9.5"
 description = "A guild for coding agents: a lead plans and checks, lanes do the work in their own worktrees, nothing merges without review, verification, security and your word"
 platforms = ["linux", "macos"]
