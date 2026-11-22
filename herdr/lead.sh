@@ -8,4 +8,6 @@ set -- --cwd "$cwd" --label lead --focus
 [ -n "${HERDR_WORKSPACE_ID:-}" ] && set -- "$@" --workspace "$HERDR_WORKSPACE_ID"
 pane=$("$H" tab create "$@" | python3 -I -c 'import json,sys; d=json.load(sys.stdin); print(d["result"]["root_pane"]["pane_id"])')
 [ -n "$pane" ] || { echo "lonca: could not read the new tab's pane id" >&2; exit 1; }
-"$H" pane run "$pane" ${LONCA_LEAD_CMD:-claude --agent lead}
+# deja limited to this folder's project from the lead's first second (deja-scope prints nothing outside a project)
+f=$("$HOME/lonca/bin/deja-scope" "$cwd" 2>/dev/null || true)
+"$H" pane run "$pane" ${f:+env DEJA_POLICY_FILE="$f"} ${LONCA_LEAD_CMD:-claude --agent lead}

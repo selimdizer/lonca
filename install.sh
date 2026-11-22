@@ -70,13 +70,12 @@ def strip(p, deny=False):
         s["hooks"][ev] = [g for g in groups if g["hooks"]]
     json.dump(s, open(p, "w"), indent=2)
 strip(f"{H}/.claude/settings.json", deny=True); strip(f"{H}/.codex/hooks.json")
-# deja-scope's policy line in each project's .claude/settings.local.json
-D = f"{H}/.local/state/lonca/deja"
-for n in (os.listdir(D) if os.path.isdir(D) else []):
-    try:
-        root = json.load(open(f"{D}/{n}"))["lonca_root"]; p = f"{root}/.claude/settings.local.json"; s = json.load(open(p))
-    except (OSError, ValueError, KeyError): continue
-    if s.get("env", {}).pop("DEJA_POLICY_FILE", None):
+# the deja scope line deja-scope wrote into folders' .claude/settings.local.json
+W = f"{H}/.local/state/lonca/deja/settings-written"
+for p in (open(W).read().split() if os.path.exists(W) else []):
+    try: s = json.load(open(p))
+    except (OSError, ValueError): continue
+    if s.get("env", {}).pop("DEJA_POLICY_FILE", None) is not None:
         if not s["env"]: del s["env"]
         json.dump(s, open(p, "w"), indent=2)
 EOF2
@@ -203,6 +202,7 @@ deny = s.setdefault("permissions", {}).setdefault("deny", [])
 deny += [r for r in json.load(open(f"{L}/config/claude-permissions.json"))["deny"] if r not in deny]
 hooks = s.setdefault("hooks", {})
 add_hook(hooks, "SessionStart", "startup|resume|clear|compact", f"{L}/bin/memory-context")
+add_hook(hooks, "SessionStart", "startup|resume|clear|compact", f"{L}/bin/deja-scope --session")
 add_hook(hooks, "PreToolUse", "Bash", f"{L}/bin/ai-trace-gh --hook")
 if os.environ.get("LONCA_CLAUDE_TMPDIR"):
     s.setdefault("env", {}).setdefault("TMPDIR", os.environ["LONCA_CLAUDE_TMPDIR"])

@@ -14,10 +14,13 @@ versions follow [Semantic Versioning](https://semver.org/).
 - `ai-cleanup` removes run folders in `~/.cache/ai-runs` untouched for 30 days (unless a lane of theirs still has a
   worktree). The merge log moved to `~/.local/state/lonca/merge.log`, so the audit trail is kept.
 
-- Each project sees only itself in deja. `deja-scope` writes a per-project recall policy that leaves out every other
-  project's sessions; `lane` starts every lane with it (Codex gets it through its MCP server config, since Codex starts
-  MCP servers with a minimal environment), the project root's `.claude/settings.local.json` gives it to a lead started
-  there, and `lane-watch` refreshes it. Lanes and leads are told to use only their project's Kanzo cards.
+- Each project sees only itself in deja. `deja-scope` writes a per-project deja policy that leaves out every session
+  outside the project, written as the complement of the project's own names (so a project created later is left out
+  too, and no other project's name is in the file). `lane` starts every lane with it (Codex gets it through its MCP
+  server config, since Codex starts MCP servers with a minimal environment), the Herdr "start a lead" action starts
+  the lead with it, and a new Claude SessionStart hook gives it to every session started in a project: right away
+  for Bash, and for the deja MCP tool from the next session in that folder (`.claude/settings.local.json`, kept out
+  of git). CI checks the policy against deja's own match rule. Lanes and leads use only their project's Kanzo cards.
 - `leads` lists the agent sessions open in project folders, so a lead can ask another one ("was it you?") instead of
   reading its sessions; the `orchestrate` skill says how to look a change up first (logs, lane records, deja, git).
 - `lanes --mine` shows only the lanes the calling lead started; `merge-pr` logs the lane worktrees it removes.

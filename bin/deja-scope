@@ -1,107 +1,203 @@
 #!/usr/bin/env python3
-"""deja-scope <dir> | --refresh: keep a project's agents to that project's own past sessions in deja.
+"""deja-scope: keep each project's agents to that project's own past sessions in deja.
 
-Writes ~/.local/state/lonca/deja/<project>.json, a deja recall policy, and prints its path. A process started with
-DEJA_POLICY_FILE=<that file> gets no other project's sessions from `deja search`, the deja MCP tool or its hooks:
-`lane` starts every lane with it, and this sets it in <root>/.claude/settings.local.json for Claude sessions started
-in the project root (the lead).
-deja's policy can only list what to leave out (`ignore`, globs on a session's path and project), so the file lists
-every project name deja has indexed that is not provably this one: sessions in the root, in its subfolders' worktrees,
-and in Lonca's lane worktrees of its repos. Anything unclear is left out (it costs this project a little recall).
---refresh rewrites every file there (lane-watch, every 10 min), so a project that appears later is left out too.
-If deja cannot list its sessions the file leaves out everything.
+  deja-scope <dir>     write the deja policy file for <dir>'s project and print its path; nothing outside a project
+  deja-scope --session Claude SessionStart hook (JSON on stdin): limits this session's Bash, and the deja MCP tool
+                       from the next session started in that folder (writes its .claude/settings.local.json)
+  deja-scope --refresh rewrite every project's file (lane-watch, every 10 min: new subfolders count);
+                       a removed or renamed project's file recalls nothing for a week, then goes
+
+A process with DEJA_POLICY_FILE=<that file> gets no other project's sessions from `deja search`, the deja MCP tool
+or its hooks. `lane` starts every lane with it, the Herdr "start a lead" action starts the lead with it, and Claude
+sessions read it from the settings this writes.
+deja names a session's project by the last two folders of its working directory, and its policy can only say what
+to leave out (`ignore`, shell globs). So the file holds the complement of this project's names, written with
+character classes: every name whose first folder is not the root, one of its subfolders or one of Lonca's lane
+worktree folders for its repos is left out, including projects that appear later. Other projects' names appear
+nowhere in it. A name this cannot place (a deeper subfolder like "apps/backend") is left out too: it costs this
+project a little recall, never another project's sessions.
 """
-import json, os, subprocess, sys, tempfile, time
+import hashlib, json, os, subprocess, sys, tempfile, time
 
 DIR = os.path.expanduser("~/.local/state/lonca/deja")
-EVERYTHING = ["*", "*/*"]          # every project name has one or two parts
+WRITTEN = os.path.join(DIR, "settings-written")      # settings files this wrote, for install.sh --uninstall
+LANES = os.path.expanduser("~/.herdr/worktrees") + "/"
+HERE = os.path.dirname(os.path.realpath(__file__))
+UNSAFE = set("[]*?\\/!^")                             # glob syntax deja can't escape (it turns \ into /)
+NOTHING = ["*", "*/*"]                               # every name has one or two folders
 
 
-def mine_rules(root):
-    """Project names (deja: the last two folders of a session's cwd) that belong to this root."""
+def project(d):
+    r = subprocess.run([os.path.join(HERE, "lonca-project"), d], capture_output=True, text=True)
+    return tuple(r.stdout.rstrip("\n").split("\t")) if r.returncode == 0 else None
+
+
+def path_for(name, root):
+    return os.path.join(DIR, f"{name}-{hashlib.sha1(root.encode()).hexdigest()[:6]}.json")
+
+
+def own_names(root):
+    """(first folders whose every name is this project's, the root's own exact name)."""
     base, parent = os.path.basename(root), os.path.basename(os.path.dirname(root))
     subs = [n for n in os.listdir(root) if os.path.isdir(os.path.join(root, n)) and not n.startswith(".")]
     repos = ([root] if os.path.exists(os.path.join(root, ".git")) else []) + \
             [os.path.join(root, n) for n in subs if os.path.exists(os.path.join(root, n, ".git"))]
-    exact = {f"{parent}/{base}"}
     firsts = {base, *subs} | {f"{os.path.basename(os.path.dirname(r))}-{os.path.basename(r)}" for r in repos}  # lane: <parent>-<repo>/<branch>
-    return lambda p: p in exact or p.split("/", 1)[0] in firsts
+    return {f for f in firsts if safe(f)}, (parent, base)
 
 
-def exact(p):
-    # an exact name: a leading '?' keeps deja from its "contains" fallback, which would also hit this project's paths
-    return "?" + "".join("?" if c in "*?[]\\" else c for c in p[1:])
+def safe(s):
+    """A name these globs can spell; others are left out (deja can't escape glob syntax, Go rejects a class opening on -)."""
+    return bool(s) and not UNSAFE & set(s) and s[0] != "-"
 
 
-def write(name, root):
+def lit(s):
+    """s as a glob that matches only itself and holds a glob character, so deja's "contains" fallback never applies."""
+    return f"[{s[0]}]{s[1:]}"
+
+
+def cls(chars):
+    """[^chars] for Go's path.Match (it negates with ^). A bare - is a syntax error there, so - goes in as the range
+    ,-. ; the comma and dot that range also takes are returned, for the caller to leave out on their own."""
+    cs = set(chars)
+    extra = sorted({",", "."} - cs) if "-" in cs else []
+    return "[^" + "".join(sorted(cs - {"-"})) + (",-." if "-" in cs else "") + "]", extra
+
+
+def not_in(words):
+    """Globs that together match every non-empty folder name not in words (a trie complement)."""
+    out = []
+    def walk(prefix, rest):
+        kids = sorted({w[0] for w in rest if w})
+        if prefix and "" not in rest:
+            out.append(lit(prefix))                  # the prefix itself is no word
+        if kids:
+            c, extra = cls(kids)
+            out.append(prefix + c + "*")
+            out.extend((lit(prefix) if prefix else "") + f"[{e}]*" for e in extra)
+        else:
+            out.append(prefix + "?*")
+        for c in kids:
+            walk(prefix + c, [w[1:] for w in rest if w and w[0] == c])
+    walk("", list(words))
+    return out
+
+
+def policy(root):
+    firsts, (parent, base) = own_names(root)
+    ign = ["*/.claude/jobs/*", "*"]                  # deja's default rule; one-folder names are never a project's
+    ign += [p + "/*" for p in not_in(firsts | ({parent} if safe(parent) and safe(base) else set()))]
+    if parent not in firsts and safe(parent) and safe(base):
+        ign += [lit(parent) + "/" + p for p in not_in({base})]   # <parent>/<anything but the root's name>
+    return {"ignore": ign}
+
+
+def put(f, data):
     os.makedirs(DIR, exist_ok=True)
+    text = json.dumps(data, indent=0)
     try:
-        r = subprocess.run(["deja", "last", "1000000", "--json"], capture_output=True, text=True)
-        projects = {s.get("project") or "" for s in json.loads(r.stdout)["sessions"]}
-        mine = mine_rules(root)
-        ignore = ["*/.claude/jobs/*"] + sorted(exact(p) for p in projects if p and not mine(p))
-    except (ValueError, KeyError, OSError):
-        if os.path.exists(os.path.join(DIR, f"{name}.json")):
-            return os.path.join(DIR, f"{name}.json")      # keep the last good list rather than lose all recall
-        ignore = EVERYTHING
-    f = os.path.join(DIR, f"{name}.json")
+        if open(f).read() == text:
+            return
+    except OSError:
+        pass
     fd, tmp = tempfile.mkstemp(dir=DIR)
     with os.fdopen(fd, "w") as out:
-        json.dump({"lonca_project": name, "lonca_root": root, "ignore": ignore}, out, indent=0)
+        out.write(text)
     os.replace(tmp, f)
+
+
+def ensure(d):
+    p = project(d)
+    if not p:
+        return None
+    name, root = p
+    f = path_for(name, root)
+    put(f, policy(root))
+    with open(f[:-5] + ".root", "w") as out:         # which root the file is for (deja warns on keys it doesn't know)
+        out.write(root)
     return f
 
 
-def wire_claude(root, f):
-    """Sessions started in the project root (the lead, the owner's own) get the policy from Claude's local settings."""
-    s = os.path.join(root, ".claude", "settings.local.json")
+def write_settings(folder, f):
+    """DEJA_POLICY_FILE in <folder>/.claude/settings.local.json, Claude's per-user settings file for that folder."""
+    s = os.path.join(folder, ".claude", "settings.local.json")
     try:
         d = json.load(open(s))
     except FileNotFoundError:
         d = {}
     except ValueError:
-        print(f"deja-scope: {s} is not valid JSON; add env.DEJA_POLICY_FILE = {f} yourself", file=sys.stderr)
-        return
-    if d.get("env", {}).get("DEJA_POLICY_FILE") == f:
-        return
-    d.setdefault("env", {})["DEJA_POLICY_FILE"] = f
-    os.makedirs(os.path.dirname(s), exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(s))
-    with os.fdopen(fd, "w") as out:
-        json.dump(d, out, indent=2)
-    os.replace(tmp, s)
-    # a root that is a git repo: keep the machine-local file out of commits (local exclude, not the shared .gitignore)
-    g = subprocess.run(["git", "-C", root, "rev-parse", "--git-path", "info/exclude"], capture_output=True, text=True)
-    if g.returncode == 0 and subprocess.run(["git", "-C", root, "check-ignore", "-q", s]).returncode != 0:
-        ex = os.path.join(root, g.stdout.strip())
+        return f"{s} is not valid JSON; add env.DEJA_POLICY_FILE = {f} to it yourself"
+    if d.get("env", {}).get("DEJA_POLICY_FILE") != f:
+        d.setdefault("env", {})["DEJA_POLICY_FILE"] = f
+        os.makedirs(os.path.dirname(s), exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(s))
+        with os.fdopen(fd, "w") as out:
+            json.dump(d, out, indent=2)
+        os.replace(tmp, s)
+    seen = open(WRITTEN).read().split("\n") if os.path.exists(WRITTEN) else []
+    if s not in seen:
+        with open(WRITTEN, "a") as out:
+            out.write(s + "\n")
+    # inside a git repo: keep the file out of commits (the repo's local exclude, never its shared .gitignore)
+    git = lambda *a: subprocess.run(["git", "-C", folder, *a], capture_output=True, text=True)
+    if git("rev-parse", "--git-dir").returncode == 0 and git("check-ignore", "-q", s).returncode != 0:
+        ex = os.path.join(git("rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip(), "info", "exclude")
         os.makedirs(os.path.dirname(ex), exist_ok=True)
         with open(ex, "a") as out:
-            out.write("\n/.claude/settings.local.json\n")
+            out.write("\n/" + os.path.relpath(s, git("rev-parse", "--show-toplevel").stdout.strip()) + "\n")
+    return None
+
+
+def session():
+    try:
+        cwd = json.load(sys.stdin).get("cwd") or os.getcwd()
+    except ValueError:
+        cwd = os.getcwd()
+    p = project(cwd)
+    if not p or cwd.startswith(LANES):               # outside projects: nothing to limit; lanes get it from `lane`
+        return
+    name, root = p
+    f = ensure(cwd)
+    if os.environ.get("CLAUDE_ENV_FILE"):            # this session's Bash commands
+        with open(os.environ["CLAUDE_ENV_FILE"], "a") as out:
+            out.write(f"export DEJA_POLICY_FILE='{f}'\n")
+    if os.environ.get("DEJA_POLICY_FILE") == f:
+        return                                       # already limited, the MCP tool too
+    here = os.path.realpath(cwd)
+    top = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()
+    if here in (os.path.realpath(root), os.path.realpath(top) if top else None):
+        err = write_settings(here, f)
+        later = f"from the next session started in {here}" if not err else f"once you fix this: {err}"
+    else:
+        later = f"in sessions started in {root} or one of its repos"
+    print(f"# deja in this session\nThe deja MCP tool is not limited to project \"{name}\" in this session (it is {later}). "
+          "Until then don't use the deja MCP tool; use `deja search ...` in Bash, which is limited to this project.")
+
+
+def refresh():
+    for n in sorted(os.listdir(DIR) if os.path.isdir(DIR) else []):
+        f = os.path.join(DIR, n)
+        if n.endswith(".root"):
+            root = open(f).read().strip()
+            p = project(root) if os.path.isdir(root) else None
+            if p and p[1] == root and path_for(*p) == f[:-5] + ".json":
+                put(f[:-5] + ".json", policy(root))
+            else:                                    # gone or renamed: a session still pointing here recalls nothing
+                put(f[:-5] + ".json", {"ignore": NOTHING})
+                os.remove(f)
+        elif n.endswith(".json") and not os.path.exists(f[:-5] + ".root") and time.time() - os.path.getmtime(f) > 7 * 86400:
+            os.remove(f)
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] == ["--refresh"]:
-        for n in sorted(os.listdir(DIR) if os.path.isdir(DIR) else []):
-            try:
-                d = json.load(open(os.path.join(DIR, n)))
-                if os.path.isdir(d["lonca_root"]):
-                    write(d["lonca_project"], d["lonca_root"])
-            except (OSError, ValueError, KeyError):
-                pass
-    elif len(sys.argv) == 2 and not sys.argv[1].startswith("-"):
-        here = os.path.dirname(os.path.realpath(__file__))
-        r = subprocess.run([os.path.join(here, "lonca-project"), sys.argv[1]], capture_output=True, text=True)
-        if r.returncode != 0:
-            sys.exit(f"deja-scope: {sys.argv[1]} is in no project")
-        name, root = r.stdout.strip().split("\t")
-        f = os.path.join(DIR, f"{name}.json")
-        try:
-            fresh = time.time() - os.path.getmtime(f) < 900 and json.load(open(f)).get("lonca_root") == root
-        except (OSError, ValueError):
-            fresh = False
-        if not fresh:              # refreshed every 10 min anyway; a lane start doesn't wait 5 s for it
-            f = write(name, root)
-        wire_claude(root, f)
-        print(f)
+    a = sys.argv[1:]
+    if a == ["--session"]:
+        session()
+    elif a == ["--refresh"]:
+        refresh()
+    elif len(a) == 1 and not a[0].startswith("-"):
+        f = ensure(a[0])
+        if f:
+            print(f)
     else:
         sys.exit(__doc__.strip())
