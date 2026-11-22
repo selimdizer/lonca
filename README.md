@@ -122,8 +122,9 @@ hour: if someone pushes after the checks, the evidence no longer matches, the ch
 
 ## Configuration
 
-**Projects.** Lonca needs no projects folder. To group several repos into one project, put a `lonca.toml` in the folder
-that holds them (anywhere on disk). It is a one-line file:
+**Projects.** Lonca needs no projects folder. To group several repos into one project, put a `.lonca.toml` in the folder
+that holds them (anywhere on disk; a hidden file, like `.editorconfig`; `lonca.toml` works too). Put it next to your
+repos, not inside one, so it stays yours and never reaches a team repo. Only `name` is needed:
 
 ```toml
 name = "shop"              # memory group ~/ai-memory/shop/ and Kanzo project slug; default: the folder's name
@@ -134,7 +135,7 @@ high_paths = ["src/pay/*"] # optional: more paths that make a PR high tier
 ```
 
 Lonca finds it the way mise and EditorConfig find theirs: a lane's worktree counts as its main repo, Lonca walks up from
-there, and the closest `lonca.toml` (or `.lonca.toml`) wins. With no marker, the git repo is the project. Project-only
+there, and the closest `.lonca.toml` (or `lonca.toml`) wins. With no marker, the git repo is the project. Project-only
 skills go in `<project root>/.claude/skills/`, next to the repos rather than inside a team repo.
 `~/lonca/bin/lonca-project [dir]` shows what Lonca sees.
 
@@ -164,7 +165,7 @@ skills go in `<project root>/.claude/skills/`, next to the repos rather than ins
 | `lonca.toolNamesOk true` (per repo) | lifts `strictTraces` in a repo whose subject is AI tools |
 | `lonca.mergeMethod merge\|squash\|rebase` (per repo) | how `merge-pr` merges; default: what the repo allows, in that order |
 
-A repo without CI checks needs `wait_for_ci = false` in its project's `lonca.toml` to merge at all.
+A repo without CI checks needs `wait_for_ci = false` in its project's `.lonca.toml` to merge at all.
 
 **Roles and tools.** Every role gets every tool, MCP server and skill you have; nothing is listed one by one, so a
 server or skill you add later reaches them too. Only the checkers (`reviewer`, `verifier`, `security-auditor`) can't

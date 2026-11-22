@@ -3,6 +3,11 @@
 All notable changes to Lonca. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- The project marker is documented as the hidden `.lonca.toml` (like `.editorconfig`); `lonca.toml` still works.
+  Keep it next to your repos, not inside one.
+
 ## [0.4.0] - 2026-11-22
 
 Merging, simplified (after a three-family council review): risk tiers for the checks, one setting for approval.

@@ -24,7 +24,7 @@ repo=$1 branch=$2 agent=$3 brief=$(realpath "$4") result=$5 base=${6:-}
 command -v hc >/dev/null 2>&1 && hc server status >/dev/null 2>&1 || { echo "lane: herdr-core (hc) is not running; not starting a lane" >&2; exit 1; }
 mkdir -p "$(dirname "$result")"; result="$(cd "$(dirname "$result")" && pwd -P)/$(basename "$result")"
 prompt="Read the brief at $brief and do the lane it describes. When you are done, or stopped, write your final report (at most 30 lines, with a Not verified section, ending with a Lessons section: facts a future session in this project would need, such as a gotcha, a command that works or a decision you learned, or none) to $result and end. Do not write to ~/ai-memory yourself; the lead saves your lessons. Something the brief does not settle, or that may have been decided before: search past sessions first (deja search \"<topic>\", or the deja MCP tool) and the project memory; ask only if they don't answer it."
-# Project skills live in the project root (the folder with lonca.toml, not a team repo): point the lane at them
+# Project skills live in the project root (the folder with .lonca.toml, not a team repo): point the lane at them
 proot=$("$HOME/lonca/bin/lonca-project" "$repo" 2>/dev/null | cut -f2) || proot=
 psk="$proot/.claude/skills"
 [ -n "$proot" ] && [ "$proot" != "$(realpath "$repo")" ] && [ -d "$psk" ] && prompt="$prompt This project's own skills (follow the one that fits, e.g. its verify skill before you report done): $(ls -d "$psk"/*/SKILL.md 2>/dev/null | tr '\n' ' ')"

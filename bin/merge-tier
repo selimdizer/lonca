@@ -3,15 +3,15 @@
 
   high    any changed path is risky: CI and deploy files, infra, DB migrations or SQL, dependency manifests and lock
           files, env and secrets config, auth/login/session/permission/payment/billing/crypto paths, agent instructions
-          (AGENTS.md, CLAUDE.md, .claude/, skills/), git hooks, lonca.toml, the project's own `high_paths`; or a file
+          (AGENTS.md, CLAUDE.md, .claude/, skills/), git hooks, .lonca.toml, the project's own `high_paths`; or a file
           that is renamed, copied or deleted
   low     every path is plain docs (*.md, *.txt, docs/; not SECURITY or INSTALL docs) or a test file, at most 10
           files and 100 changed lines
   medium  everything else
-The project (`lonca-project`) can raise the floor with `min_tier = "medium"` in its lonca.toml. When lonca.toml is
+The project (`lonca-project`) can raise the floor with `min_tier = "medium"` in its .lonca.toml. When .lonca.toml is
 inside the repo, the base branch's copy is read, never the PR's. The lead can only raise the tier, by writing high or
 medium into <run-dir>/<lane>.tier.
-Other lonca.toml keys merge-pr reads: auto_merge = "off|low|medium|all" (merge PRs up to that tier without asking),
+Other .lonca.toml keys merge-pr reads: auto_merge = "off|low|medium|all" (merge PRs up to that tier without asking),
 wait_for_ci = false (checks still running don't block; a failed one does).
 merge-tier --config <repo-dir> <base> prints the project's settings as JSON.
 """
@@ -87,7 +87,7 @@ def tier_of(files, cfg):
 
 
 if __name__ == "__main__":
-    if sys.argv[1:2] == ["--config"]:   # merge-tier --config <repo-dir> <base>: the project's lonca.toml as JSON
+    if sys.argv[1:2] == ["--config"]:   # merge-tier --config <repo-dir> <base>: the project's .lonca.toml as JSON
         print(json.dumps(project_config(os.path.realpath(sys.argv[2]), sys.argv[3]))); sys.exit(0)
     if len(sys.argv) < 3 or sys.argv[1] in ("-h", "--help"):
         print(__doc__.strip()); sys.exit(0 if len(sys.argv) > 1 else 2)

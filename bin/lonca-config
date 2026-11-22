@@ -5,7 +5,7 @@ shell use: a list prints one item per line, true/false print as such. Missing fi
 Keys (all optional):
   tmpdir            = "~/.cache/lonca/tmp"      agents' TMPDIR in lanes (Claude sessions too if you chose it at install)
   cleanup_tmp_dirs  = ["/tmp", "/var/tmp"]      extra temp folders ai-cleanup may clear (default: only tmpdir)
-  auto_merge        = "off"                     default for projects whose lonca.toml doesn't say: off|low|medium|all
+  auto_merge        = "off"                     default for projects whose .lonca.toml doesn't say: off|low|medium|all
 """
 import ast, os, re, sys
 

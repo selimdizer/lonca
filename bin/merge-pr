@@ -2,10 +2,10 @@
 # merge-pr [--dry-run] [--code <c>] <repo-dir> <pr-number> <run-dir> <lane>: the only way an agent merges a PR.
 #
 # Checks, always: the PR is open, not a draft, mergeable; CI is green (with `wait_for_ci = false` in the project's
-#   lonca.toml, checks still running don't block; a failed one always does); the lane's evidence files fit the PR's
+#   .lonca.toml, checks still running don't block; a failed one always does); the lane's evidence files fit the PR's
 #   risk tier (bin/merge-tier) for its current head commit (bin/merge-evidence); no AI attribution in the PR text.
 # Approval, one of:
-#   - auto: the tier is at or under the project's `auto_merge` (lonca.toml: off | low | medium | all; default from
+#   - auto: the tier is at or under the project's `auto_merge` (.lonca.toml: off | low | medium | all; default from
 #     ~/.config/lonca/config.toml, else off);
 #   - night mode: the project's night is on (night-on) and not past its end time: everything that passes the checks
 #     merges, up to the night's cap if one was set;

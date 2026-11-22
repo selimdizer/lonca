@@ -2,7 +2,7 @@
 """lonca-project [dir]: which project a directory belongs to. Prints "<name>\t<root>"; nothing (exit 1) outside any project.
 
 Like mise/EditorConfig/direnv: a lane worktree counts as its main repo; from there walk up to / and the closest
-`lonca.toml` (or `.lonca.toml`) marks the project root, so one marker in a parent folder groups several repos.
+`.lonca.toml` (or `lonca.toml`) marks the project root, so one marker in a parent folder groups several repos.
 Its `name = "..."` names the project (memory group, Kanzo slug); default: the folder's name in lower case.
 No marker: the git repo is the project. LONCA_PROJECT overrides the name.
 """
@@ -23,7 +23,7 @@ repo = os.path.dirname(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip
 
 d = repo or start
 while True:
-    for n in ("lonca.toml", ".lonca.toml"):
+    for n in (".lonca.toml", "lonca.toml"):
         if os.path.isfile(os.path.join(d, n)):
             name = marker_name(os.path.join(d, n)) or os.path.basename(d).lower()
             print(f"{os.environ.get('LONCA_PROJECT') or name}\t{d}")

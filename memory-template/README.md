@@ -7,7 +7,7 @@ Plain Markdown in git. Every agent (Claude, Codex, omp, opencode) loads `MEMORY.
 |---|---|---|
 | `owner/` | The owner's preferences and rules for every project | any |
 | `setup/` | The AI setup itself (models, routing, tools) | `~/lonca` |
-| `<project>/` | One per project, named by `~/lonca/bin/lonca-project` (the closest `lonca.toml` up the tree, else the git repo). Own `INDEX.md`, loaded by hook in that project's sessions and its lane worktrees | inside that project |
+| `<project>/` | One per project, named by `~/lonca/bin/lonca-project` (the closest `.lonca.toml` up the tree, else the git repo). Own `INDEX.md`, loaded by hook in that project's sessions and its lane worktrees | inside that project |
 | `personal/` | Everything else | other |
 
 ## Saving (agents do this on their own, without asking)

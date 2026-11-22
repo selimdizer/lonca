@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Prove a lane is done in any repo by running the same checks its CI runs. Use before reporting a lane as done or opening a PR. If the project has its own verify skill (project skills live in the project root, the folder with `lonca.toml`, under `.claude/skills/`, e.g. `verify-shop`), use that one instead.
+description: Prove a lane is done in any repo by running the same checks its CI runs. Use before reporting a lane as done or opening a PR. If the project has its own verify skill (project skills live in the project root, the folder with `.lonca.toml`, under `.claude/skills/`, e.g. `verify-shop`), use that one instead.
 ---
 
 # Verify a lane (any repo)
