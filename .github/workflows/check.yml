@@ -53,6 +53,21 @@ jobs:
           assert not bad, bad
           assert m.tier_of([F("src/app.py")], {"high_paths": ["src/app.py"]})[0] == "high"
           PY
+      - name: deja scope (own sessions only; no deja means nothing recalled)
+        run: |
+          H=$(mktemp -d); R=$H/Work/Shop; mkdir -p $R/shop-api/.git $R/shop-wt && touch $R/.lonca.toml
+          python3 - "$R" <<'PY'
+          import importlib.machinery, importlib.util, sys
+          l = importlib.machinery.SourceFileLoader("ds", "bin/deja-scope")
+          m = importlib.util.module_from_spec(importlib.util.spec_from_loader("ds", l)); l.exec_module(m)
+          mine = m.mine_rules(sys.argv[1])
+          for p in ("Work/Shop", "shop-wt/wt-a", "shop-api/src", "Shop-shop-api/fix-x", "Shop/notes"): assert mine(p), p
+          for p in ("Acme/billing", "me/Work", "apps/backend", "Work/Shopping"): assert not mine(p), p
+          assert m.exact("me/Work") == "?e/Work" and m.exact("a/[x]") == "?/?x?"
+          PY
+          f=$(env -i HOME="$H" PATH=/usr/bin:/bin bin/deja-scope "$R")
+          python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["ignore"] == ["*", "*/*"], d' "$f"
+          grep -q DEJA_POLICY_FILE "$R/.claude/settings.local.json"
       - name: Night mode needs the code
         run: |
           H=$(mktemp -d)

@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""deja-scope <dir> | --refresh: keep a project's agents to that project's own past sessions in deja.
+
+Writes ~/.local/state/lonca/deja/<project>.json, a deja recall policy, and prints its path. A process started with
+DEJA_POLICY_FILE=<that file> gets no other project's sessions from `deja search`, the deja MCP tool or its hooks:
+`lane` starts every lane with it, and this sets it in <root>/.claude/settings.local.json for Claude sessions started
+in the project root (the lead).
+deja's policy can only list what to leave out (`ignore`, globs on a session's path and project), so the file lists
+every project name deja has indexed that is not provably this one: sessions in the root, in its subfolders' worktrees,
+and in Lonca's lane worktrees of its repos. Anything unclear is left out (it costs this project a little recall).
+--refresh rewrites every file there (lane-watch, every 10 min), so a project that appears later is left out too.
+If deja cannot list its sessions the file leaves out everything.
+"""
+import json, os, subprocess, sys, tempfile, time
+
+DIR = os.path.expanduser("~/.local/state/lonca/deja")
+EVERYTHING = ["*", "*/*"]          # every project name has one or two parts
+
+
+def mine_rules(root):
+    """Project names (deja: the last two folders of a session's cwd) that belong to this root."""
+    base, parent = os.path.basename(root), os.path.basename(os.path.dirname(root))
+    subs = [n for n in os.listdir(root) if os.path.isdir(os.path.join(root, n)) and not n.startswith(".")]
+    repos = ([root] if os.path.exists(os.path.join(root, ".git")) else []) + \
+            [os.path.join(root, n) for n in subs if os.path.exists(os.path.join(root, n, ".git"))]
+    exact = {f"{parent}/{base}"}
+    firsts = {base, *subs} | {f"{os.path.basename(os.path.dirname(r))}-{os.path.basename(r)}" for r in repos}  # lane: <parent>-<repo>/<branch>
+    return lambda p: p in exact or p.split("/", 1)[0] in firsts
+
+
+def exact(p):
+    # an exact name: a leading '?' keeps deja from its "contains" fallback, which would also hit this project's paths
+    return "?" + "".join("?" if c in "*?[]\\" else c for c in p[1:])
+
+
+def write(name, root):
+    os.makedirs(DIR, exist_ok=True)
+    try:
+        r = subprocess.run(["deja", "last", "1000000", "--json"], capture_output=True, text=True)
+        projects = {s.get("project") or "" for s in json.loads(r.stdout)["sessions"]}
+        mine = mine_rules(root)
+        ignore = ["*/.claude/jobs/*"] + sorted(exact(p) for p in projects if p and not mine(p))
+    except (ValueError, KeyError, OSError):
+        if os.path.exists(os.path.join(DIR, f"{name}.json")):
+            return os.path.join(DIR, f"{name}.json")      # keep the last good list rather than lose all recall
+        ignore = EVERYTHING
+    f = os.path.join(DIR, f"{name}.json")
+    fd, tmp = tempfile.mkstemp(dir=DIR)
+    with os.fdopen(fd, "w") as out:
+        json.dump({"lonca_project": name, "lonca_root": root, "ignore": ignore}, out, indent=0)
+    os.replace(tmp, f)
+    return f
+
+
+def wire_claude(root, f):
+    """Sessions started in the project root (the lead, the owner's own) get the policy from Claude's local settings."""
+    s = os.path.join(root, ".claude", "settings.local.json")
+    try:
+        d = json.load(open(s))
+    except FileNotFoundError:
+        d = {}
+    except ValueError:
+        print(f"deja-scope: {s} is not valid JSON; add env.DEJA_POLICY_FILE = {f} yourself", file=sys.stderr)
+        return
+    if d.get("env", {}).get("DEJA_POLICY_FILE") == f:
+        return
+    d.setdefault("env", {})["DEJA_POLICY_FILE"] = f
+    os.makedirs(os.path.dirname(s), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(s))
+    with os.fdopen(fd, "w") as out:
+        json.dump(d, out, indent=2)
+    os.replace(tmp, s)
+    # a root that is a git repo: keep the machine-local file out of commits (local exclude, not the shared .gitignore)
+    g = subprocess.run(["git", "-C", root, "rev-parse", "--git-path", "info/exclude"], capture_output=True, text=True)
+    if g.returncode == 0 and subprocess.run(["git", "-C", root, "check-ignore", "-q", s]).returncode != 0:
+        ex = os.path.join(root, g.stdout.strip())
+        os.makedirs(os.path.dirname(ex), exist_ok=True)
+        with open(ex, "a") as out:
+            out.write("\n/.claude/settings.local.json\n")
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] == ["--refresh"]:
+        for n in sorted(os.listdir(DIR) if os.path.isdir(DIR) else []):
+            try:
+                d = json.load(open(os.path.join(DIR, n)))
+                if os.path.isdir(d["lonca_root"]):
+                    write(d["lonca_project"], d["lonca_root"])
+            except (OSError, ValueError, KeyError):
+                pass
+    elif len(sys.argv) == 2 and not sys.argv[1].startswith("-"):
+        here = os.path.dirname(os.path.realpath(__file__))
+        r = subprocess.run([os.path.join(here, "lonca-project"), sys.argv[1]], capture_output=True, text=True)
+        if r.returncode != 0:
+            sys.exit(f"deja-scope: {sys.argv[1]} is in no project")
+        name, root = r.stdout.strip().split("\t")
+        f = os.path.join(DIR, f"{name}.json")
+        try:
+            fresh = time.time() - os.path.getmtime(f) < 900 and json.load(open(f)).get("lonca_root") == root
+        except (OSError, ValueError):
+            fresh = False
+        if not fresh:              # refreshed every 10 min anyway; a lane start doesn't wait 5 s for it
+            f = write(name, root)
+        wire_claude(root, f)
+        print(f)
+    else:
+        sys.exit(__doc__.strip())

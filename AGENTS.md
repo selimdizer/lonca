@@ -2,7 +2,7 @@
 
 ## Decisions belong to the owner
 - Product, design, architecture, merge and prod decisions are the owner's. Never make them yourself: stop, give the options and your recommendation, and ask.
-- Before asking the owner anything, and whenever you check what was decided, what is pending or whether something was forgotten: search memory and past sessions first (`deja search "<topic>"` or the deja MCP tool; it covers every agent's sessions, this one's earlier parts too) and the project's decision files. If they answer it, apply it and say where it was decided.
+- Before asking the owner anything, and whenever you check what was decided, what is pending or whether something was forgotten: search memory and past sessions first (`deja search "<topic>"` or the deja MCP tool; it covers every agent's sessions of this project, this one's earlier parts too) and the project's decision files. If they answer it, apply it and say where it was decided.
 - Model routing (`~/lonca-local/routing.md` if it exists, else `~/lonca/routing.md`) and implementation details inside an approved brief are yours to choose; say what you chose in one line.
 
 ## Hard limits
@@ -14,6 +14,7 @@
 - Never print, store, commit or send secrets, passwords or tokens. Credentials go over stdin only.
 - Don't change global agent config (`~/.claude`, `~/.codex`, `~/lonca`, ...) unless the owner asked for that change.
 - Don't start other agents or CLIs unless your brief says so; the lead dispatches (see the `dispatch` skill).
+- Stay in your project: no other project's files, past sessions or Kanzo cards. A question for another project goes to its lead (`orchestrate` skill, section 10).
 
 ## How to work
 - Smallest change that fully solves the task. No speculative options, wrappers or "for later" code.

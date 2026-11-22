@@ -22,13 +22,13 @@ Lane agents:
 - `claude:<role>` — Claude Code with a role from `agents/` (implementer, reviewer, verifier, security-auditor).
 - `codex:<model>[:<effort>]` — Codex, interactive so the app shows its status; effort default xhigh.
 - `omp:<provider/model>` — oh-my-pi, any provider it knows; `omp:github-copilot/<model>` keeps its helper models on Copilot too.
-- `opencode:<provider/model>` — opencode; `lane` presses Enter to submit the prefilled prompt.
-- `copilot:<model>` — GitHub Copilot CLI; `lane` answers its folder-trust prompt for the session.
+- `opencode:<provider/model>` — opencode (`mini --standalone` with the `lonca-lane` agent).
+- `copilot:<model>` — GitHub Copilot CLI (`~/.herdr/worktrees` is in its trusted folders).
 - `agy:<model>` — Antigravity CLI.
 - `pi:<provider/model>` — pi.
 - `grok:<model>` — Grok CLI.
 
-Read-only questions, code reading, research: `lane --read <repo-dir> <short-name> omp:<provider/model> <brief> <result>` — no worktree, read/grep/glob only, its answer is the report and DONE comes by itself. A review, audit or test check that needs commands: a normal lane on a fresh copy of the PR branch (`lane <repo-dir> review/<lane> <agent> <brief> <result> <pr-branch>`); the brief says "do not edit, commit or push". Several parts of one sweep = several lanes. Close finished lanes with `env -u CLAUDECODE hc kill <name>` after reading the report. omp work never runs as a hidden background command: the owner watches it in Herdr.
+Read-only questions, code reading, research: `lane --read <repo-dir> <short-name> omp:<provider/model> <brief> <result>` — no worktree, read/grep/glob plus omp's MCP servers (deja, Kanzo), its answer is the report and DONE comes by itself. A review, audit or test check that needs commands: a normal lane on a fresh copy of the PR branch (`lane <repo-dir> review/<lane> <agent> <brief> <result> <pr-branch>`); the brief says "do not edit, commit or push". Several parts of one sweep = several lanes. Close finished lanes with `env -u CLAUDECODE hc kill <name>` after reading the report. omp work never runs as a hidden background command: the owner watches it in Herdr.
 
 Never start or restart the hc core from an agent shell (it would inherit your session variables, incl. your messaging token, into every terminal); `lane` strips them first.
 
@@ -47,9 +47,10 @@ Always use `--agent <role>`, so the role's tool limits apply. Headless runs need
 ### Codex
 ```bash
 # reviewer (read-only)
-codex exec -C $WT -s read-only --disable apps -m <model> -c model_reasoning_effort=high --ephemeral -o $RUN/$L.review.md - < review-brief.md
-codex exec review --base <base>      # built-in diff review, run inside $WT
+codex exec -C $WT -s read-only --disable apps -m <model> -c model_reasoning_effort=high -c "$DJ" --ephemeral -o $RUN/$L.review.md - < review-brief.md
+codex exec review -c "$DJ" --base <base>      # built-in diff review, run inside $WT
 ```
+`DJ="mcp_servers.deja.env.DEJA_POLICY_FILE=\"$DEJA_POLICY_FILE\""`: Codex starts MCP servers with a minimal environment, so it gets the project's deja scope this way (every other CLI inherits `DEJA_POLICY_FILE` from you).
 Codex writers run as `codex:` lanes; with full permissions they commit their own lane branch, and the shims and pre-push hook still block merge, push to the default branch, force-push and the other hard limits.
 Read-only Codex can't run tools that write caches (`uvx`, `npm`): it falls back to `python -m pytest` etc. Test results come from the `verifier`; the Codex reviewer reads and reasons.
 

@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+"""leads: the agent sessions open in a project folder (leads, and the owner's own sessions), with their project.
+
+Live hc terminals running an agent (claude-code, codex, omp, ...) whose agent process works in a project folder
+(`lonca-project`), lanes (~/.herdr/worktrees) left out. ROLE is "lead" when it was started with `--agent lead`. Ask one with
+`hc send <address> "QUESTION from the <project> lead: ..."`; see the orchestrate skill for the rules.
+"""
+import json, os, subprocess, sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+LANES = os.path.expanduser("~/.herdr/worktrees") + "/"
+env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE" and not k.startswith(("CLAUDE_", "CODEX_COMPANION_"))}
+try:
+    ls = subprocess.run(["hc", "ls", "--json"], capture_output=True, text=True, env=env)
+except FileNotFoundError:
+    sys.exit("leads: herdr-core (hc) is not installed")
+terms = json.loads(ls.stdout).get("terminals", []) if ls.returncode == 0 and ls.stdout.strip() else []
+me = os.environ.get("HC_TERMINAL_ID", "")
+rows = []
+for t in terms:
+    agent = t.get("agent") or ""
+    if t.get("state") != "live" or agent in ("", "sh", "bash", "zsh", "fish"):
+        continue
+    g = subprocess.run(["hc", "get", t["address"], "--json"], capture_output=True, text=True, env=env)
+    fg = (json.loads(g.stdout) if g.returncode == 0 and g.stdout.strip() else {}).get("foreground") or {}
+    cwd, argv = fg.get("cwd") or t.get("cwd", ""), fg.get("argv") or []   # the agent's own folder, not its shell's
+    if cwd.startswith(LANES):
+        continue
+    role = "lead" if "--agent=lead" in argv or any(a == "--agent" and b == "lead" for a, b in zip(argv, argv[1:])) else "-"
+    p = subprocess.run([os.path.join(HERE, "lonca-project"), cwd], capture_output=True, text=True)
+    if p.returncode != 0:
+        continue
+    st = t.get("status"); st = st.get("state") if isinstance(st, dict) else st
+    rows.append((p.stdout.split("\t")[0], t["address"] + (" (you)" if t["address"] == me else ""),
+                 agent, role, st or "-", t.get("where") or "-", cwd))
+if not rows:
+    print("No open sessions in a project folder.")
+    sys.exit(0)
+rows.sort()
+head = ("PROJECT", "ADDRESS", "AGENT", "ROLE", "STATUS", "WHERE", "FOLDER")
+w = [max(len(str(r[i])) for r in rows + [head]) for i in range(len(head))]
+for r in [head] + rows:
+    print("  ".join(str(v).ljust(n) for v, n in zip(r, w)).rstrip())

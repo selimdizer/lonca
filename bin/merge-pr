@@ -116,6 +116,7 @@ for t in json.load(sys.stdin).get("terminals", []):
     if t.get("cwd", "").startswith(sys.argv[1]): print(t["address"])' "$wt" | while read -r t; do env -u CLAUDECODE hc kill "$t" >/dev/null 2>&1; done
   sleep 2
   if git -C "$repo" worktree remove "$wt" 2>/dev/null; then git -C "$repo" branch -D "$branch" >/dev/null 2>&1; echo "$me: closed the lane and removed $wt"
+    echo "$(date -Iseconds) removed worktree $wt + branch $branch after merging $repo #$pr" >> "$LOG"
   else echo "$me: left $wt (uncommitted changes); ai-cleanup takes it once clean"; fi
 done
 echo "$me: merged $nwo#$pr into $base ($method, tier $tier, $how)"

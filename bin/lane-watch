@@ -7,6 +7,7 @@ The lead gets one `STALLED: <lane> — <why>` per lane and reason (hc send); no 
 A lane that wrote its report 10+ min ago, is not working, and left nothing behind (no commits on its branch, no changed
 files: a review, council or test lane) is closed, and its worktree and never-pushed branch are removed. Lanes with
 commits stay until their PR is merged (ai-cleanup closes those).
+It also refreshes every project's deja scope (deja-scope --refresh).
 """
 import glob, json, os, subprocess, sys, time
 
@@ -110,3 +111,7 @@ for rec_path in glob.glob(os.path.expanduser("~/.cache/ai-runs/**/*.lane.json"),
                 rec["notified"] = why
     if not DRY:
         json.dump(rec, open(rec_path, "w"))
+
+# keep every project's deja scope current (a project that appeared since the last run is left out of the others)
+if not DRY:
+    subprocess.run([os.path.join(os.path.dirname(os.path.realpath(__file__)), "deja-scope"), "--refresh"])

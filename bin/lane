@@ -2,7 +2,7 @@
 # Start one lane as an interactive agent in its own git worktree, as a herdr-core (hc) terminal: visible in the Herdr app.
 #   lane <repo-dir> <branch> <agent> <brief-file> <result-file> [base-branch]
 #   lane --read <repo-dir> <name> omp:<provider/model> <brief-file> <result-file>
-#     read-only lane: no worktree, runs in <repo-dir> with read/grep/glob only; its answer is the report
+#     read-only lane: no worktree, runs in <repo-dir> with read/grep/glob (omp still loads its MCP servers); its answer is the report
 #   agent: claude:<role> (implementer|reviewer|verifier|security-auditor) | codex:<model>[:<effort>] (default xhigh) | omp:<provider/model>
 #          | opencode:<provider/model> | copilot:<model> | agy:<model> (Antigravity) | pi:<provider/model> | grok:<model>
 #          (Crush and Amp take no starting prompt: not lane agents)
@@ -23,6 +23,8 @@ case ${1:-} in -h|--help|"") sed -n '2,/^set -eu/p' "$0" | sed '$d; s/^# \{0,1\}
 repo=$1 branch=$2 agent=$3 brief=$(realpath "$4") result=$5 base=${6:-}
 command -v hc >/dev/null 2>&1 && hc server status >/dev/null 2>&1 || { echo "lane: herdr-core (hc) is not running; not starting a lane" >&2; exit 1; }
 mkdir -p "$(dirname "$result")"; result="$(cd "$(dirname "$result")" && pwd -P)/$(basename "$result")"
+# deja recall limited to this project's own sessions (deja-scope); every lane agent passes it to its deja MCP server
+DEJA_POLICY_FILE=$("$HOME/lonca/bin/deja-scope" "$repo") || { echo "lane: could not scope deja to this project; not starting" >&2; exit 1; }
 prompt="Read the brief at $brief and do the lane it describes. When you are done, or stopped, write your final report (at most 30 lines, with a Not verified section, ending with a Lessons section: facts a future session in this project would need, such as a gotcha, a command that works or a decision you learned, or none) to $result and end. Do not write to ~/ai-memory yourself; the lead saves your lessons. Something the brief does not settle, or that may have been decided before: search past sessions first (deja search \"<topic>\", or the deja MCP tool) and the project memory; ask only if they don't answer it."
 # Project skills live in the project root (the folder with .lonca.toml, not a team repo): point the lane at them
 proot=$("$HOME/lonca/bin/lonca-project" "$repo" 2>/dev/null | cut -f2) || proot=
@@ -31,6 +33,7 @@ psk="$proot/.claude/skills"
 # The brief's "Card:" line (Kanzo task, e.g. shop#44): the lane keeps that card current itself
 card=$(sed -n 's/^Card:[[:space:]]*\([A-Za-z0-9_-]*#[0-9][0-9]*\).*/\1/p' "$brief" | head -1)
 [ -n "$card" ] && prompt="$prompt Your Kanzo card is $card (kanzo MCP tools; in Claude load them with ToolSearch first): set it to doing now, add a short comment on what you did at each milestone, set its url to your PR when you open it, and move it to review when you finish or get stuck."
+prompt="$prompt Stay inside this project: no other project's Kanzo cards (never project \"all\" or another slug) and no other project's files or past sessions."
 
 case $agent in
   claude:*) cmd="claude --agent ${agent#claude:} --permission-mode bypassPermissions" ;;
@@ -39,6 +42,8 @@ case $agent in
   # --disable apps: the ChatGPT GitHub connector may act as a different GitHub account; lanes use gh
   codex:*)  m=${agent#codex:}; e=${m#*:}; [ "$e" = "$m" ] && e=xhigh; m=${m%%:*}   # codex:<model>[:<effort>], default xhigh (routing.md)
             cmd="codex --no-daemon --dangerously-bypass-approvals-and-sandbox --disable apps -m $m -c model_reasoning_effort=$e"
+            # Codex starts MCP servers with a minimal environment: hand deja its policy file explicitly
+            cmd="$cmd -c 'mcp_servers.deja.env.DEJA_POLICY_FILE=\"$DEJA_POLICY_FILE\"'"
             # Codex asks folder trust for the worktree's main repo; trust it once (else the lane waits at a prompt)
             main=$(realpath "$repo")
             grep -qF "[projects.\"$main\"]" ~/.codex/config.toml 2>/dev/null ||
@@ -115,7 +120,7 @@ PY
   esac   # Copilot: install.sh lists ~/.herdr/worktrees in trustedFolders, which covers every worktree below it
   # --outlive-parent: a lane keeps running if the lead's session ends; its exit is noted in the lead's input
   hc run --bg --outlive-parent --name "$name" --cwd "$wt" "$@" \
-    -- sh -c "export PATH=$HOME/lonca/shims:$HOME/lonca-local/shims:\$PATH TMPDIR=$TMPDIR; $run" >/dev/null   # hc passes no env: set it here
+    -- sh -c "export PATH=$HOME/lonca/shims:$HOME/lonca-local/shims:\$PATH TMPDIR=$TMPDIR DEJA_POLICY_FILE=$DEJA_POLICY_FILE; $run" >/dev/null   # hc passes no env: set it here
   # lane record for lane-watch and a restarted lead
   python3 -c 'import json,sys,time; k="name worktree lead agent base result card branch repo".split()
 d=dict(zip(k, sys.argv[1:])); d["started"]=int(time.time()); json.dump(d, open(sys.argv[-1], "w"))' \

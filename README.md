@@ -147,6 +147,7 @@ skills go in `<project root>/.claude/skills/`, next to the repos rather than ins
 | Your own skills, agents, notes | `~/lonca-local/` (linked on top of Lonca's) |
 | Run folders (briefs, reports, evidence) | `~/.cache/ai-runs/<project>/` |
 | Approval codes, merge log | `~/.local/state/lonca/approvals/`, `~/.local/state/lonca/merge.log` |
+| Per-project deja scope | `~/.local/state/lonca/deja/<project>.json` |
 | Settings (optional) | `~/.config/lonca/config.toml`: `tmpdir`, `cleanup_tmp_dirs` (see `lonca-config --help`) |
 
 **Environment variables:**
@@ -173,6 +174,14 @@ edit files (`disallowedTools: Edit, Write, NotebookEdit`): a reviewer that fixes
 its own work. The lead keeps all tools; "don't edit project code" is a rule in its instructions, since a block on
 Edit/Write would protect nothing while it has Bash.
 
+**Each project sees only itself.** In a project, agents get only that project's past sessions from deja: `lane`
+starts every lane with `DEJA_POLICY_FILE` (written by `deja-scope`, refreshed every 10 minutes by `lane-watch`), and
+the project root's `.claude/settings.local.json` sets it for a lead started there. deja's policy can only list what to
+leave out, so the file names every other project deja has seen; a session it can't place is left out too. Kanzo has
+no such setting, so agents are told to use only their project's cards. A question for another project goes to its
+lead: `leads` lists the agent sessions open in project folders. Like the other limits, this guards against accidents,
+not a hostile agent: lanes have full permissions and can read any file.
+
 **Lane agents:** `claude:<role>`, `codex:<model>[:<effort>]`, `omp:<provider/model>`, `opencode:<provider/model>`,
 `copilot:<model>`, `agy:<model>` (Antigravity), `pi:<provider/model>`, `grok:<model>`.
 Crush and Amp take no starting prompt, so they get the rules and skills but don't run lanes.
@@ -192,7 +201,7 @@ Crush and Amp take no starting prompt, so they get the rules and skills but don'
 ```
 
 This removes every link into the checkout, the timers, the hooks path, Lonca's deny rules and its hooks in Claude and
-Codex. It keeps `~/ai-memory`, `~/lonca-local`, the `*.lonca-bak` backups and the checkout. It also leaves three
+Codex, and the deja scope line in your projects' `.claude/settings.local.json`. It keeps `~/ai-memory`, `~/lonca-local`, the `*.lonca-bak` backups and the checkout. It also leaves three
 Claude settings, because you may have set them yourself: attribution off, `env.TMPDIR` and `autoMemoryDirectory`.
 
 ## FAQ

@@ -70,6 +70,15 @@ def strip(p, deny=False):
         s["hooks"][ev] = [g for g in groups if g["hooks"]]
     json.dump(s, open(p, "w"), indent=2)
 strip(f"{H}/.claude/settings.json", deny=True); strip(f"{H}/.codex/hooks.json")
+# deja-scope's policy line in each project's .claude/settings.local.json
+D = f"{H}/.local/state/lonca/deja"
+for n in (os.listdir(D) if os.path.isdir(D) else []):
+    try:
+        root = json.load(open(f"{D}/{n}"))["lonca_root"]; p = f"{root}/.claude/settings.local.json"; s = json.load(open(p))
+    except (OSError, ValueError, KeyError): continue
+    if s.get("env", {}).pop("DEJA_POLICY_FILE", None):
+        if not s["env"]: del s["env"]
+        json.dump(s, open(p, "w"), indent=2)
 EOF2
   [ -L "$L" ] && rm "$L"
   say "Lonca removed. Kept: ~/ai-memory, ~/lonca-local, the *.lonca-bak backups, this checkout ($SRC), and these"
@@ -152,7 +161,7 @@ grep -qsF "@~/lonca/AGENTS.md" "$HOME/.claude/CLAUDE.md" || {
   mkdir -p "$HOME/.claude"; [ -f "$HOME/.claude/CLAUDE.md" ] && cp "$HOME/.claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md.lonca-bak"
   { cat "$HOME/.claude/CLAUDE.md" 2>/dev/null || true; echo "@~/lonca/AGENTS.md"; } > "$HOME/.claude/CLAUDE.md.new"
   mv "$HOME/.claude/CLAUDE.md.new" "$HOME/.claude/CLAUDE.md"; }
-for c in lane lanes lonca-project merge-pr merge-tier night-on kanzo-sync; do link "$L/bin/$c" "$HOME/.local/bin/$c"; done
+for c in lane lanes leads lonca-project deja-scope merge-pr merge-tier night-on kanzo-sync; do link "$L/bin/$c" "$HOME/.local/bin/$c"; done
 export LONCA_SUI=
 if command -v suiup >/dev/null || [ $SUI = 1 ]; then
   if opt_in $SUI "Sui Move extra: lanes run sui/move-analyzer at each repo's CI SUI_VERSION, plus a Move LSP plugin for Claude?"; then

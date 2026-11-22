@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""lanes [--all]: the lanes `lane` started, newest first: name, agent, state, card, report. Open ones only unless --all.
+"""lanes [--all] [--mine]: the lanes `lane` started, newest first: name, agent, state, card, report. Open ones only
+unless --all; --mine: only the lanes this terminal (the lead calling it) started.
 
 Reads ~/.cache/ai-runs/**/*.lane.json (written by `lane`) and one `hc ls` for the terminals' state.
 """
 import glob, json, os, subprocess, sys, time
 
 ALL = "--all" in sys.argv
+MINE = os.environ.get("HC_TERMINAL_ID", "") if "--mine" in sys.argv else None
 env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE" and not k.startswith(("CLAUDE_", "CODEX_COMPANION_"))}
 ls = subprocess.run(["hc", "ls", "--all", "--json"], capture_output=True, text=True, env=env)
 terms = {t["name"]: t for t in (json.loads(ls.stdout).get("terminals", []) if ls.returncode == 0 and ls.stdout.strip() else []) if t.get("name")}
@@ -14,6 +16,8 @@ for f in glob.glob(os.path.expanduser("~/.cache/ai-runs/**/*.lane.json"), recurs
     try:
         r = json.load(open(f))
     except (OSError, ValueError):
+        continue
+    if MINE is not None and r.get("lead") != MINE:
         continue
     done = os.path.exists(r.get("result", "")) and os.path.getsize(r["result"]) > 0
     term = terms.get(r["name"], {})
