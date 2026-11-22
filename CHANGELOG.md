@@ -7,6 +7,10 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 - The project marker is documented as the hidden `.lonca.toml` (like `.editorconfig`); `lonca.toml` still works.
   Keep it next to your repos, not inside one.
+- Worktrees go when the work is done: `merge-pr` closes the PR's lane and removes its worktree and local branch right
+  after merging (a worktree with uncommitted changes is left). `ai-cleanup` also removes lane worktrees whose PR was
+  closed without merging (head unchanged) or whose work already reached the default branch; your own worktrees are
+  only touched for merged PRs.
 
 ## [0.4.0] - 2026-11-22
 

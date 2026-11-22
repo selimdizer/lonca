@@ -4,7 +4,9 @@
 ai-cleanup [--dry-run] [--tmp-age-hours N]
 
 1. Worktrees of every repo that has agent lanes (lane records, ~/.herdr/worktrees): remove a linked worktree (and its local branch) when its PR is
-   merged, it is clean, its HEAD is inside the merged PR head, no process uses it and it is not locked.
+   merged (HEAD inside the merged head) or, for Lonca's lane worktrees only, closed (HEAD is exactly the PR's head); it is
+   clean and not locked. A lane worktree with no PR goes too once its HEAD is already in the default branch.
+   a lane terminal still open there is closed first.
    A detached worktree goes when it is clean, idle, untouched for the age below and its HEAD is on a
    remote branch. Remote branches are never touched (GitHub's auto-delete handles those).
 2. Temp dirs owned by this user in the agents' temp folder (`lonca-config tmpdir`, default ~/.cache/lonca/tmp), and
@@ -105,11 +107,13 @@ for repo in repos:
     wl = run("git", "worktree", "list", "--porcelain", cwd=repo).stdout.strip().split("\n\n")[1:]
     if not wl:
         continue
-    prs = run("gh", "pr", "list", "--state", "merged", "--limit", "3000", "--json", "headRefName,headRefOid,number", cwd=repo)
+    # finished PRs: merged, or closed without merging (abandoned or replaced)
+    prs = run("gh", "pr", "list", "--state", "all", "--limit", "3000", "--json", "headRefName,headRefOid,number,state", cwd=repo)
     merged = {}
     if prs.returncode == 0:
         for pr in json.loads(prs.stdout or "[]"):
-            merged.setdefault(pr["headRefName"], []).append(pr)
+            if pr["state"] in ("MERGED", "CLOSED"):
+                merged.setdefault(pr["headRefName"], []).append(pr)
     for block in wl:
         info = dict((l.split(" ", 1) + [""])[:2] for l in block.splitlines())
         path = Path(info.get("worktree", ""))
@@ -132,11 +136,18 @@ for repo in repos:
             continue
         head = run("git", "rev-parse", "HEAD", cwd=path).stdout.strip()
         if branch:
-            pr = next((p for p in merged.get(branch, []) if p["headRefOid"] == head or
-                       run("git", "merge-base", "--is-ancestor", head, p["headRefOid"], cwd=repo).returncode == 0), None)
+            # nothing may exist only here: a merged PR contains the worktree's HEAD; a closed one has exactly that head
+            lane_wt = str(path).startswith(str(HOME / ".herdr/worktrees") + "/")   # a closed PR only frees Lonca's own lane worktrees
+            pr = next((p for p in merged.get(branch, []) if (p["state"] == "MERGED" and (p["headRefOid"] == head or
+                       run("git", "merge-base", "--is-ancestor", head, p["headRefOid"], cwd=repo).returncode == 0))
+                       or (p["state"] == "CLOSED" and lane_wt and p["headRefOid"] == head)), None)
+            if not pr and lane_wt:   # no PR, but its work already reached the default branch: nothing is left here
+                default = run("git", "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD", cwd=repo).stdout.strip()
+                if default and run("git", "merge-base", "--is-ancestor", head, default, cwd=repo).returncode == 0:
+                    pr = {"number": "-", "state": f"none, HEAD already in {default}"}
             if not pr:
                 continue
-            say(f"{'would remove' if DRY else 'removed'} worktree {path} + branch {branch} (PR #{pr['number']} merged)")
+            say(f"{'would remove' if DRY else 'removed'} worktree {path} + branch {branch} (PR #{pr['number']} {pr['state'].lower()})")
             if not DRY and run("git", "worktree", "remove", str(path), cwd=repo).returncode == 0:
                 run("git", "branch", "-D", branch, cwd=repo)
         elif "detached" in info and not touched_within(path, AGE_H):

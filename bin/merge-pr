@@ -32,7 +32,7 @@ until mkdir "$N/.merge.lock" 2>/dev/null; do
 done
 trap 'rmdir "$N/.merge.lock" 2>/dev/null' EXIT INT TERM
 
-info=$(cd "$repo" && "$GH" pr view "$pr" --json state,isDraft,mergeable,title,body,statusCheckRollup,headRefOid,baseRefName 2>/dev/null) || no "cannot read the PR"
+info=$(cd "$repo" && "$GH" pr view "$pr" --json state,isDraft,mergeable,title,body,statusCheckRollup,headRefOid,baseRefName,headRefName 2>/dev/null) || no "cannot read the PR"
 head=$(printf '%s' "$info" | python3 -I -c 'import json,sys;print(json.load(sys.stdin)["headRefOid"])')
 base=$(printf '%s' "$info" | python3 -I -c 'import json,sys;print(json.load(sys.stdin)["baseRefName"])')
 nwo=$(cd "$repo" && "$GH" repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || no "cannot read the repo name"
@@ -105,4 +105,16 @@ method=$(git -C "$repo" config lonca.mergeMethod || true)
 tag=$how; [ "$how" = night ] && tag="night:$proj"
 echo "$(date -Iseconds) merged [$tag] $repo #$pr -> $base (lane $lane, tier $tier)" >> "$N/log"
 "$L/kanzo-sync" >/dev/null 2>&1 || true   # its card -> done now, not at the next timer run
+# the lane that built it is done: close its terminal, remove its worktree and local branch now (not at night)
+branch=$(printf '%s' "$info" | python3 -I -c 'import json,sys;print(json.load(sys.stdin)["headRefName"])')
+git -C "$repo" worktree list --porcelain | awk -v b="refs/heads/$branch" '/^worktree /{w=substr($0,10)} $0=="branch "b{print w}' |
+while read -r wt; do
+  case $wt in "$HOME"/.herdr/worktrees/*) ;; *) continue ;; esac   # only Lonca's lane worktrees
+  env -u CLAUDECODE hc ls --json 2>/dev/null | python3 -I -c 'import json,sys
+for t in json.load(sys.stdin).get("terminals", []):
+    if t.get("cwd", "").startswith(sys.argv[1]): print(t["address"])' "$wt" | while read -r t; do env -u CLAUDECODE hc kill "$t" >/dev/null 2>&1; done
+  sleep 2
+  if git -C "$repo" worktree remove "$wt" 2>/dev/null; then git -C "$repo" branch -D "$branch" >/dev/null 2>&1; echo "$me: closed the lane and removed $wt"
+  else echo "$me: left $wt (uncommitted changes); ai-cleanup takes it once clean"; fi
+done
 echo "$me: merged $nwo#$pr into $base ($method, tier $tier, $how)"
