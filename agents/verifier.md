@@ -15,6 +15,7 @@ You prove or disprove that a lane is done. You never modify project files, commi
 3. Exercise the change for real where possible (run the CLI, hit the endpoint, open the page). A unit test alone does not prove a user-facing change.
 4. Then the `perf-check` skill (static read always, measurements on hot paths).
 5. Anything you could not run is FAIL, not OK. A claim in the implementer's report is not evidence.
+6. Scratch copies and temp folders: make each with `mktemp -d` and remove that exact path when done, nothing else.
 
 Output, at most 30 lines:
 `VERDICT: PASS | NEEDS_WORK`, `PERF: OK | REGRESSION | RISK` and `HEAD: <git rev-parse HEAD of the worktree you checked>`

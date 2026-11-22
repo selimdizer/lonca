@@ -86,6 +86,13 @@ fi
   # hc names are unique among live terminals: repo prefix + branch, then a short hash if it had to be cut
 name=$(printf '%s-%s' "$(basename "$(realpath "$repo")" | cut -c1-8)" "$branch" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_-' '-')
 [ ${#name} -gt 32 ] && name="$(printf '%s' "$name" | cut -c1-25)-$(printf '%s' "$rkey/$branch" | { sha1sum 2>/dev/null || shasum; } | cut -c1-6)"
+# its own temp folder, so a cleanup inside it can't reach another lane's files (ai-cleanup removes it once idle);
+# Claude's and Codex's own settings may pin TMPDIR for their tools, so they get it through their override flags too
+ltmp="$TMPDIR/lane-$name"; mkdir -p "$ltmp"
+case $agent in
+  claude:*) cmd="$cmd --settings '{\"env\":{\"TMPDIR\":\"$ltmp\"}}'" ;;
+  codex:*)  cmd="$cmd -c 'shell_environment_policy.set.TMPDIR=\"$ltmp\"'" ;;
+esac
   # Started from a lead inside the Herdr app: open the lane as its own tab in the lead's space
   space=$( [ -n "${HC_TERMINAL_ID:-}" ] && hc get "$HC_TERMINAL_ID" --json 2>/dev/null | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("labels",{}).get("herdr.space",""))' 2>/dev/null || true)
   # Started by a lead in an hc terminal: the lane reports DONE and asks questions there; the lead answers with hc send
@@ -117,10 +124,13 @@ PY
       ;;
     agy:*)     # Antigravity trusts exact paths only: this worktree, for this session
       cmd="${cmd% -i} --settings '{\"trustedWorkspaces\":[\"$wt\"]}' -i"; run="exec $cmd '$quoted'" ;;
+    grok:*)    # Grok keeps folder trust in ~/.grok/trusted_folders.toml, per main repo (its worktrees inherit it)
+      main=$(realpath "$repo"); f="$HOME/.grok/trusted_folders.toml"
+      grep -qF "[folders.\"$main\"]" "$f" 2>/dev/null || { mkdir -p "${f%/*}"; printf '[folders."%s"]\ntrusted = true\ndecided_at = %s\n' "$main" "$(date +%s)" >> "$f"; } ;;
   esac   # Copilot: install.sh lists ~/.herdr/worktrees in trustedFolders, which covers every worktree below it
   # --outlive-parent: a lane keeps running if the lead's session ends; its exit is noted in the lead's input
   hc run --bg --outlive-parent --name "$name" --cwd "$wt" "$@" \
-    -- sh -c "export PATH=$HOME/lonca/shims:$HOME/lonca-local/shims:\$PATH TMPDIR=$TMPDIR DEJA_POLICY_FILE=$DEJA_POLICY_FILE; $run" >/dev/null   # hc passes no env: set it here
+    -- sh -c "export PATH=$HOME/lonca/shims:$HOME/lonca-local/shims:\$PATH TMPDIR=$ltmp DEJA_POLICY_FILE=$DEJA_POLICY_FILE; $run" >/dev/null   # hc passes no env: set it here
   # lane record for lane-watch and a restarted lead
   python3 -c 'import json,sys,time; k="name worktree lead agent base result card branch repo".split()
 d=dict(zip(k, sys.argv[1:])); d["started"]=int(time.time()); json.dump(d, open(sys.argv[-1], "w"))' \

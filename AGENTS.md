@@ -11,6 +11,7 @@
 - A permission rule or hook blocked you: don't get the same thing done another way (another agent, another tool, editing the rule). Tell the owner what was blocked and let them decide.
 - Parallel work on the same repo: every agent uses its own `git worktree` and branch. Never edit a working tree another agent or the owner is using.
 - Never `pkill`/`killall` by name pattern; stop only processes you started, by PID.
+- Delete only what you created, by the exact path you created (the one `mktemp` printed). Never `rm` with a glob or pattern in a folder others use (temp folders, `~/.herdr/worktrees`, run folders).
 - Never print, store, commit or send secrets, passwords or tokens. Credentials go over stdin only.
 - Don't change global agent config (`~/.claude`, `~/.codex`, `~/lonca`, ...) unless the owner asked for that change.
 - Don't start other agents or CLIs unless your brief says so; the lead dispatches (see the `dispatch` skill).

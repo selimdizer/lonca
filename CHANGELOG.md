@@ -25,6 +25,11 @@ versions follow [Semantic Versioning](https://semver.org/).
   reading its sessions; the `orchestrate` skill says how to look a change up first (logs, lane records, deja, git).
 - `lanes --mine` shows only the lanes the calling lead started; `merge-pr` logs the lane worktrees it removes.
 
+- Each lane gets its own temp folder (`<tmpdir>/lane-<name>`; Claude and Codex through their settings override flags,
+  since their own settings may pin TMPDIR), so a cleanup inside it can't reach another lane's files. AGENTS.md: delete
+  only what you created, by its exact path; never a glob in a shared folder.
+- Grok lanes no longer wait at the folder-trust prompt: `lane` records the repo in `~/.grok/trusted_folders.toml`.
+
 ## [0.4.0] - 2026-11-22
 
 Merging, simplified (after a three-family council review): risk tiers for the checks, one setting for approval.
