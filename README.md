@@ -146,7 +146,7 @@ skills go in `<project root>/.claude/skills/`, next to the repos rather than ins
 | Shared memory | `~/ai-memory/` (`MEMORY.md` index + one folder per project) |
 | Your own skills, agents, notes | `~/lonca-local/` (linked on top of Lonca's) |
 | Run folders (briefs, reports, evidence) | `~/.cache/ai-runs/<project>/` |
-| Approval codes, merge log | `~/.local/state/lonca/approvals/`, `~/.cache/ai-runs/night/log` |
+| Approval codes, merge log | `~/.local/state/lonca/approvals/`, `~/.local/state/lonca/merge.log` |
 | Settings (optional) | `~/.config/lonca/config.toml`: `tmpdir`, `cleanup_tmp_dirs` (see `lonca-config --help`) |
 
 **Environment variables:**

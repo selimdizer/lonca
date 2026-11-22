@@ -9,7 +9,9 @@ ai-cleanup [--dry-run] [--tmp-age-hours N]
    a lane terminal still open there is closed first.
    A detached worktree goes when it is clean, idle, untouched for the age below and its HEAD is on a
    remote branch. Remote branches are never touched (GitHub's auto-delete handles those).
-2. Temp dirs owned by this user in the agents' temp folder (`lonca-config tmpdir`, default ~/.cache/lonca/tmp), and
+2. Run folders in ~/.cache/ai-runs untouched for 30 days (unless one of their lanes still has a worktree); the logs in
+   ~/.cache/ai-runs/setup stay.
+3. Temp dirs owned by this user in the agents' temp folder (`lonca-config tmpdir`, default ~/.cache/lonca/tmp), and
    in the folders listed in `cleanup_tmp_dirs` if you set it (e.g. /tmp on a RAM-backed /tmp): removed when nothing
    inside changed for N hours (default 48) and no process has its cwd, an open file or its args/env inside (Linux;
    on macOS nothing counts as unused, so no temp dir is removed). Claude's /tmp/claude-<uid> and git worktrees stay.
@@ -159,7 +161,28 @@ for repo in repos:
     if not DRY:
         run("git", "worktree", "prune", cwd=repo)
 
-# 2. temp dirs
+# 2. run folders (briefs, reports, evidence, raw data) untouched for 30 days, unless a lane of theirs still has a worktree
+RUNS = HOME / ".cache/ai-runs"
+RUN_DAYS = 30
+def run_dirs():
+    for d in (RUNS.iterdir() if RUNS.is_dir() else []):
+        if not d.is_dir() or d.name in ("setup", "night"):
+            continue
+        dated = d.name[:4].isdigit()            # <date>-<slug> at the top: an old layout; else <project>/<date>-<slug>
+        for r in ([d] if dated else [x for x in d.iterdir() if x.is_dir()]):
+            yield r
+for r in run_dirs():
+    live = False
+    for f in r.glob("*.lane.json"):
+        try:
+            live = live or os.path.isdir(json.load(open(f)).get("worktree", ""))
+        except (OSError, ValueError):
+            pass
+    if live or busy(r) or touched_within(r, RUN_DAYS * 24):
+        continue
+    remove(r, f"run folder untouched {RUN_DAYS} days")
+
+# 3. temp dirs
 def config(key, default=None):
     r = run(str(HOME / "lonca/bin/lonca-config"), key, *([default] if default else []))
     return [l for l in r.stdout.splitlines() if l.strip()]

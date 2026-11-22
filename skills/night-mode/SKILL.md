@@ -31,7 +31,7 @@ Only cards tagged `night` (status todo, not `human`, nothing open in `waits_on`)
 One full gate on each merged target branch (the project's verify skill on that branch, including its slow/live tier). A failure: stop merging (`night-on --off <project>`), open a card with the failure, and fix forward only if the fix is itself a card tagged `night`.
 
 ## 6. Morning report
-A Kanzo card "Night report <date>" (human) and the same summary in this session, so the owner sees it first thing: what was merged, PRs ready but not merged and why, the questions that came up (parked cards, each with your recommendation), gate results, the `~/.cache/ai-runs/night/log` lines, quota used. At most 30 lines, with "Not verified". Then `night-on --off <project>` and remove the `night` tag from the cards (done ones keep their status).
+A Kanzo card "Night report <date>" (human) and the same summary in this session, so the owner sees it first thing: what was merged, PRs ready but not merged and why, the questions that came up (parked cards, each with your recommendation), gate results, the `~/.local/state/lonca/merge.log` lines, quota used. At most 30 lines, with "Not verified". Then `night-on --off <project>` and remove the `night` tag from the cards (done ones keep their status).
 
 ## Never at night
 Prod deploys, tags or releases; design decisions; client work on a provider its memory does not allow; anything on a card without `night`; force-push; deleting branches.

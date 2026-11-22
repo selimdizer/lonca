@@ -13,7 +13,7 @@
 #     5 minutes share one code. The lead shows the owner the PRs, tiers and its opinion; the owner answers
 #     "evet <code>" once; the lead reruns each with --code.
 # The merge method follows the repo (merge commit, else squash, else rebase; `git config lonca.mergeMethod` overrides)
-# and merges exactly the checked head (--match-head-commit). One merge at a time (a lock). Log: ~/.cache/ai-runs/night/log
+# and merges exactly the checked head (--match-head-commit). One merge at a time (a lock). Log: ~/.local/state/lonca/merge.log
 set -eu
 for v in $(env | cut -d= -f1 | grep -E '^(CLAUDECODE|CLAUDE_[A-Z_]*|CODEX_COMPANION_[A-Z_]*)$'); do unset "$v"; done
 dry=0 code=
@@ -22,10 +22,11 @@ me=merge-pr
 [ $# -eq 4 ] || { echo "usage: $me [--dry-run] [--code <c>] <repo-dir> <pr-number> <run-dir> <lane>   ($me --help)" >&2; exit 2; }
 repo=$(realpath "$1") pr=$2 run=$3 lane=$4
 N=$HOME/.cache/ai-runs/night A=$HOME/.local/state/lonca/approvals L=$HOME/lonca/bin
-no() { echo "$me: refused PR #$pr: $*" >&2; echo "$(date -Iseconds) refused $repo #$pr: $*" >> "$N/log" 2>/dev/null || true; exit 1; }
+LOG=$HOME/.local/state/lonca/merge.log   # the audit trail: kept, unlike the run folders in ~/.cache
+no() { echo "$me: refused PR #$pr: $*" >&2; echo "$(date -Iseconds) refused $repo #$pr: $*" >> "$LOG" 2>/dev/null || true; exit 1; }
 GH=$(PATH=$(printf '%s' "$PATH" | tr ':' '\n' | grep -v "lonca/shims" | paste -sd: -) command -v gh)   # the real gh, not the shim
 
-mkdir -p "$N"; i=0   # one merge at a time on this machine (the night cap is counted inside the lock)
+mkdir -p "$N" "${LOG%/*}"; i=0   # one merge at a time on this machine (the night cap is counted inside the lock)
 until mkdir "$N/.merge.lock" 2>/dev/null; do
   i=$((i + 1)); [ $i -gt 300 ] && { echo "$me: another merge has held $N/.merge.lock for 5 min (remove it if stale)" >&2; exit 1; }
   sleep 1
@@ -59,7 +60,7 @@ if [ -n "$code" ]; then
 elif LEVEL=$level TIER=$tier python3 -I -c 'import os,sys; r={"low":0,"medium":1,"high":2,"all":2}; sys.exit(0 if r.get(os.environ["LEVEL"],-1) >= r[os.environ["TIER"]] else 1)'; then
   how=auto
 elif [ -n "$proj" ] && [ -f "$N/$proj.json" ]; then
-  python3 -I - "$N/$proj.json" "$N/log" "$proj" <<'PY' && how=night || no "night mode for $proj is past its end time or its cap"
+  python3 -I - "$N/$proj.json" "$LOG" "$proj" <<'PY' && how=night || no "night mode for $proj is past its end time or its cap"
 import datetime, json, os, sys
 f, log, p = sys.argv[1:]
 n = json.load(open(f))
@@ -103,7 +104,7 @@ method=$(git -C "$repo" config lonca.mergeMethod || true)
 (cd "$repo" && "$GH" pr merge "$pr" "--$method" --match-head-commit "$head") || no "gh merge ($method) failed"
 [ "$how" = code ] && rm -f "$A/$key"
 tag=$how; [ "$how" = night ] && tag="night:$proj"
-echo "$(date -Iseconds) merged [$tag] $repo #$pr -> $base (lane $lane, tier $tier)" >> "$N/log"
+echo "$(date -Iseconds) merged [$tag] $repo #$pr -> $base (lane $lane, tier $tier)" >> "$LOG"
 "$L/kanzo-sync" >/dev/null 2>&1 || true   # its card -> done now, not at the next timer run
 # the lane that built it is done: close its terminal, remove its worktree and local branch now (not at night)
 branch=$(printf '%s' "$info" | python3 -I -c 'import json,sys;print(json.load(sys.stdin)["headRefName"])')

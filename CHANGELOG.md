@@ -11,6 +11,8 @@ versions follow [Semantic Versioning](https://semver.org/).
   after merging (a worktree with uncommitted changes is left). `ai-cleanup` also removes lane worktrees whose PR was
   closed without merging (head unchanged) or whose work already reached the default branch; your own worktrees are
   only touched for merged PRs.
+- `ai-cleanup` removes run folders in `~/.cache/ai-runs` untouched for 30 days (unless a lane of theirs still has a
+  worktree). The merge log moved to `~/.local/state/lonca/merge.log`, so the audit trail is kept.
 
 ## [0.4.0] - 2026-11-22
 
