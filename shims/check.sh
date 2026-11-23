@@ -17,7 +17,11 @@ t blocked git push -u origin master
 t blocked git push origin --delete x
 t blocked git push origin :x
 t blocked git -c core.hooksPath=/dev/null push origin x
+t blocked git -C . config --local --unset core.hooksPath
+t blocked git config --unset-all core.hookspath
+t ok      git config --local --get core.hooksPath
 t ok      git --version
 t ok      git status --short
+t blocked lonca remove fixture
 t blocked pkill -f nothing-xyz
 [ $fail -eq 0 ] && echo "all shim cases pass"; exit $fail

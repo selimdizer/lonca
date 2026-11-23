@@ -37,12 +37,13 @@ Review or second opinion, outside hc. Always prefix them with `PATH=$HOME/lonca/
 
 ### Claude Code
 ```bash
-# a role (model, effort, tools and rules come from ~/.claude/agents/<role>.md)
-claude -p --agent reviewer --permission-mode bypassPermissions < brief.md > $RUN/$L.md   # roles: implementer, reviewer, verifier, security-auditor
+# Resolve the role in the checkout where the command runs.
+role=$(lonca-project --claude-agent reviewer "$PWD") || exit 1
+claude -p --agent "$role" --permission-mode bypassPermissions < brief.md > $RUN/$L.md   # roles: implementer, reviewer, verifier, security-auditor
 # plain model, no role
 claude -p --model <model> --effort medium < brief.md > $RUN/$L.md
 ```
-Always use `--agent <role>`, so the role's tool limits apply. Headless runs need `bypassPermissions` (nobody can answer a prompt); the deny rules and pre-push hook still apply in that mode. Inside Claude Code use the Agent tool with the same subagent names.
+Use the resolved role with `--agent`. Plugin-enabled repositories use `lonca:<role>`; marked repositories using the legacy install use `<role>`. Headless runs need `bypassPermissions` (nobody can answer a prompt); the deny rules and pre-push hook still apply in that mode. Inside Claude Code use the Agent tool with the same subagent names.
 
 ### Codex
 ```bash

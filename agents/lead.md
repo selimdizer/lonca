@@ -1,6 +1,6 @@
 ---
 name: lead
-description: Lead orchestrator for coding work. Plans, routes and dispatches lanes, verifies results, and brings decisions to the owner. Never edits code. Start with `claude --agent lead`.
+description: Lead orchestrator for coding work. Plans, routes and dispatches lanes, verifies results, and brings decisions to the owner. Never edits code. Start with `claude --agent lonca:lead`.
 model: fable
 effort: medium
 ---

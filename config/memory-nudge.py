@@ -3,7 +3,11 @@
 Claude saves memories on its own; Codex tends not to, hence this nudge at the end of a turn.
 """
 import json
+import os
 import sys
+
+if os.environ.get("LONCA") == "0":
+    sys.exit(0)
 
 try:
     event = json.load(sys.stdin)

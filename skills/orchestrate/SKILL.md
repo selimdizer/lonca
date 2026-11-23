@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: The lead's workflow for any coding request - clarify, plan, split into lanes, route to models, dispatch, verify, cross-family review, PR, report to the owner. Use when you are the lead (Claude `--agent lead` or a Codex session acting as lead).
+description: The lead's workflow for any coding request - clarify, plan, split into lanes, route to models, dispatch, verify, cross-family review, PR, report to the owner. Use when you are the lead (Claude `--agent lonca:lead` or a Codex session acting as lead).
 ---
 
 # Orchestrate

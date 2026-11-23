@@ -9,12 +9,19 @@ deny() { echo "lonca guard: blocked '$name$args'— $1. Stop and report to the o
 
 case $name in
   pkill|killall) deny "stop only processes you started, by PID" ;;
+  lonca)
+    case ${1:-} in remove) deny "remove project protections from the owner's shell" ;; esac ;;
   gh)
     case $args in
       " pr merge "*|*" api "*merge*) deny "merge only with merge-pr (checks first)" ;;
     esac
     "$L/bin/ai-trace-gh" "$@" || exit 126 ;;
   git)
+    case $(printf '%s' "$args" | tr '[:upper:]' '[:lower:]') in
+      *" config "*"core.hookspath "*) case $args in
+        *" --unset "*|*" --unset-all "*|*" unset "*) deny "don't remove git hooks" ;;
+      esac ;;
+    esac
     case $args in
       *" push "*" --force"*|*" push "*" -f "*|*" push --force"*|*" push -f "*|*" push "*" +"*) deny "no force-push" ;;
       *" push "*" --delete"*|*" push "*" -d "*|*" push "*" :"*) deny "no branch deletion" ;;

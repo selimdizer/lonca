@@ -88,7 +88,7 @@ again, and it backs up every file it changes as `*.lonca-bak`. What it changes:
 - **Git:** a global `core.hooksPath` with Lonca's `commit-msg` and `pre-push`; every other hook name runs the repo's own
   `.git/hooks/<name>`, so your pre-commit hooks keep working. Repos that set their own `core.hooksPath` (husky,
   lefthook) keep theirs, and Lonca's hooks don't run there.
-- **Commands** in `~/.local/bin`: `lane`, `lanes`, `lonca-project`, `merge-pr`, `merge-tier`, `night-on`, `kanzo-sync`.
+- **Commands** in `~/.local/bin`: `lonca`, `lane`, `lanes`, `lonca-project`, `merge-pr`, `merge-tier`, `night-on`, `kanzo-sync`.
 - **Memory:** `~/ai-memory` from a template, if you don't have one.
 - **Timers** (systemd on Linux, launchd on macOS): `lane-watch` (needs `hc`), `kanzo-sync`, `kanzo-backup` and
   `monthly-card` (need Kanzo), `ai-cleanup`, `ai-memory-commit`, `deja-index` (needs deja).
@@ -103,8 +103,9 @@ again, and it backs up every file it changes as `*.lonca-bak`. What it changes:
 ## Quick start
 
 ```sh
+lonca init path/to/your/repo
 cd path/to/your/repo
-claude --agent lead
+claude --agent lonca:lead
 > Add a dark mode toggle to the settings page.
 ```
 
@@ -122,9 +123,45 @@ hour: if someone pushes after the checks, the evidence no longer matches, the ch
 
 ## Configuration
 
-**Projects.** Lonca needs no projects folder. To group several repos into one project, put a `.lonca.toml` in the folder
-that holds them (anywhere on disk; a hidden file, like `.editorconfig`; `lonca.toml` works too). Put it next to your
-repos, not inside one, so it stays yours and never reaches a team repo. Only `name` is needed:
+### Per-project setup
+
+Run these commands from the owner's shell or a lead with permission to set the repository's
+`core.hooksPath`. Lane guards block that change.
+
+```sh
+lonca init ~/work/shop                    # one repo, or a folder containing several repos
+lonca status ~/work/shop                  # includes newly cloned repos and configuration conflicts
+lonca init ~/work/shop                    # pick up new repos
+lonca status                              # all registered projects
+lonca remove ~/work/shop
+```
+
+The default agents are Claude and Codex. Start with `--agents codex` or `--agents claude` to select one.
+Running init again can add an agent. Each repository gets its own local Git hooks setting, which Git also
+uses in linked worktrees. Status lists linked worktrees inside the project next to their main checkout.
+A repository with a custom hooks path keeps it. `LONCA=0` silences memory, deja-scope and temporary-directory
+automation for that process and its children. The default-branch push guard, attribution checks and the
+repository's native Git hooks still run. The owner can remove the project integration with `lonca remove`.
+
+- Claude Code installs `lonca@lonca` with local scope. Its agents, skills, hooks and MCP servers come
+  from the local marketplace. Personal settings hold the deny rules and deja policy, and
+  `CLAUDE.local.md` imports `@~/lonca/AGENTS.md`. Use a CLI with local marketplace scope support.
+- Codex reads the project's `.codex/config.toml`, `.codex/rules/lonca.rules` and `.codex/hooks.json`.
+  Trust the project and review the hooks in `/hooks`.
+- Init merges personal files, registers the project and keeps private backups under
+  `~/.local/state/lonca/projects/`. It adds generated paths to Git's local exclude file.
+  Tracked target files and symlinks produce a diagnostic. Remove restores the original bytes. If a managed
+  file has since been edited, remove takes out Lonca's entries and keeps personal changes. Private backup
+  files can contain the same sensitive values as the original settings. For a missing or moved checkout,
+  remove reports its path and keeps its recovery index beside the backups.
+
+The current installer still writes its legacy global configuration and installs timers. Status flags
+global Lonca settings during this transition and lists former Git-only projects found in its local records.
+Use `lonca status <folder>` to check other repositories. An unmarked repository receives a recall-nothing
+deja policy. After the legacy session hook first writes that policy into local settings, restart the
+session before using its already-connected MCP server. If the old `lonca` marketplace points at another source, init reports the conflict before
+installing anything. The global and plugin Bash guards can both run until the global install is migrated. A marker in the project root names the project and
+can set its merge policy. For a marker inside a repository, merge checks use the base branch's copy of the policy. For example:
 
 ```toml
 name = "shop"              # memory group ~/ai-memory/shop/ and Kanzo project slug; default: the folder's name
@@ -135,7 +172,7 @@ high_paths = ["src/pay/*"] # optional: more paths that make a PR high tier
 ```
 
 Lonca finds it the way mise and EditorConfig find theirs: a lane's worktree counts as its main repo, Lonca walks up from
-there, and the closest `.lonca.toml` (or `lonca.toml`) wins. With no marker, the git repo is the project. Project-only
+there, and the closest `.lonca.toml` (or `lonca.toml`) wins. A directory without a project marker in its ancestry is outside Lonca. Project-only
 skills go in `<project root>/.claude/skills/`, next to the repos rather than inside a team repo.
 `~/lonca/bin/lonca-project [dir]` shows what Lonca sees.
 
@@ -156,7 +193,7 @@ skills go in `<project root>/.claude/skills/`, next to the repos rather than ins
 |---|---|
 | `LONCA_PROJECT` | overrides the project name |
 | `ALLOW_MAIN_PUSH=1` | lets *you* push to the default branch past the hook, on purpose |
-| `LONCA_LEAD_CMD` | the command the Herdr plugin's "start a lead" runs (default `claude --agent lead`) |
+| `LONCA_LEAD_CMD` | the command the Herdr plugin's "start a lead" runs (uses `claude --agent lonca:lead` in plugin-enabled repos) |
 
 **Git config.**
 
