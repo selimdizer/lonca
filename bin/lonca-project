@@ -4,9 +4,9 @@
 Like mise/EditorConfig/direnv: a lane worktree counts as its main repo; from there walk up to / and the closest
 `.lonca.toml` (or `lonca.toml`) marks the project root, so one marker in a parent folder groups several repos.
 Its `name = "..."` names the project (memory group, Kanzo slug); default: the folder's name in lower case.
-No marker: the git repo is the project. LONCA_PROJECT overrides the name.
+No marker: exit 1. LONCA_PROJECT overrides the name.
 """
-import os, re, subprocess, sys
+import json, os, re, subprocess, sys
 
 def marker_name(path):
     try:
@@ -17,21 +17,33 @@ def marker_name(path):
         m = re.search(r'^\s*name\s*=\s*["\']([^"\']+)["\']', open(path).read(), re.M)
         return m.group(1) if m else None
 
-start = os.path.realpath(sys.argv[1] if len(sys.argv) > 1 else os.getcwd())
+args = sys.argv[1:]
+role = None
+if args[:1] == ["--claude-agent"] and len(args) >= 2:
+    role, args = args[1], args[2:]
+start = os.path.realpath(args[0] if args else os.getcwd())
 r = subprocess.run(["git", "-C", start, "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, text=True)
 repo = os.path.dirname(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip().endswith("/.git") else None
 
+if not os.path.isdir(start):
+    sys.exit(1)
 d = repo or start
 while True:
     for n in (".lonca.toml", "lonca.toml"):
         if os.path.isfile(os.path.join(d, n)):
             name = marker_name(os.path.join(d, n)) or os.path.basename(d).lower()
+            if role:
+                local = os.path.join(repo or start, ".claude/settings.local.json")
+                try:
+                    with open(local) as f:
+                        enabled = json.load(f).get("enabledPlugins", {}).get("lonca@lonca")
+                except FileNotFoundError:
+                    enabled = False
+                print(("lonca:" if enabled else "") + role)
+                sys.exit(0)
             print(f"{os.environ.get('LONCA_PROJECT') or name}\t{d}")
             sys.exit(0)
     if d == "/":
         break
     d = os.path.dirname(d)
-if repo:
-    print(f"{os.environ.get('LONCA_PROJECT') or os.path.basename(repo).lower()}\t{repo}")
-    sys.exit(0)
 sys.exit(1)

@@ -1,0 +1,8 @@
+{
+  "name": "lonca",
+  "owner": {"name": "Lonca"},
+  "plugins": [
+    {"name": "lonca", "source": "./", "description": "Project agents, skills, hooks and MCP servers"},
+    {"name": "move-lsp", "source": "./extras/sui/plugins/move-lsp", "description": "Optional Sui Move language server"}
+  ]
+}

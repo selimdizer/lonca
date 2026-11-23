@@ -15,19 +15,20 @@ set -eu
 for v in $(env | cut -d= -f1 | grep -E '^(CLAUDECODE|CLAUDE_[A-Z_]*|CODEX_COMPANION_[A-Z_]*)$'); do unset "$v"; done
 # Agents run with full permissions; ~/lonca/shims (gh, git, pkill, killall guards) go first in PATH.
 export PATH="$HOME/lonca/shims:$HOME/lonca-local/shims:$PATH"   # Lonca's guards, then your own shims
-# /tmp is RAM (tmpfs): agent temp files, Go builds and Node caches go to disk
-export TMPDIR="$("$HOME/lonca/bin/lonca-config" tmpdir "$HOME/.cache/lonca/tmp")"; mkdir -p "$TMPDIR"
 ro=0; [ "${1:-}" = --read ] && { ro=1; shift; }
 case ${1:-} in -h|--help|"") sed -n '2,/^set -eu/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;; esac
 [ $# -eq 5 ] || [ $# -eq 6 ] || { echo "usage: lane [--read] <repo-dir> <branch|name> <agent> <brief-file> <result-file> [base-branch]   (lane --help)" >&2; exit 2; }
 repo=$1 branch=$2 agent=$3 brief=$(realpath "$4") result=$5 base=${6:-}
+project=$("$HOME/lonca/bin/lonca-project" "$repo") || { echo "lane: no Lonca project marker for $repo" >&2; exit 1; }
+proot=${project#*	}
+# /tmp is RAM (tmpfs): agent temp files, Go builds and Node caches go to disk
+export TMPDIR="$("$HOME/lonca/bin/lonca-config" tmpdir "$HOME/.cache/lonca/tmp")"; mkdir -p "$TMPDIR"
 command -v hc >/dev/null 2>&1 && hc server status >/dev/null 2>&1 || { echo "lane: herdr-core (hc) is not running; not starting a lane" >&2; exit 1; }
 mkdir -p "$(dirname "$result")"; result="$(cd "$(dirname "$result")" && pwd -P)/$(basename "$result")"
 # deja recall limited to this project's own sessions (deja-scope); every lane agent passes it to its deja MCP server
 DEJA_POLICY_FILE=$("$HOME/lonca/bin/deja-scope" "$repo") || { echo "lane: could not scope deja to this project; not starting" >&2; exit 1; }
 prompt="Read the brief at $brief and do the lane it describes. When you are done, or stopped, write your final report (at most 30 lines, with a Not verified section, ending with a Lessons section: facts a future session in this project would need, such as a gotcha, a command that works or a decision you learned, or none) to $result and end. Do not write to ~/ai-memory yourself; the lead saves your lessons. Something the brief does not settle, or that may have been decided before: search past sessions first (deja search \"<topic>\", or the deja MCP tool) and the project memory; ask only if they don't answer it."
 # Project skills live in the project root (the folder with .lonca.toml, not a team repo): point the lane at them
-proot=$("$HOME/lonca/bin/lonca-project" "$repo" 2>/dev/null | cut -f2) || proot=
 psk="$proot/.claude/skills"
 [ -n "$proot" ] && [ "$proot" != "$(realpath "$repo")" ] && [ -d "$psk" ] && prompt="$prompt This project's own skills (follow the one that fits, e.g. its verify skill before you report done): $(ls -d "$psk"/*/SKILL.md 2>/dev/null | tr '\n' ' ')"
 # The brief's "Card:" line (Kanzo task, e.g. shop#44): the lane keeps that card current itself
@@ -36,7 +37,8 @@ card=$(sed -n 's/^Card:[[:space:]]*\([A-Za-z0-9_-]*#[0-9][0-9]*\).*/\1/p' "$brie
 prompt="$prompt Stay inside this project: no other project's Kanzo cards (never project \"all\" or another slug) and no other project's files or past sessions."
 
 case $agent in
-  claude:*) cmd="claude --agent ${agent#claude:} --permission-mode bypassPermissions" ;;
+  claude:*) role=$("$HOME/lonca/bin/lonca-project" --claude-agent "${agent#claude:}" "$repo")
+            cmd="claude --agent $role --permission-mode bypassPermissions" ;;
   # codex: full permissions; its own rules don't apply in that mode, the shims below do
   # interactive (not exec) so the Herdr app shows its status; --no-daemon is required under hc
   # --disable apps: the ChatGPT GitHub connector may act as a different GitHub account; lanes use gh
@@ -90,7 +92,8 @@ name=$(printf '%s-%s' "$(basename "$(realpath "$repo")" | cut -c1-8)" "$branch" 
 # Claude's and Codex's own settings may pin TMPDIR for their tools, so they get it through their override flags too
 ltmp="$TMPDIR/lane-$name"; mkdir -p "$ltmp"
 case $agent in
-  claude:*) cmd="$cmd --settings '{\"env\":{\"TMPDIR\":\"$ltmp\"}}'" ;;
+  claude:*) role=$("$HOME/lonca/bin/lonca-project" --claude-agent "${agent#claude:}" "$repo")
+            cmd="$cmd --settings '{\"env\":{\"TMPDIR\":\"$ltmp\"}}'" ;;
   codex:*)  cmd="$cmd -c 'shell_environment_policy.set.TMPDIR=\"$ltmp\"'" ;;
 esac
   # Started from a lead inside the Herdr app: open the lane as its own tab in the lead's space

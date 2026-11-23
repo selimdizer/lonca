@@ -2,7 +2,7 @@
 # Agents push their own branches and open PRs; nobody pushes the default branch (main, master or the remote's
 # HEAD branch) except the owner on purpose:  ALLOW_MAIN_PUSH=1 git push ...   Then the repo's own pre-push hook.
 input=$(cat)
-if [ "${ALLOW_MAIN_PUSH:-}" != 1 ]; then
+if [ "${LONCA:-}" != 0 ] && [ "${ALLOW_MAIN_PUSH:-}" != 1 ]; then
   def=$(git symbolic-ref -q --short "refs/remotes/$1/HEAD" 2>/dev/null); def=${def#"$1"/}
   printf '%s\n' "$input" | while read -r local_ref local_sha remote_ref remote_sha; do
     case "${remote_ref#refs/heads/}" in

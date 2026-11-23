@@ -5,6 +5,9 @@ their own (lane-<name>, from `lane`) and keep it. ai-cleanup removes the folder 
 """
 import json, os, subprocess, sys
 
+if os.environ.get("LONCA") == "0":
+    sys.exit(0)
+
 try:
     sid = json.load(sys.stdin).get("session_id") or ""
 except ValueError:

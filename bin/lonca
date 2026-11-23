@@ -1,0 +1,437 @@
+#!/usr/bin/env python3
+"""Install and inspect personal Lonca settings for the repositories in a project."""
+import argparse
+import base64
+import fcntl
+import hashlib
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+SRC = Path(__file__).resolve().parent.parent
+HOME = Path.home().resolve()
+REGISTRY = HOME / ".local/state/lonca/projects"
+HOOKS = str(HOME / "lonca/git-hooks")
+PLUGIN = "lonca@lonca"
+SETTINGS = ".claude/settings.local.json"
+IMPORT = "@~/lonca/AGENTS.md"
+MARKERS = (".lonca.toml", "lonca.toml")
+
+
+def git(repo, *args, optional=False):
+    p = subprocess.run(["git", "-C", repo, *args], text=True, stdout=subprocess.PIPE)
+    if optional and p.returncode == 1:
+        return None
+    p.check_returncode()
+    return p.stdout.rstrip("\n")
+
+
+def plain(path):
+    # A checkout can contain symlinks to other repos or to the user's home.
+    if path.resolve() != path:
+        raise ValueError(f"refusing symlink: {path}")
+    if path.exists() and not path.is_file():
+        raise ValueError(f"expected a regular file: {path}")
+    return path
+
+
+def read(path):
+    return path.read_bytes() if plain(path).exists() else None
+
+
+def atomic(path, data, mode=0o600):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as out:
+            os.fchmod(out.fileno(), mode)
+            out.write(data)
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def formatted(data):
+    return (json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode()
+
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest() if data is not None else None
+
+
+def registry_file(root):
+    return REGISTRY / (hashlib.sha256(os.fsencode(root)).hexdigest() + ".json")
+
+
+def marked(folder):
+    return any((folder / name).is_file() for name in MARKERS)
+
+
+def repos(root):
+    for dirname, dirs, files in os.walk(root):
+        folder = Path(dirname)
+        if folder != root and marked(folder):
+            dirs.clear()
+            continue
+        if ".git" in dirs or ".git" in files:
+            common = Path(git(folder, "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()
+            if not common.is_relative_to(root) or Path(git(folder, "rev-parse", "--show-toplevel")).resolve() != folder:
+                raise ValueError(f"git repository points outside the project: {folder}")
+            yield folder, common
+        dirs[:] = sorted(d for d in dirs if d != ".git" and not (folder / d).is_symlink())
+
+
+def personal(repo, name):
+    path = plain(repo / name)
+    if git(repo, "ls-files", "--", name):
+        raise ValueError(f"{path} is tracked; personal settings would appear in your diff")
+    return path
+
+
+class Project:
+    """One private write-ahead record per project; it is also the registration."""
+    def __init__(self, root):
+        self.root = root
+        self.file = registry_file(root)
+        self.data = json.loads(self.file.read_bytes()) if self.file.exists() else {
+            "root": str(root), "files": {}, "dirs": [], "repos": {}, "agents": ["claude", "codex"]
+        }
+
+    def save(self):
+        atomic(self.file, formatted(self.data))
+
+    def remember(self, path):
+        data = read(path)
+        files = self.data["files"]
+        if str(path) not in files:
+            files[str(path)] = {
+                "before": base64.b64encode(data).decode() if data is not None else None,
+                "mode": stat.S_IMODE(path.stat().st_mode) if data is not None else 0o600,
+                "after": digest(data)
+            }
+            parent = path.parent
+            while not parent.exists():
+                if str(parent) not in self.data["dirs"]:
+                    self.data["dirs"].append(str(parent))
+                parent = parent.parent
+            self.save()
+        return files[str(path)]
+
+    def write(self, path, data):
+        old = read(path)
+        if data != old:
+            entry = self.remember(path)
+            if digest(old) not in (entry["after"], digest(decode(entry))):
+                raise ValueError(f"{path} changed after init; keeping your edits")
+            entry["after"] = digest(data)
+            self.save()
+            atomic(path, data, entry["mode"])
+
+    def install_plugin(self, repo, rec):
+        path = personal(repo, SETTINGS)
+        values = json.loads(read(path) or b"{}")
+        if values.get("enabledPlugins", {}).get(PLUGIN) is False:
+            raise ValueError(f"{PLUGIN} disabled in {path}")
+        market = values.get("extraKnownMarketplaces", {}).get("lonca")
+        if market and (market.get("source", {}).get("source") != "directory" or
+                       Path(market["source"].get("path", "/")).resolve() != (HOME / "lonca").resolve()):
+            raise ValueError(f"another local marketplace named lonca exists in {path}")
+        installed = plugin_installed(repo)
+        if installed and values.get("enabledPlugins", {}).get(PLUGIN):
+            return
+        entry = self.remember(path)
+        if digest(read(path)) != entry["after"]:
+            raise ValueError(f"{path} changed after init; keeping your edits")
+        if not installed:
+            rec["plugin"] = True
+            self.save()
+        try:
+            plugin_cmd(repo, "marketplace", "add", HOME / "lonca", "--scope", "local")
+            plugin_cmd(repo, "install", PLUGIN, "--scope", "local")
+        finally:
+            entry["after"] = digest(read(path))
+            self.save()
+
+    def init_repo(self, repo, common, agents, policy):
+        rec = self.data["repos"].setdefault(str(repo), {"common": str(common)})
+        if rec["common"] != str(common):
+            raise ValueError(f"{repo} now points to a different git directory")
+        names = []
+        if (repo / ".lonca.toml").as_posix() in self.data["files"]:
+            names.append(".lonca.toml")
+        if "claude" in agents:
+            names.extend([SETTINGS, "CLAUDE.local.md"])
+        if "codex" in agents:
+            names.extend([".codex/config.toml", ".codex/hooks.json", ".codex/rules/lonca.rules"])
+        paths = {name: personal(repo, name) for name in names}
+        exclude = plain(common / "info/exclude")
+        original = read(exclude) or b""
+        additions = ["/" + name for name in names if os.fsencode("/" + name) not in original.splitlines()]
+        if additions:
+            self.write(exclude, append(original, "\n".join(additions)))
+        local = git(repo, "config", "--local", "--get", "core.hooksPath", optional=True)
+        effective = git(repo, "config", "--get", "core.hooksPath", optional=True)
+        if effective not in (None, HOOKS):
+            print(f"warning: {repo} keeps its hooksPath ({effective})")
+        elif local is None:
+            rec["hooks"] = HOOKS
+            self.save()
+            git(repo, "config", "--local", "core.hooksPath", HOOKS)
+        if "claude" in agents:
+            self.install_plugin(repo, rec)
+            path = paths[SETTINGS]
+            values = json.loads(read(path) or b"{}")
+            deny = values.setdefault("permissions", {}).setdefault("deny", [])
+            for rule in json.loads((SRC / "config/claude-permissions.json").read_bytes())["deny"]:
+                if rule not in deny:
+                    deny.append(rule)
+            values.setdefault("env", {})["DEJA_POLICY_FILE"] = str(policy)
+            self.write(path, formatted(values))
+            path = paths["CLAUDE.local.md"]
+            old = read(path) or b""
+            if IMPORT.encode() not in old.splitlines():
+                self.write(path, append(old, IMPORT))
+        if "codex" in agents:
+            path = paths[".codex/config.toml"]
+            self.write(path, codex_mcp(read(path) or b"", policy))
+            path = paths[".codex/hooks.json"]
+            hooks = json.loads(read(path) or b"{}")
+            for event, groups in codex_hooks()["hooks"].items():
+                dest = hooks.setdefault("hooks", {}).setdefault(event, [])
+                for group in groups:
+                    if group not in dest:
+                        dest.append(group)
+            self.write(path, formatted(hooks))
+            path = paths[".codex/rules/lonca.rules"]
+            old = read(path) or b""
+            rules = (SRC / "config/codex-rules/default.rules").read_bytes()
+            if rules not in old:
+                self.write(path, old + (b"\n" if old else b"") + rules)
+        rec["ready"] = True
+        self.save()
+
+    def init(self, agents):
+        if agents:
+            self.data["agents"] = sorted(set(self.data["agents"] + agents)) if self.file.exists() else agents
+        found = list(repos(self.root))
+        for file in REGISTRY.glob("*.json"):
+            if file != self.file:
+                other = json.loads(file.read_bytes())
+                if any(str(repo) in other["repos"] for repo, _ in found):
+                    raise ValueError(f"repository already managed by project {other['root']}")
+        if not marked(self.root):
+            marker = self.root / MARKERS[0]
+            if (self.root / ".git").exists():
+                personal(self.root, MARKERS[0])
+            self.write(marker, b"# Personal Lonca project settings\n")
+        spec = json.loads(subprocess.check_output([SRC / "bin/deja-scope", "--policy", self.root]))
+        policy = Path(spec["file"])
+        self.data["policy"] = str(policy)
+        self.write(policy, json.dumps(spec["policy"], indent=0).encode())
+        self.write(policy.with_suffix(".root"), os.fsencode(self.root))
+        for repo, common in found:
+            self.init_repo(repo, common, self.data["agents"], policy)
+        self.save()
+
+    def remove(self):
+        if not self.file.exists():
+            raise ValueError(f"not registered: {self.root}")
+        files = self.data["files"]
+        # Check every backup before uninstalling anything. Refuse to discard later user edits.
+        for name, entry in files.items():
+            current = digest(read(Path(name)))
+            before = decode(entry)
+            if current not in (entry["after"], digest(before)):
+                raise ValueError(f"{name} changed since init; preserve your edits before removing")
+        for dirname, rec in self.data["repos"].items():
+            repo = Path(dirname)
+            if Path(git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve() != Path(rec["common"]):
+                raise ValueError(f"repository moved: {repo}")
+            if rec.get("plugin") and plugin_installed(repo):
+                try:
+                    plugin_cmd(repo, "uninstall", PLUGIN, "--scope", "local", "--keep-data")
+                finally:
+                    path = repo / SETTINGS
+                    files[str(path)]["after"] = digest(read(path))
+                    self.save()
+            if rec.get("hooks") and git(repo, "config", "--local", "--get", "core.hooksPath", optional=True) == rec["hooks"]:
+                git(repo, "config", "--local", "--unset", "core.hooksPath")
+        for name, entry in reversed(list(files.items())):
+            path = Path(name)
+            original = decode(entry)
+            if original is None:
+                path.unlink(missing_ok=True)
+            elif read(path) != original:
+                atomic(path, original, entry["mode"])
+        for dirname in sorted(self.data["dirs"], key=lambda p: len(Path(p).parts), reverse=True):
+            path = Path(dirname)
+            if path.is_dir() and not any(path.iterdir()):
+                path.rmdir()
+        self.file.unlink()
+
+
+def decode(entry):
+    return base64.b64decode(entry["before"]) if entry["before"] is not None else None
+
+
+def append(data, text):
+    return data + (b"\n" if data and not data.endswith(b"\n") else b"") + text.encode() + b"\n"
+
+
+def plugin_cmd(repo, *args):
+    subprocess.run(["claude", "plugin", *args], cwd=repo, check=True)
+
+
+def plugin_installed(repo):
+    result = subprocess.check_output(["claude", "plugin", "list", "--json"], cwd=repo)
+    return any(p.get("id") == PLUGIN and p.get("scope") == "local"
+               and Path(p.get("projectPath") or "/").resolve() == repo for p in json.loads(result))
+
+
+def codex_hooks():
+    start = []
+    for cmd in ('if [ "${LONCA:-}" != 0 ] && [ -f "$HOME/ai-memory/MEMORY.md" ]; then cat "$HOME/ai-memory/MEMORY.md"; fi',
+                '"$HOME/lonca/bin/memory-context"'):
+        start.append({"matcher": "startup|resume|clear|compact", "hooks": [{"type": "command", "command": cmd}]})
+    return {"hooks": {"SessionStart": start, "Stop": [
+        {"hooks": [{"type": "command", "command": 'python3 "$HOME/lonca/config/memory-nudge.py"'}]}]}}
+
+
+def codex_mcp(old, policy):
+    try:
+        import tomllib
+    except ImportError:  # macOS Python 3.9: only append to files with unambiguous, unrelated tables.
+        tomllib = None
+    text = old.decode()
+    servers = tomllib.loads(text).get("mcp_servers", {}) if tomllib else {}
+    for name in ("kanzo", "deja"):
+        block = f'[mcp_servers.{name}]\ncommand = "{name}"\nargs = ["mcp"]\n'
+        if name == "deja":
+            block += f"env = {{ DEJA_POLICY_FILE = {json.dumps(str(policy), ensure_ascii=False)} }}\n"
+        if name in servers:
+            server = servers[name]
+            if Path(server.get("command", "")).name != name or server.get("args") != ["mcp"]:
+                raise ValueError(f"existing mcp_servers.{name} conflicts with project settings")
+            if name == "deja" and server.get("env", {}).get("DEJA_POLICY_FILE") != str(policy):
+                if "env" in server:
+                    raise ValueError("existing mcp_servers.deja.env conflicts with the project policy")
+                text += f'\n[mcp_servers.deja.env]\nDEJA_POLICY_FILE = {json.dumps(str(policy), ensure_ascii=False)}\n'
+            continue
+        if not tomllib:
+            if block in text:
+                continue
+            if re.search(r"(?m)^\s*(?:\[\s*)?[\"']?mcp_servers[\"']?\s*(?:=|\.\s*[\"']?" + name + r"\b)", text):
+                raise ValueError(f"Python 3.11+ is needed to merge this existing mcp_servers.{name} configuration")
+        text += ("\n" if text else "") + block
+    if tomllib:
+        tomllib.loads(text)
+    return text.encode()
+
+
+def status(root):
+    project = Project(root)
+    print(f"{root} ({'registered' if project.file.exists() else 'unregistered'})")
+    for repo, common in repos(root):
+        local = git(repo, "config", "--local", "--get", "core.hooksPath", optional=True)
+        effective = git(repo, "config", "--get", "core.hooksPath", optional=True)
+        hooks = "on" if local == effective == HOOKS else "off"
+        if effective is not None and effective != HOOKS:
+            hooks += f" (own hooksPath: {effective})"
+        settings = json.loads(read(repo / SETTINGS) or b"{}")
+        enabled = settings.get("enabledPlugins", {}).get(PLUGIN)
+        claude = "enabled" if enabled else "off"
+        deny = json.loads((SRC / "config/claude-permissions.json").read_bytes())["deny"]
+        configured = (set(deny) <= set(settings.get("permissions", {}).get("deny", []))
+                      and project.data.get("policy")
+                      and project.data["policy"] == settings.get("env", {}).get("DEJA_POLICY_FILE")
+                      and IMPORT.encode() in (read(repo / "CLAUDE.local.md") or b"").splitlines())
+        config = read(repo / ".codex/config.toml")
+        rules = read(repo / ".codex/rules/lonca.rules") or b""
+        hooks_file = json.loads(read(repo / ".codex/hooks.json") or b"{}").get("hooks", {})
+        policy = project.data.get("policy")
+        codex = False
+        if config and policy:
+            try:
+                codex = (config == codex_mcp(config, policy)
+                         and (SRC / "config/codex-rules/default.rules").read_bytes() in rules
+                         and all(g in hooks_file.get(event, []) for event, groups in codex_hooks()["hooks"].items()
+                                 for g in groups))
+            except ValueError as error:
+                print(f"    warning: {repo}/.codex/config.toml: {error}")
+        print(f"  {repo}: git hooks {hooks}, Claude plugin {claude}, settings {'on' if configured else 'off'}, Codex {'on' if codex else 'off'}")
+        if not project.data["repos"].get(str(repo), {}).get("ready"):
+            print("    warning: repo not initialised")
+
+
+def global_status(folder):
+    legacy = []
+    if git(folder, "config", "--global", "--get", "core.hooksPath", optional=True) == HOOKS:
+        legacy.append("git hooksPath")
+    for name in (".claude/settings.json", ".claude/CLAUDE.md", ".codex/hooks.json", ".codex/config.toml"):
+        path = HOME / name
+        if path.is_file() and any(word in path.read_bytes() for word in (b"/lonca/", b"mcp_servers.kanzo", b"mcp_servers.deja")):
+            legacy.append(name)
+    for name in (".claude/agents/lead.md", ".codex/AGENTS.md", ".codex/rules/default.rules"):
+        path = HOME / name
+        if path.is_symlink() and path.resolve().is_relative_to(SRC):
+            legacy.append(name)
+    if legacy:
+        print("  warning: global Lonca configuration still present: " + ", ".join(legacy))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    init = commands.add_parser("init")
+    init.add_argument("--agents", help="comma-separated agents (default: claude,codex)")
+    init.add_argument("dir", type=Path)
+    commands.add_parser("remove").add_argument("dir", type=Path)
+    commands.add_parser("status").add_argument("dir", type=Path, nargs="?")
+    args = parser.parse_args()
+    root = args.dir.resolve(strict=True) if args.dir else None
+    if root and not root.is_dir():
+        parser.error(f"not a directory: {root}")
+    if args.command == "status":
+        if root:
+            p = subprocess.run([SRC / "bin/lonca-project", root], capture_output=True, text=True)
+            status(Path(p.stdout.strip().split("\t")[1]) if p.returncode == 0 else root)
+        else:
+            records = sorted(REGISTRY.glob("*.json"))
+            if not records:
+                print("No registered Lonca projects.")
+            for record in records:
+                status(Path(json.loads(record.read_bytes())["root"]))
+        global_status(Path.cwd())
+        return
+    agents = args.agents.split(",") if getattr(args, "agents", None) is not None else None
+    if agents is not None and set(agents) - {"claude", "codex"}:
+        parser.error("--agents accepts claude,codex")
+    # Serialize overlapping init/remove calls without leaving a stale lock after interruption.
+    REGISTRY.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd = os.open(REGISTRY, os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        project = Project(root)
+        if args.command == "remove":
+            project.remove()
+        else:
+            p = subprocess.run(["git", "-C", root, "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+            if p.returncode == 0 and Path(p.stdout.strip()).resolve() != root:
+                parser.error("choose the repository root or its parent project directory")
+            project.init(agents)
+        print(f"{args.command}: {root}")
+    finally:
+        os.close(fd)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+        sys.exit(f"lonca: {error}")

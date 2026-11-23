@@ -41,6 +41,8 @@ def check(args):
     return r.stderr.strip() if r.returncode else None
 
 if sys.argv[1:2] == ["--hook"]:
+    if os.environ.get("LONCA") == "0":
+        sys.exit(0)
     data = json.load(sys.stdin)
     cmd = (data.get("tool_input") or {}).get("command", "")
     for seg in re.split(r"&&|\|\||;|\|", cmd):

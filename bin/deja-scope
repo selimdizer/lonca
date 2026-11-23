@@ -33,6 +33,8 @@ def project(d):
 
 
 def path_for(name, root):
+    if os.path.basename(name) != name or name in (".", ".."):
+        sys.exit("invalid project name")
     return os.path.join(DIR, f"{name}-{hashlib.sha1(root.encode()).hexdigest()[:6]}.json")
 
 
@@ -192,12 +194,19 @@ def refresh():
 if __name__ == "__main__":
     a = sys.argv[1:]
     if a == ["--session"]:
-        session()
+        if os.environ.get("LONCA") != "0":
+            session()
+    elif len(a) == 2 and a[0] == "--policy":
+        p = project(a[1])
+        if not p:
+            sys.exit(1)
+        print(json.dumps({"file": path_for(*p), "policy": policy(p[1])}))
     elif a == ["--refresh"]:
         refresh()
     elif len(a) == 1 and not a[0].startswith("-"):
         f = ensure(a[0])
-        if f:
-            print(f)
+        if not f:
+            sys.exit(1)
+        print(f)
     else:
         sys.exit(__doc__.strip())
