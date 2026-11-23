@@ -110,6 +110,11 @@ p.write_text(json.dumps(data))
     lonca("init", root, ok=False)
     assert catalog.read_text() == collision and not (root / ".lonca.toml").exists()
     catalog.unlink()
+    global_settings = home / ".claude/settings.json"
+    global_settings.write_text(json.dumps({"extraKnownMarketplaces": json.loads(collision)}))
+    lonca("init", root, ok=False)
+    assert not (root / ".lonca.toml").exists()
+    global_settings.unlink()
     external = root / "external-lane"
     host = base / "outside-owner"
     host.mkdir()

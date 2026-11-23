@@ -158,7 +158,8 @@ repository's native Git hooks still run. The owner can remove the project integr
 The current installer still writes its legacy global configuration and installs timers. Status flags
 global Lonca settings during this transition and lists former Git-only projects found in its local records.
 Use `lonca status <folder>` to check other repositories. An unmarked repository receives a recall-nothing
-deja policy. If the old `lonca` marketplace points at another source, init reports the conflict before
+deja policy. After the legacy session hook first writes that policy into local settings, restart the
+session before using its already-connected MCP server. If the old `lonca` marketplace points at another source, init reports the conflict before
 installing anything. The global and plugin Bash guards can both run until the global install is migrated. A marker in the project root names the project and
 can set its merge policy. For a marker inside a repository, merge checks use the base branch's copy of the policy. For example:
 

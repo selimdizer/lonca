@@ -241,6 +241,13 @@ class Project:
         }
 
     def save(self):
+        for name, entry in self.data["files"].items():
+            if "before" in entry:
+                entry["original"] = self.backup(self.original(entry))
+                entry.pop("before")
+                current = read(Path(name))
+                if digest(current) == entry["after"]:
+                    self.backup(current)
         atomic(self.file, formatted(self.data))
 
     @property
@@ -631,7 +638,8 @@ def global_status(folder):
 def report_former_projects():
     # Consult Lonca's own legacy records without walking the user's home or other repositories.
     directory = HOME / ".local/state/lonca/deja"
-    roots = {Path(p.read_text().strip()) for p in directory.glob("*.root")}
+    roots = {Path(p.read_text().strip()) for pattern in ("*.root", "*.former-root")
+             for p in directory.glob(pattern)}
     settings = directory / "settings-written"
     if settings.is_file():
         roots.update(Path(p).parent.parent for p in settings.read_text().splitlines() if p)

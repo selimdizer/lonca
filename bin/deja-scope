@@ -154,6 +154,8 @@ def write_settings(folder, f):
     git = lambda *a: subprocess.run(["git", "-C", folder, *a], capture_output=True, text=True)
     if git("rev-parse", "--git-dir").returncode == 0 and git("check-ignore", "-q", s).returncode != 0:
         ex = os.path.join(git("rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip(), "info", "exclude")
+        if os.path.realpath(ex) != os.path.abspath(ex):
+            return f"{ex} is symlinked; exclude the personal settings file yourself"
         os.makedirs(os.path.dirname(ex), exist_ok=True)
         with open(ex, "a") as out:
             out.write("\n/" + os.path.relpath(s, git("rev-parse", "--show-toplevel").stdout.strip()) + "\n")
@@ -205,7 +207,8 @@ def refresh():
                 put(f[:-5] + ".json", policy(root))
             else:                                    # gone or renamed: a session still pointing here recalls nothing
                 put(f[:-5] + ".json", {"ignore": NOTHING})
-                os.remove(f)
+                # Keep the old root name for the migration report without rescanning it on each refresh.
+                os.replace(f, f[:-5] + ".former-root")
         elif f != UNMARKED and n.endswith(".json") and not os.path.exists(f[:-5] + ".root") and time.time() - os.path.getmtime(f) > 7 * 86400:
             os.remove(f)
 
