@@ -5,6 +5,7 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- `leads` also lists sessions outside every project (PROJECT `-`), and machine-wide work (containers, cleanup, killing processes, packages, disk) is announced to every listed session first, then reported.
 - The project marker is documented as the hidden `.lonca.toml` (like `.editorconfig`); `lonca.toml` still works.
   Keep it next to your repos, not inside one.
 - Worktrees go when the work is done: `merge-pr` closes the PR's lane and removes its worktree and local branch right
