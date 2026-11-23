@@ -40,8 +40,9 @@ class Legacy:
             base = STATE / "migration-backups"
             base.mkdir(parents=True, exist_ok=True, mode=0o700)
             self.directory = Path(tempfile.mkdtemp(dir=base))
-            print(f"Backups: {self.directory}")
-        target = self.directory / path.relative_to(HOME)
+            print(f"Backups (absolute paths below filesystem/): {self.directory}")
+        # Legacy scope records can point at a checkout on a separate volume.
+        target = self.directory / "filesystem" / path.relative_to(path.anchor)
         target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         if not target.exists() and not target.is_symlink():
             if path.is_symlink():
