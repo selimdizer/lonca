@@ -7,6 +7,7 @@ cd "$HOME/lonca"
 list=$HOME/lonca-local/config/monthly-card.md; [ -f "$list" ] || list=$HOME/lonca/config/monthly-card.md
 title=$(sed -n '1s/^# //p' "$list")   # first line "# <title>"
 proj=$(sed -n 's/^project: *//p' "$list" | head -1); proj=${proj:-maintenance}
+"$HOME/lonca/bin/project-job" registered "$proj" || exit 0
 claude -p --model haiku --permission-mode bypassPermissions "Use the kanzo MCP tools only. In the kanzo project named '$proj' (create it if it does not exist, without linking a repo), create a task titled '$title $m' unless a task with that title already exists. Description, as a checklist:
 $(sed -e 1d -e "/^project:/d" "$list")
 Mark the task as human. Reply with the task id only." < /dev/null

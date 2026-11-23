@@ -20,8 +20,11 @@ jobs:
           for f in $(git ls-files); do
             if [ -f "$f" ] && [ ! -L "$f" ] && head -1 "$f" | grep -q python3; then python3 -m py_compile "$f"; fi
           done
-      - name: Per-project init, status and removal
+      # Owner-shell operations. Lane shims deliberately block init, migrate and remove.
+      - name: Project setup, migration preview, migration and uninstall (disposable HOME)
         run: python3 .github/per-project.py
+      - name: Project job boundaries
+        run: python3 .github/project-jobs.py
       - name: Guard shim cases
         run: sh shims/check.sh
       - name: Merge evidence (head pairing, stale head, HIGH finding, missing file)
@@ -76,14 +79,20 @@ jobs:
           HOME=$H sh bin/night-on --off demo && test ! -e "$H/.cache/ai-runs/night/demo.json"
       - name: AI-trace check (default and strict)
         run: |
-          echo "add anthropic client" | bin/ai-trace-check
-          ! printf 'x\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n' | bin/ai-trace-check
-          ! echo "add anthropic client" | GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=lonca.strictTraces GIT_CONFIG_VALUE_0=true bin/ai-trace-check
+          checker="$PWD/bin/ai-trace-check"
+          fixture=$(mktemp -d)
+          cd "$fixture"
+          export HOME="$fixture" XDG_CONFIG_HOME="$fixture/.config"
+          echo "add anthropic client" | "$checker"
+          ! printf 'x\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n' | "$checker"
+          ! echo "add anthropic client" | GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=lonca.strictTraces GIT_CONFIG_VALUE_0=true "$checker"
       - name: Install and uninstall in an empty home
         run: |
           H=$(mktemp -d); HOME="$H" git config --global user.name ci; HOME="$H" git config --global user.email ci@localhost
           mkdir -p "$H/bin" && for t in claude gh; do printf '#!/bin/sh\nexit 0\n' > "$H/bin/$t"; chmod +x "$H/bin/$t"; done
           env -i HOME="$H" PATH="$H/bin:/usr/bin:/bin" sh ./install.sh --yes
-          test -L "$H/.claude/skills/orchestrate" && test -L "$H/.local/bin/lane"
+          test -L "$H/.local/bin/lane" && test ! -e "$H/.claude" && test ! -e "$H/.codex"
+          test ! -e "$H/.config/systemd/user"
+          if HOME="$H" git config --global --get core.hooksPath; then exit 1; fi
           env -i HOME="$H" PATH="$H/bin:/usr/bin:/bin" sh ./install.sh --uninstall
           test ! -e "$H/.local/bin/lane"

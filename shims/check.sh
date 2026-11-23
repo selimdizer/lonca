@@ -1,7 +1,15 @@
 #!/bin/sh
 # Self-check: sh ~/lonca/shims/check.sh
 S=$(dirname "$(readlink -f "$0")"); fail=0
-t() { want=$1; shift; PATH="$S:$PATH" "$@" >/dev/null 2>&1; rc=$?; got=ok; [ $rc -eq 126 ] && got=blocked; [ "$got" = "$want" ] || { echo "FAIL: $* -> $got (want $want)"; fail=1; }; }
+# A regression should fail the test without forwarding a mutating test case to a real CLI.
+stubs=$(mktemp -d)
+trap 'rm -f "$stubs/git" "$stubs/gh" "$stubs/pkill" && rmdir "$stubs"' EXIT
+for n in git gh pkill; do
+  echo '#!/bin/sh' > "$stubs/$n"
+  echo 'exit 0' >> "$stubs/$n"
+  chmod +x "$stubs/$n"
+done
+t() { want=$1; shift; PATH="$S:$stubs:$PATH" "$@" >/dev/null 2>&1; rc=$?; got=ok; [ $rc -eq 126 ] && got=blocked; [ "$got" = "$want" ] || { echo "FAIL: $* -> $got (want $want)"; fail=1; }; }
 t blocked gh pr merge 3 --squash
 t blocked gh api repos/a/b/pulls/3/merge -X PUT
 t ok      gh --version

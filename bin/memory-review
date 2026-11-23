@@ -5,6 +5,8 @@ Collects the owner's messages from all Claude sessions since the last review (st
 excerpt of the agent turn it answered, and lets Sonnet save durable decisions into ~/ai-memory following
 ~/lonca/config/memory-review.prompt.md. No new messages -> no model call. Log: ~/.cache/ai-runs/setup/memory-review.log
 """
+from pathlib import Path
+from lonca_registry import registered
 import calendar, glob, json, os, re, subprocess, sys, time
 
 HOME = os.path.expanduser("~")
@@ -37,8 +39,17 @@ def text_of(c):
         return "\n".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")
     return ""
 
+projects = registered()
+if not projects:
+    sys.exit(0)
+# Claude encodes cwd in the directory name. Check each message's actual cwd as well,
+# since punctuation in the encoded directory name can collide across projects.
+prefixes = {re.sub(r"[^a-zA-Z0-9]", "-", str(root)) for root in projects}
 items = []
-for f in glob.glob(f"{HOME}/.claude/projects/*/*.jsonl"):
+session_base = Path(HOME) / ".claude/projects"
+folders = {folder for prefix in prefixes for folder in
+           [session_base / prefix, *session_base.glob(glob.escape(prefix) + "-*")] if folder.is_dir()}
+for f in (file for folder in folders for file in folder.glob("*.jsonl") if file.resolve() == file):
     if os.path.getmtime(f) < since:
         continue
     proj = os.path.basename(os.path.dirname(f)).replace("-" + os.path.expanduser("~").strip("/").replace("/", "-") + "-", "")
@@ -49,6 +60,10 @@ for f in glob.glob(f"{HOME}/.claude/projects/*/*.jsonl"):
         try:
             m = json.loads(line)
         except ValueError:
+            continue
+        cwd = Path(m.get("cwd") or "/").resolve()
+        if not any(cwd == root or root in cwd.parents for root in projects):
+            last_agent = ""
             continue
         if m.get("isSidechain") or m.get("entrypoint") == "sdk-cli":   # subagents; headless claude -p runs
             continue

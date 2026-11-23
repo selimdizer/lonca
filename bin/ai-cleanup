@@ -1,23 +1,10 @@
 #!/usr/bin/env python3
-"""Nightly cleanup of agent leftovers.
-
-ai-cleanup [--dry-run] [--tmp-age-hours N]
-
-1. Worktrees of every repo that has agent lanes (lane records, ~/.herdr/worktrees): remove a linked worktree (and its local branch) when its PR is
-   merged (HEAD inside the merged head) or, for Lonca's lane worktrees only, closed (HEAD is exactly the PR's head); it is
-   clean and not locked. A lane worktree with no PR goes too once its HEAD is already in the default branch.
-   a lane terminal still open there is closed first.
-   A detached worktree goes when it is clean, idle, untouched for the age below and its HEAD is on a
-   remote branch. Remote branches are never touched (GitHub's auto-delete handles those).
-2. Run folders in ~/.cache/ai-runs untouched for 30 days (unless one of their lanes still has a worktree); the logs in
-   ~/.cache/ai-runs/setup stay.
-3. Temp dirs owned by this user in the agents' temp folder (`lonca-config tmpdir`, default ~/.cache/lonca/tmp), and
-   in the folders listed in `cleanup_tmp_dirs` if you set it (e.g. /tmp on a RAM-backed /tmp): removed when nothing
-   inside changed for N hours (default 48) and no process has its cwd, an open file or its args/env inside (Linux;
-   on macOS nothing counts as unused, so no temp dir is removed). Claude's /tmp/claude-<uid> and git worktrees stay.
+"""Remove idle temporary directories, finished worktrees and old runs recorded by registered projects.
+Use --dry-run to preview, or --tmp-age-hours N to change the default 48-hour temp age.
 """
-import json, os, pwd, shutil, subprocess, sys, time
+import json, os, shutil, subprocess, sys, time
 from pathlib import Path
+from lonca_registry import registered, records, lane_worktree, resources, identity, names
 
 DRY = "--dry-run" in sys.argv
 AGE_H = int(sys.argv[sys.argv.index("--tmp-age-hours") + 1]) if "--tmp-age-hours" in sys.argv else 48
@@ -26,7 +13,6 @@ HOME, UID = Path.home(), os.getuid()
 for k in [k for k in os.environ if k == "CLAUDECODE" or k.startswith(("CLAUDE_", "CODEX_COMPANION_", "IMPECCABLE_"))]:
     del os.environ[k]
 LOG = HOME / ".cache/ai-runs/setup/cleanup.log"
-SKIP_TMP = (f"claude-{UID}", "agents", "lonca", "systemd-private", "tmux-", "herdr", "ssh-", ".X", ".ICE", ".font", "snap")
 now = time.time()
 out = []
 
@@ -54,12 +40,15 @@ def in_use_paths():
         for f in ("environ", "cmdline"):
             try:
                 for part in (p / f).read_bytes().decode(errors="ignore").replace("=", "\0").replace(":", "\0").split("\0"):
-                    if part.startswith(("/tmp/", "/var/tmp/")):
+                    if part.startswith("/"):
                         used.add(part.rstrip("/"))
             except OSError:
                 pass
     return used
 
+projects = registered()
+if not projects:
+    sys.exit(0)
 USED = in_use_paths()
 
 def busy(path):
@@ -87,123 +76,72 @@ def remove(path, why):
     if not DRY:
         shutil.rmtree(path, ignore_errors=True)
 
-# 1. worktrees
-def main_repo(path):
-    r = run("git", "rev-parse", "--path-format=absolute", "--git-common-dir", cwd=path)
-    d = r.stdout.strip()
-    return Path(d).parent if r.returncode == 0 and d.endswith("/.git") else None
-
-# repos that have agent worktrees: every lane record's repo, and the main repo of every lane worktree
-cands = set()
-for f in (HOME / ".cache/ai-runs").glob("**/*.lane.json"):
-    try:
-        rec = json.load(open(f))
-    except (OSError, ValueError):
+# Paths and identities come from receipts written when the resources were created.
+lanes = list(records(projects))
+pr_cache = {}
+runs = {}
+for file, rec in lanes:
+    repo, wt = Path(rec["repo"]), Path(rec["worktree"])
+    folder = file.parent
+    runs.setdefault(folder, []).append(rec)
+    if not lane_worktree(rec):
         continue
-    for k in ("repo", "worktree"):
-        if rec.get(k) and os.path.isdir(rec[k]):
-            cands.add(rec[k])
-cands |= {str(p) for p in (HOME / ".herdr/worktrees").glob("*/*") if p.is_dir()}
-repos = sorted({m for c in cands if (m := main_repo(c))})
-for repo in repos:
-    wl = run("git", "worktree", "list", "--porcelain", cwd=repo).stdout.strip().split("\n\n")[1:]
-    if not wl:
+    listing = run("git", "worktree", "list", "--porcelain", cwd=repo)
+    entries = [block.splitlines() for block in listing.stdout.split("\n\n")]
+    if not any(lines and lines[0] == f"worktree {wt}" and not any(x.startswith("locked") for x in lines)
+               for lines in entries):
         continue
-    # finished PRs: merged, or closed without merging (abandoned or replaced)
-    prs = run("gh", "pr", "list", "--state", "all", "--limit", "3000", "--json", "headRefName,headRefOid,number,state", cwd=repo)
-    merged = {}
-    if prs.returncode == 0:
-        for pr in json.loads(prs.stdout or "[]"):
-            if pr["state"] in ("MERGED", "CLOSED"):
-                merged.setdefault(pr["headRefName"], []).append(pr)
-    for block in wl:
-        info = dict((l.split(" ", 1) + [""])[:2] for l in block.splitlines())
-        path = Path(info.get("worktree", ""))
-        if not path.is_dir() or "locked" in info or str(path).startswith(f"/tmp/claude-{UID}"):
-            continue
-        branch = info.get("branch", "").removeprefix("refs/heads/")
-        if busy(path) and branch in merged:
-            # a lane left open after its PR merged: close its hc terminals, then the worktree can go
-            for t in json.loads(run("hc", "ls", "--json").stdout or '{"terminals":[]}').get("terminals", []):
-                if t.get("cwd", "").startswith(str(path)):
-                    say(f"{'would close' if DRY else 'closed'} lane terminal {t.get('name') or t['address']} in {path}")
-                    if not DRY:
-                        run("hc", "kill", t["address"])
+    status = run("git", "status", "--porcelain", cwd=wt)
+    head = run("git", "rev-parse", "HEAD", cwd=wt)
+    if status.returncode or status.stdout or head.returncode:
+        continue
+    if repo not in pr_cache:
+        result = run("gh", "pr", "list", "--state", "all", "--limit", "3000",
+                     "--json", "headRefName,headRefOid,number,state", cwd=repo)
+        pr_cache[repo] = json.loads(result.stdout) if result.returncode == 0 else None
+    if pr_cache[repo] is None:
+        continue
+    branch = rec["branch"]
+    prs = [p for p in pr_cache[repo] if p["headRefName"] == branch]
+    eligible = any(p["state"] in ("CLOSED", "MERGED") and (p["headRefOid"] == head.stdout.strip() or
+                   p["state"] == "MERGED" and run("git", "merge-base", "--is-ancestor", head.stdout.strip(),
+                                                  p["headRefOid"], cwd=repo).returncode == 0) for p in prs)
+    if not prs:
+        default = run("git", "symbolic-ref", "-q", "refs/remotes/origin/HEAD", cwd=repo)
+        eligible = default.returncode == 0 and run("git", "merge-base", "--is-ancestor", head.stdout.strip(),
+                                                   default.stdout.strip(), cwd=repo).returncode == 0
+    if not eligible or any(p["state"] == "OPEN" for p in prs):
+        continue
+    if busy(wt) and prs:
+        result = run("hc", "get", rec["name"], "--json")
+        term = json.loads(result.stdout) if result.returncode == 0 else {}
+        if term.get("cwd") == str(wt) and term.get("labels", {}).get("lonca.run") == rec["temp"]:
+            say(f"close lane terminal {rec['name']} in {wt}")
             if not DRY:
+                run("hc", "kill", term["address"])
                 time.sleep(3)
                 USED = in_use_paths()
-        if busy(path):
-            continue
-        if run("git", "status", "--porcelain", cwd=path).stdout.strip():
-            continue
-        head = run("git", "rev-parse", "HEAD", cwd=path).stdout.strip()
-        if branch:
-            # nothing may exist only here: a merged PR contains the worktree's HEAD; a closed one has exactly that head
-            lane_wt = str(path).startswith(str(HOME / ".herdr/worktrees") + "/")   # a closed PR only frees Lonca's own lane worktrees
-            pr = next((p for p in merged.get(branch, []) if (p["state"] == "MERGED" and (p["headRefOid"] == head or
-                       run("git", "merge-base", "--is-ancestor", head, p["headRefOid"], cwd=repo).returncode == 0))
-                       or (p["state"] == "CLOSED" and lane_wt and p["headRefOid"] == head)), None)
-            if not pr and lane_wt:   # no PR, but its work already reached the default branch: nothing is left here
-                default = run("git", "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD", cwd=repo).stdout.strip()
-                if default and run("git", "merge-base", "--is-ancestor", head, default, cwd=repo).returncode == 0:
-                    pr = {"number": "-", "state": f"none, HEAD already in {default}"}
-            if not pr:
-                continue
-            say(f"{'would remove' if DRY else 'removed'} worktree {path} + branch {branch} (PR #{pr['number']} {pr['state'].lower()})")
-            if not DRY and run("git", "worktree", "remove", str(path), cwd=repo).returncode == 0:
-                run("git", "branch", "-D", branch, cwd=repo)
-        elif "detached" in info and not touched_within(path, AGE_H):
-            on_remote = run("git", "branch", "-r", "--contains", head, cwd=repo).stdout.strip()
-            if on_remote:
-                say(f"{'would remove' if DRY else 'removed'} detached worktree {path} (clean, idle, HEAD on {on_remote.split()[0]})")
-                if not DRY:
-                    run("git", "worktree", "remove", str(path), cwd=repo)
-    if not DRY:
-        run("git", "worktree", "prune", cwd=repo)
+    if not busy(wt) and lane_worktree(rec):
+        say(f"remove finished worktree {wt} and branch {branch}")
+        if not DRY and run("git", "worktree", "remove", str(wt), cwd=repo).returncode == 0:
+            # Compare-and-delete: leave a branch advanced concurrently alone.
+            run("git", "update-ref", "-d", "refs/heads/" + branch, head.stdout.strip(), cwd=repo)
 
-# 2. run folders (briefs, reports, evidence, raw data) untouched for 30 days, unless a lane of theirs still has a worktree
-RUNS = HOME / ".cache/ai-runs"
-RUN_DAYS = 30
-def run_dirs():
-    for d in (RUNS.iterdir() if RUNS.is_dir() else []):
-        if not d.is_dir() or d.name in ("setup", "night"):
-            continue
-        dated = d.name[:4].isdigit()            # <date>-<slug> at the top: an old layout; else <project>/<date>-<slug>
-        for r in ([d] if dated else [x for x in d.iterdir() if x.is_dir()]):
-            yield r
-for r in run_dirs():
-    live = False
-    for f in r.glob("*.lane.json"):
-        try:
-            live = live or os.path.isdir(json.load(open(f)).get("worktree", ""))
-        except (OSError, ValueError):
-            pass
-    if live or busy(r) or touched_within(r, RUN_DAYS * 24):
+for root in projects:
+    for folder in resources(root, "temp"):
+        if (folder.name.startswith(("lane-", "session-")) and folder.is_dir() and folder.stat().st_uid == UID
+                and not busy(folder) and not touched_within(folder, AGE_H)):
+            remove(folder, f"recorded temp, unused for {AGE_H}h")
+
+base = HOME / ".cache/ai-runs"
+slugs = {str(root): names([root]) for root in projects}
+for folder, members in runs.items():
+    if (any(folder.parent.name not in slugs[rec["project"]] for rec in members) or folder.parent.parent != base or folder.parent.name in ("setup", "night")
+            or any(rec["run_id"] != identity(folder) or rec.get("base") != "-" and Path(rec["worktree"]).exists() for rec in members)
+            or set(folder.glob("*.lane.json")) != {Path(rec["result"] + ".lane.json") for rec in members}):
         continue
-    remove(r, f"run folder untouched {RUN_DAYS} days")
-
-# 3. temp dirs
-def config(key, default=None):
-    r = run(str(HOME / "lonca/bin/lonca-config"), key, *([default] if default else []))
-    return [l for l in r.stdout.splitlines() if l.strip()]
-
-TMP_BASES = [Path(p) for p in config("tmpdir", str(HOME / ".cache/lonca/tmp")) + config("cleanup_tmp_dirs")]
-for base in dict.fromkeys(TMP_BASES):
-    if not base.is_dir():
-        continue
-    for d in base.iterdir():
-        try:
-            st = d.lstat()
-        except OSError:
-            continue
-        if st.st_uid != UID or not d.is_dir() or d.is_symlink() or d.name.startswith(SKIP_TMP):
-            continue
-        try:
-            if busy(d) or (d / ".git").is_file() or touched_within(d, AGE_H):
-                continue
-        except OSError:   # unreadable (another program's private dir): not ours to judge
-            continue
-        remove(d, f"untouched {AGE_H}h, not in use")
+    if not busy(folder) and not touched_within(folder, 30 * 24):
+        remove(folder, "recorded run unused for 30 days")
 
 if not DRY and out:
     LOG.parent.mkdir(parents=True, exist_ok=True)

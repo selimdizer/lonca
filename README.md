@@ -62,7 +62,7 @@ rails, not a sandbox: lanes run with full permissions as your user, so a determi
 | [deja](https://github.com/vshulcz/deja-vu) | search across past sessions | the lead asks you instead |
 | semgrep, gitleaks, govulncheck | the security check's scanners | the check lists them under "Not verified" |
 
-Timers run as systemd user units on Linux and as launchd agents on macOS; the installer sets up whichever you have.
+Timers run as systemd user units on Linux and as launchd agents on macOS; pass `--timers` to enable them.
 
 ## Install
 
@@ -73,32 +73,37 @@ git clone https://github.com/selimdizer/lonca ~/lonca
 
 From inside Herdr you can instead run `herdr plugin install selimdizer/lonca` and open the **Lonca: set up** pane.
 
-The installer asks a few questions (or take the defaults with `--yes`; `--help` lists every flag). It is safe to run
-again, and it backs up every file it changes as `*.lonca-bak`. What it changes:
+The installer links the commands in `~/.local/bin`, makes the plugin marketplace available at
+`~/lonca`, and creates `~/ai-memory` from a template on first install. Run `lonca init <folder>`
+in your shell, or tell your lead **“set this up for Lonca.”** The bundled `lonca` skill walks through
+agent selection and reports which guards are active. Each project's init registers its local marketplace.
+Outside a project, a plain terminal session starts without Lonca. Run `lonca init <folder>` there, or
+open the folder from Herdr to see the setup hint when the session starts.
 
-- **Agent CLIs:** for each harness you pick, links `AGENTS.md` and the skills into that CLI's own folders; Claude Code
-  always gets them, plus the agents in `~/.claude/agents`.
-- **Claude Code settings** (`~/.claude/settings.json`): Lonca's deny rules; a SessionStart hook that loads the project's
-  memory; a PreToolUse hook that checks `gh` text for AI attribution; commit and PR attribution off;
-  `autoMemoryDirectory` = `~/ai-memory`; the Kanzo MCP server (if Kanzo is installed).
-- **Codex** (if picked): the same memory hooks in `~/.codex/hooks.json`; `lane` marks each repo it runs Codex in as trusted.
-- **MCP servers:** Kanzo and deja (when installed) in every harness you picked, through its own `mcp add` command
-  (Claude Code, Codex, OpenCode, Copilot, Antigravity, Grok) or its documented `mcp.json` (omp, pi). Uninstall removes
-  only the entries Lonca added.
-- **Git:** a global `core.hooksPath` with Lonca's `commit-msg` and `pre-push`; every other hook name runs the repo's own
-  `.git/hooks/<name>`, so your pre-commit hooks keep working. Repos that set their own `core.hooksPath` (husky,
-  lefthook) keep theirs, and Lonca's hooks don't run there.
-- **Commands** in `~/.local/bin`: `lonca`, `lane`, `lanes`, `lonca-project`, `merge-pr`, `merge-tier`, `night-on`, `kanzo-sync`.
-- **Memory:** `~/ai-memory` from a template, if you don't have one.
-- **Timers** (systemd on Linux, launchd on macOS): `lane-watch` (needs `hc`), `kanzo-sync`, `kanzo-backup` and
-  `monthly-card` (need Kanzo), `ai-cleanup`, `ai-memory-commit`, `deja-index` (needs deja).
-- **Opt-in only:**
-  - `--memory-review` (or answer yes): every 2 h a timer sends your messages from Claude sessions since the last run, in
-    every project, with a short excerpt of the reply each answered, to Sonnet on your Claude plan. Sonnet saves lasting
-    decisions to `~/ai-memory`. It costs plan quota.
-  - `--agent-tmpdir`: Claude sessions write temp files to Lonca's temp dir instead of `/tmp`. Lanes always use it.
-  - `--sui`: the Sui Move extra in `extras/sui/`. Lanes run `sui`/`move-analyzer` at each repo's CI `SUI_VERSION`, and
-    Claude gets a Move LSP plugin.
+- `--timers` enables cleanup and lane monitoring for registered projects and board sync and backups
+  for their Kanzo slugs. The monthly maintenance card requires its configured project to be registered.
+- `--timers --memory-review` also reviews recent owner messages from registered projects. It uses your Claude plan.
+- `--sui` installs the Sui version selector and Move LSP launcher. In an initialized project, run
+  `claude plugin install move-lsp@lonca --scope local` to use the language server from the same marketplace.
+
+Cleanup checks Lonca's record of each worktree, terminal, run and temporary directory. Older lanes
+without ownership records stay in place. Whole-machine deja indexing and shared-memory auto-commit
+are off because their inputs span projects.
+
+### Migrate an existing installation
+
+From the owner's shell, preview the changes, then run the same command without `--dry-run`:
+
+```sh
+lonca migrate --dry-run
+lonca migrate
+```
+
+Migration includes registered roots, marked folders under `~/Work`, the marked `~/lonca` checkout,
+and markers found in previous Lonca scope records. Pass additional roots as arguments to both commands.
+It moves the old Move marketplace to `~/lonca`, initializes the projects, and then removes identified
+global entries. Backups of changed global files are under `~/.local/state/lonca/migration-backups/`.
+If a command stops, correct the reported problem and repeat it.
 
 ## Quick start
 
@@ -125,8 +130,8 @@ hour: if someone pushes after the checks, the evidence no longer matches, the ch
 
 ### Per-project setup
 
-Run these commands from the owner's shell or a lead with permission to set the repository's
-`core.hooksPath`. Lane guards block that change.
+The owner or lead runs init. A lane that needs setup asks its lead. Only the owner runs remove.
+The init, migration and removal integration test runs on GitHub CI, outside the lane shims.
 
 ```sh
 lonca init ~/work/shop                    # one repo, or a folder containing several repos
@@ -155,12 +160,8 @@ repository's native Git hooks still run. The owner can remove the project integr
   files can contain the same sensitive values as the original settings. For a missing or moved checkout,
   remove reports its path and keeps its recovery index beside the backups.
 
-The current installer still writes its legacy global configuration and installs timers. Status flags
-global Lonca settings during this transition and lists former Git-only projects found in its local records.
-Use `lonca status <folder>` to check other repositories. An unmarked repository receives a recall-nothing
-deja policy. After the legacy session hook first writes that policy into local settings, restart the
-session before using its already-connected MCP server. If the old `lonca` marketplace points at another source, init reports the conflict before
-installing anything. The global and plugin Bash guards can both run until the global install is migrated. A marker in the project root names the project and
+Status flags surviving legacy settings. Init reports an unrelated marketplace name collision before
+installing anything. A marker in the project root names the project and
 can set its merge policy. For a marker inside a repository, merge checks use the base branch's copy of the policy. For example:
 
 ```toml
@@ -181,11 +182,11 @@ skills go in `<project root>/.claude/skills/`, next to the repos rather than ins
 | Rules for every agent | `~/lonca/AGENTS.md` |
 | Model routing | `~/lonca-local/routing.md` if you write one, else `~/lonca/routing.md` (template; example in `examples/`) |
 | Shared memory | `~/ai-memory/` (`MEMORY.md` index + one folder per project) |
-| Your own skills, agents, notes | `~/lonca-local/` (linked on top of Lonca's) |
+| Your own skills, agents, notes | `~/lonca-local/` (private files stay there) |
 | Run folders (briefs, reports, evidence) | `~/.cache/ai-runs/<project>/` |
 | Approval codes, merge log | `~/.local/state/lonca/approvals/`, `~/.local/state/lonca/merge.log` |
 | Per-project deja scope | `~/.local/state/lonca/deja/<project>.json` |
-| Settings (optional) | `~/.config/lonca/config.toml`: `tmpdir`, `cleanup_tmp_dirs` (see `lonca-config --help`) |
+| Settings (optional) | `~/.config/lonca/config.toml`: `tmpdir` (see `lonca-config --help`) |
 
 **Environment variables:**
 
@@ -239,9 +240,8 @@ Crush and Amp take no starting prompt, so they get the rules and skills but don'
 ~/lonca/install.sh --uninstall
 ```
 
-This removes every link into the checkout, the timers, the hooks path, Lonca's deny rules and its hooks in Claude and
-Codex, and the deja scope line it wrote into `.claude/settings.local.json` files. It keeps `~/ai-memory`, `~/lonca-local`, the `*.lonca-bak` backups and the checkout. It also leaves three
-Claude settings, because you may have set them yourself: attribution off, `env.TMPDIR` and `autoMemoryDirectory`.
+Uninstall restores the registered projects, removes installed tool links and timers, and cleans up
+legacy harness settings. Your checkout, memory, private extensions and migration backups stay in place.
 
 ## FAQ
 

@@ -221,6 +221,70 @@ p.write_text(json.dumps(data))
     assert not (home / ".gitconfig").exists()
 
 
+def migration(base):
+    # test() has installed a fake local-scope plugin CLI in this temporary HOME.
+    home = Path.home()
+    repo = home / "Work/marked project"
+    repo.mkdir(parents=True)
+    git(repo, "init", "-q")
+    (repo / ".lonca.toml").write_text('name = "fixture"')
+    explicit = home / "explicit"
+    explicit.mkdir()
+    git(explicit, "init", "-q")
+    run("git", "config", "--global", "core.hooksPath", str(home / "lonca/git-hooks"))
+    old_source = str(home / "lonca/extras/sui/plugins")
+    market = {"lonca": {"source": {"source": "directory", "path": old_source}}}
+    catalog = home / ".claude/plugins/known_marketplaces.json"
+    catalog.write_text(json.dumps(market))
+    settings = home / ".claude/settings.json"
+    rule = "Bash(git clean *)"
+    settings.write_text(json.dumps({"extraKnownMarketplaces": market, "permissions": {"deny": [rule, "private"]},
+        "hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": str(home / "lonca/bin/memory-context")},
+                                              {"type": "command", "command": "echo personal"}]}]}}))
+    doc = home / ".claude/CLAUDE.md"
+    doc.write_text("personal\n@~/lonca/AGENTS.md\n")
+    codex = home / ".codex/AGENTS.md"
+    codex.parent.mkdir(exist_ok=True)
+    codex.symlink_to(home / "lonca/AGENTS.md")
+    mcp = home / ".omp/agent/mcp.json"
+    mcp.parent.mkdir(parents=True)
+    mcp.write_text('{"mcpServers":{"kanzo":{"command":"kanzo","args":["mcp"]},"private":{}}}')
+    state = home / ".local/state/lonca/mcp-added"
+    state.write_text("omp kanzo\n")
+    script = SRC / "bin/lonca"
+    originals = {p: p.read_bytes() for p in (catalog, settings, doc, mcp, state, home / ".gitconfig")}
+    preview = run(script, "migrate", "--dry-run", explicit)
+    assert all(str(p) in preview for p in (settings, codex, doc, explicit, repo, catalog))
+    assert all(p.read_bytes() == data for p, data in originals.items())
+    assert not list((home / ".local/state/lonca/projects").glob("*.json"))
+    assert not (home / ".local/state/lonca/migration-backups").exists()
+    run(script, "migrate", explicit)
+    assert run(script, "status", "--lane", repo)
+    assert not codex.is_symlink() and doc.read_text() == "personal\n"
+    assert json.loads(settings.read_bytes())["permissions"]["deny"] == ["private"]
+    assert "echo personal" in settings.read_text()
+    assert json.loads(mcp.read_bytes()) == {"mcpServers": {"private": {}}}
+    assert not state.exists()
+    assert json.loads(catalog.read_bytes())["lonca"]["source"]["path"] == str(home / "lonca")
+    run("git", "config", "--global", "--get", "core.hooksPath", ok=False)
+    assert git(repo, "config", "--local", "--get", "core.hooksPath") == str(home / "lonca/git-hooks")
+    assert git(explicit, "config", "--local", "--get", "core.hooksPath") == str(home / "lonca/git-hooks")
+    guards = repo / ".codex/rules/lonca.rules"
+    guards.write_text("")
+    denied = subprocess.run([script, "status", "--lane", repo], capture_output=True, text=True)
+    assert denied.returncode and "lonca init" in denied.stderr
+    run(script, "migrate")
+    assert run(script, "status", "--lane", repo)
+    backups = list((home / ".local/state/lonca/migration-backups").iterdir())
+    run(script, "migrate")
+    assert backups == list((home / ".local/state/lonca/migration-backups").iterdir())
+    run("sh", SRC / "install.sh", "--uninstall")
+    assert not (explicit / ".lonca.toml").exists() and (repo / ".lonca.toml").exists()
+    assert not guards.exists()
+    assert not list((home / ".local/state/lonca/projects").glob("*.json"))
+    assert backups[0].is_dir() and "private" in settings.read_text()
+
+
 def overlapping_hooks(base):
     home = base / "hook-home"
     home.mkdir()
@@ -284,4 +348,5 @@ if __name__ == "__main__":
         overlapping_hooks(base)
         off_switch(base)
         test(base)
+        migration(base)
     print("per-project layout passed")

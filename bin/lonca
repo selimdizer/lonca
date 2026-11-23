@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import stat
 import subprocess
 import sys
@@ -568,11 +569,16 @@ def codex_mcp(old, policy):
     return text.encode()
 
 
-def status(root):
+def status(root, target=None):
     project = Project(root)
     print(f"{root} ({'registered' if project.file.exists() else 'unregistered'})")
     worktrees = {}
-    for repo, common in repos(root, worktrees):
+    if target:
+        candidates = [(target, target / ".git")]
+    else:
+        candidates = repos(root, worktrees)
+    ready = False
+    for repo, common in candidates:
         local = git(repo, "config", "--local", "--get", "core.hooksPath", optional=True)
         effective = git(repo, "config", "--get", "core.hooksPath", optional=True)
         hooks = "on" if local == effective == HOOKS else "off"
@@ -600,6 +606,12 @@ def status(root):
             except ValueError as error:
                 print(f"    warning: {repo}/.codex/config.toml: {error}")
         print(f"  {repo}: git hooks {hooks}, Claude plugin {claude}, settings {'on' if configured else 'off'}, Codex {'on' if codex else 'off'}")
+        entry = project.data["repos"].get(str(repo), {})
+        if target and entry.get("ready") and marked(root) and common.is_dir():
+            ready = (entry.get("identity") == [common.stat().st_dev, common.stat().st_ino]
+                     and hooks == "on" and all(os.access(Path(HOOKS) / h, os.X_OK) for h in ("commit-msg", "pre-push"))
+                     and ("claude" not in project.data["agents"] or enabled and configured)
+                     and ("codex" not in project.data["agents"] or codex))
         if local == HOOKS:
             for hook in ("commit-msg", "pre-push"):
                 if not os.access(Path(HOOKS) / hook, os.X_OK):
@@ -618,8 +630,10 @@ def status(root):
     for folder, owner in worktrees.items():
         print(f"  {folder}: linked worktree of {owner} (shared Git configuration)")
 
+    return ready
 
-def global_status(folder):
+
+def legacy_settings(folder):
     legacy = []
     if git(folder, "config", "--global", "--get", "core.hooksPath", optional=True) == HOOKS:
         legacy.append("git hooksPath")
@@ -631,8 +645,13 @@ def global_status(folder):
         path = HOME / name
         if path.is_symlink() and path.resolve().is_relative_to(SRC):
             legacy.append(name)
+    return legacy
+
+
+def global_status(folder):
+    legacy = legacy_settings(folder)
     if legacy:
-        print("  warning: global install still present: remove in phase 2 (" + ", ".join(legacy) + ")")
+        print("  warning: global install still present: run lonca migrate --dry-run (" + ", ".join(legacy) + ")")
 
 
 def report_former_projects():
@@ -652,22 +671,107 @@ def report_former_projects():
                 print(f"  {root} lost Git-only project status; run lonca init to opt in")
 
 
+def migration_roots(explicit):
+    result = {path.resolve() for path in explicit}
+    result.update(Path(json.loads(path.read_bytes())["root"]) for path in REGISTRY.glob("*.json"))
+    # The old scope hook kept the roots it encountered. Also inspect the installed
+    # checkout and marked directories under ~/Work (prune repositories and symlinks).
+    candidates = [HOME / "lonca"]
+    directory = HOME / ".local/state/lonca/deja"
+    candidates.extend(Path(file.read_text().strip()) for file in directory.glob("*.root"))
+    seen = directory / "settings-written"
+    if seen.is_file():
+        candidates.extend(Path(line).parent.parent for line in seen.read_text().splitlines() if line)
+    for dirname, dirs, files in os.walk(HOME / "Work"):
+        folder = Path(dirname)
+        if marked(folder):
+            candidates.append(folder)
+        if ".git" in dirs or ".git" in files:
+            dirs.clear()
+        else:
+            dirs[:] = [name for name in dirs if not name.startswith(".") and name not in
+                       ("node_modules", "target", "vendor", "venv") and not (folder / name).is_symlink()]
+    result.update(p.resolve() for p in candidates if p.is_dir() and marked(p))
+    return sorted(result)
+
+
+def migrate(args):
+    from lonca_legacy import Legacy
+    roots = migration_roots(args.roots)
+    if not roots:
+        raise ValueError("no project roots found; pass a project directory to lonca migrate")
+    for root in roots:
+        if not root.is_dir():
+            raise ValueError(f"registered root unavailable: {root}")
+        top = subprocess.run(["git", "-C", root, "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+        if top.returncode == 0 and Path(top.stdout.strip()).resolve() != root:
+            raise ValueError(f"choose the repository root or its parent project directory: {root}")
+        list(repos(root))
+    legacy = Legacy(args.dry_run)
+    legacy.marketplace()
+    for root in roots:
+        project = Project(root)
+        print(f"init {root}")
+        if args.dry_run:
+            if not marked(root):
+                print(f"  create {root / MARKERS[0]}")
+            print(f"  register {project.file}; generate project deja policy and backups")
+            for repo, common in repos(root):
+                print(f"  inspect {common / 'config'} (local core.hooksPath), update {common / 'info/exclude'}")
+                if "claude" in project.data["agents"]:
+                    print(f"  install {PLUGIN} locally; merge {repo / SETTINGS} and {repo / 'CLAUDE.local.md'}")
+                if "codex" in project.data["agents"]:
+                    print(f"  merge {repo / '.codex'}: config.toml, hooks.json, rules/lonca.rules")
+        else:
+            project.init(None)
+    legacy.cleanup()
+    legacy.timers()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+    migration = commands.add_parser("migrate")
+    migration.add_argument("--dry-run", action="store_true")
+    migration.add_argument("roots", nargs="*", type=Path)
     init = commands.add_parser("init")
     init.add_argument("--agents", help="comma-separated agents (default: claude,codex)")
     init.add_argument("dir", type=Path)
     commands.add_parser("remove").add_argument("dir", type=Path)
-    commands.add_parser("status").add_argument("dir", type=Path, nargs="?")
+    status_cmd = commands.add_parser("status")
+    status_cmd.add_argument("--agent", help=argparse.SUPPRESS)
+    status_cmd.add_argument("--lane", action="store_true", help=argparse.SUPPRESS)
+    status_cmd.add_argument("dir", type=Path, nargs="?")
+    commands.add_parser("outside-session", help=argparse.SUPPRESS)
     args = parser.parse_args()
-    root = args.dir.resolve() if args.dir else None
+    if args.command == "outside-session":
+        if not legacy_settings(Path.cwd()) and subprocess.run(
+                [SRC / "bin/lonca-project", Path.cwd()], stdout=subprocess.DEVNULL).returncode:
+            print("outside a Lonca project: no Lonca rules here; say 'set this up for Lonca' to add it")
+        return
+    if args.command in ("init", "remove", "migrate"):
+        from lonca_registry import in_lane
+        if in_lane():
+            parser.error("ask your lead to set up the project; removal is owner-only")
+    if args.command == "migrate" and args.dry_run:
+        migrate(args)
+        return
+    root = args.dir.resolve() if getattr(args, "dir", None) else None
     if root and not root.is_dir() and args.command != "remove":
         parser.error(f"not a directory: {root}")
     if args.command == "status":
         if root:
             p = subprocess.run([SRC / "bin/lonca-project", root], capture_output=True, text=True)
-            status(Path(p.stdout.strip().split("\t")[1]) if p.returncode == 0 else root)
+            project_root = Path(p.stdout.rstrip("\n").split("\t")[1]) if p.returncode == 0 else root
+            if args.lane:
+                agents = Project(project_root).data["agents"]
+                if args.agent in ("claude", "codex") and args.agent not in agents:
+                    sys.exit(f"lane: ask your lead to run lonca init --agents {args.agent} {shlex.quote(str(project_root))}")
+                if not status(project_root, root):
+                    sys.exit(f"lane: project setup incomplete. Ask your lead to run lonca init {shlex.quote(str(project_root))} "
+                             "and resolve any reported hooksPath conflict.")
+                return
+            status(project_root)
         else:
             records = sorted(REGISTRY.glob("*.json"))
             if not records:
@@ -685,6 +789,9 @@ def main():
     fd = os.open(REGISTRY, os.O_RDONLY)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
+        if args.command == "migrate":
+            migrate(args)
+            return
         project = Project(root)
         if args.command == "remove":
             project.remove()

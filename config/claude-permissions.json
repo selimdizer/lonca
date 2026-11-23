@@ -25,6 +25,8 @@
     "Bash(git -C * config *--unset*hooksPath*)",
     "Bash(git config unset *hooksPath*)",
     "Bash(git -C * config unset *hooksPath*)",
+    "Bash(git *config *remove-section *core)",
+    "Bash(git *config *rename-section *core *)",
     "Bash(lonca remove*)",
     "Bash(*/lonca remove*)",
     "Bash(*/gh pr merge*)",

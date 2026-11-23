@@ -19,7 +19,7 @@ case $name in
     "$L/bin/ai-trace-gh" "$@" || exit 126 ;;
   git)
     case $(printf '%s' "$args" | tr '[:upper:]' '[:lower:]') in
-      *hookspath*|*" config "*" core "*)
+      *hookspath*|*" config "*core*)
         python3 -I "$L/shims/hooks-config.py" "$@" || deny "don't change git hooks" ;;
     esac
     case $args in

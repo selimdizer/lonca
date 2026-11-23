@@ -198,19 +198,11 @@ def session():
 
 
 def refresh():
-    for n in sorted(os.listdir(DIR) if os.path.isdir(DIR) else []):
-        f = os.path.join(DIR, n)
-        if n.endswith(".root"):
-            root = open(f).read().strip()
-            p = project(root) if os.path.isdir(root) else None
-            if p and p[1] == root and path_for(*p) == f[:-5] + ".json":
-                put(f[:-5] + ".json", policy(root))
-            else:                                    # gone or renamed: a session still pointing here recalls nothing
-                put(f[:-5] + ".json", {"ignore": NOTHING})
-                # Keep the old root name for the migration report without rescanning it on each refresh.
-                os.replace(f, f[:-5] + ".former-root")
-        elif f != UNMARKED and n.endswith(".json") and not os.path.exists(f[:-5] + ".root") and time.time() - os.path.getmtime(f) > 7 * 86400:
-            os.remove(f)
+    from lonca_registry import registered
+    for root in registered():
+        p = project(str(root))
+        if p and p[1] == str(root):
+            put(path_for(*p), policy(str(root)))
 
 
 if __name__ == "__main__":

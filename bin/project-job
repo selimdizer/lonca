@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""Run only background actions which support project-scoped inputs."""
+from datetime import date
+from pathlib import Path
+import os
+import subprocess
+import sys
+import tempfile
+
+from lonca_registry import HOME, names, registered
+
+jobs = sys.argv[1:]
+if jobs[:1] == ["registered"]:
+    sys.exit(0 if jobs[1] in names(registered()) else 1)
+if jobs in (["deja-index"], ["ai-memory-commit"]):
+    # Neither the installed index CLI nor the shared memory repository isolates
+    # input by registered root. Old timers may still invoke these units.
+    sys.exit(0)
+if jobs != ["kanzo-backup"]:
+    sys.exit("unknown project job")
+for slug in sorted(names(registered())):
+    folder = HOME / "kanzo-backups" / slug
+    folder.mkdir(parents=True, mode=0o700, exist_ok=True)
+    fd, temp = tempfile.mkstemp(dir=folder)
+    os.close(fd)
+    try:
+        subprocess.run(["kanzo", "export", "--project", slug, "--format", "json", "-o", temp], check=True)
+        os.replace(temp, folder / (date.today().isoformat() + ".json"))
+    finally:
+        if os.path.exists(temp):
+            os.unlink(temp)

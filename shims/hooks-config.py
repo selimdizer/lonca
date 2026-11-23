@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Exit 1 for a protected Git configuration write. Compare argv, including scope and value."""
 import sys
-from pathlib import Path
 
 args = sys.argv[1:]
 lower = [arg.lower() for arg in args]
@@ -13,9 +12,10 @@ if "config" not in args:
 idx = args.index("config")
 config = lower[idx + 1:]
 # Section operations select core itself rather than spelling out the key.
-if "core" in config and any(
+section_args = [item for arg in config for item in arg.split("=", 1)]
+if "core" in section_args and any(
     len(arg) > 2 and any(flag.startswith(arg) for flag in ("--remove-section", "--rename-section"))
-    or arg in ("remove-section", "rename-section") for arg in config
+    or arg in ("remove-section", "rename-section") for arg in section_args
 ):
     sys.exit(1)
 if key not in config:

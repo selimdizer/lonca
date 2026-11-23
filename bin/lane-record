@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+"""Record a lane before starting its terminal."""
+from pathlib import Path
+import sys
+import time
+from lonca_registry import identity, remember, save
+
+keys = "name worktree lead agent base result card branch repo project temp".split()
+rec = dict(zip(keys, sys.argv[1:]))
+root, temp = Path(rec["project"]), Path(rec["temp"])
+path = Path(rec["result"] + ".lane.json")
+rec.update(started=time.time(), worktree_id=identity(Path(rec["worktree"])), run_id=identity(path.parent))
+save(path, rec)
+remember(root, "lane", path)
+remember(root, "temp", temp)

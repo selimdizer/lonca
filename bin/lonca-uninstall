@@ -1,0 +1,14 @@
+#!/usr/bin/env python3
+"""Uninstall registered projects first so their restoration data stays usable."""
+import json
+import subprocess
+from lonca_registry import BIN, REGISTRY, in_lane
+from lonca_legacy import Legacy
+
+if in_lane():
+    raise SystemExit("uninstall from the owner's shell")
+for file in sorted(REGISTRY.glob("*.json")):
+    subprocess.run([BIN / "lonca", "remove", json.loads(file.read_bytes())["root"]], check=True)
+legacy = Legacy()
+legacy.marketplace(uninstall=True)
+legacy.cleanup()

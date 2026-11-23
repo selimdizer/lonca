@@ -19,6 +19,13 @@ ro=0; [ "${1:-}" = --read ] && { ro=1; shift; }
 case ${1:-} in -h|--help|"") sed -n '2,/^set -eu/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;; esac
 [ $# -eq 5 ] || [ $# -eq 6 ] || { echo "usage: lane [--read] <repo-dir> <branch|name> <agent> <brief-file> <result-file> [base-branch]   (lane --help)" >&2; exit 2; }
 repo=$1 branch=$2 agent=$3 brief=$(realpath "$4") result=$5 base=${6:-}
+repo=$(realpath "$repo")
+if ! "$HOME/lonca/bin/lonca" status --lane --agent "${agent%%:*}" "$repo" >/dev/null; then
+  root=$("$HOME/lonca/bin/lonca-project" "$repo" || true)
+  root=${root#*	}
+  python3 -I -c 'import shlex,sys; print("lane: ask your lead to run lonca init " + shlex.quote(sys.argv[1]), file=sys.stderr)' "${root:-$repo}"
+  exit 1
+fi
 project=$("$HOME/lonca/bin/lonca-project" "$repo") || { echo "lane: no Lonca project marker for $repo" >&2; exit 1; }
 proot=${project#*	}
 # /tmp is RAM (tmpfs): agent temp files, Go builds and Node caches go to disk
@@ -27,7 +34,7 @@ command -v hc >/dev/null 2>&1 && hc server status >/dev/null 2>&1 || { echo "lan
 mkdir -p "$(dirname "$result")"; result="$(cd "$(dirname "$result")" && pwd -P)/$(basename "$result")"
 # deja recall limited to this project's own sessions (deja-scope); every lane agent passes it to its deja MCP server
 DEJA_POLICY_FILE=$("$HOME/lonca/bin/deja-scope" "$repo") || { echo "lane: could not scope deja to this project; not starting" >&2; exit 1; }
-prompt="Read the brief at $brief and do the lane it describes. When you are done, or stopped, write your final report (at most 30 lines, with a Not verified section, ending with a Lessons section: facts a future session in this project would need, such as a gotcha, a command that works or a decision you learned, or none) to $result and end. Do not write to ~/ai-memory yourself; the lead saves your lessons. Something the brief does not settle, or that may have been decided before: search past sessions first (deja search \"<topic>\", or the deja MCP tool) and the project memory; ask only if they don't answer it."
+prompt="Read ~/lonca/AGENTS.md for the project rules. Read the brief at $brief and do the lane it describes. When you are done, or stopped, write your final report (at most 30 lines, with a Not verified section, ending with a Lessons section: facts a future session in this project would need, such as a gotcha, a command that works or a decision you learned, or none) to $result and end. Do not write to ~/ai-memory yourself; the lead saves your lessons. Something the brief does not settle, or that may have been decided before: search past sessions first (deja search \"<topic>\", or the deja MCP tool) and the project memory; ask only if they don't answer it."
 # Project skills live in the project root (the folder with .lonca.toml, not a team repo): point the lane at them
 psk="$proot/.claude/skills"
 [ -n "$proot" ] && [ "$proot" != "$(realpath "$repo")" ] && [ -d "$psk" ] && prompt="$prompt This project's own skills (follow the one that fits, e.g. its verify skill before you report done): $(ls -d "$psk"/*/SKILL.md 2>/dev/null | tr '\n' ' ')"
@@ -81,6 +88,9 @@ git -C "$repo" fetch -q origin
 [ -n "$base" ] || base=$(git -C "$repo" symbolic-ref -q --short refs/remotes/origin/HEAD | sed 's|^origin/||')
 [ -n "$base" ] || base=main
 if [ -d "$wt" ] && git -C "$wt" rev-parse -q --verify HEAD >/dev/null 2>&1; then
+  [ "$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir)" = "$repo/.git" ] &&
+    [ "$(git -C "$wt" branch --show-current)" = "$branch" ] ||
+    { echo "lane: existing worktree does not match $repo and $branch" >&2; exit 1; }
   :                                                         # worktree of an earlier run of this lane: reuse it
 elif git -C "$repo" show-ref -q --verify "refs/heads/$branch"; then
   git -C "$repo" worktree add -q "$wt" "$branch"            # rerun of an existing lane branch
@@ -94,8 +104,10 @@ name=$(printf '%s-%s' "$(basename "$(realpath "$repo")" | cut -c1-8)" "$branch" 
 [ ${#name} -gt 32 ] && name="$(printf '%s' "$name" | cut -c1-25)-$(printf '%s' "$rkey/$branch" | { sha1sum 2>/dev/null || shasum; } | cut -c1-6)"
 # its own temp folder, so a cleanup inside it can't reach another lane's files (ai-cleanup removes it once idle);
 # Claude's and Codex's own settings may pin TMPDIR for their tools, so they get it through their override flags too
-ltmp="$TMPDIR/lane-$name"; mkdir -p "$ltmp"
+ltmp=$(mktemp -d "$TMPDIR/lane-$name.XXXXXXXX")
 case $agent in
+  omp:*) if [ ! -e "$HOME/.omp/agent/extensions/lonca-guard" ]; then cmd="$cmd --extension '$HOME/lonca/config/omp-guard/index.ts'"; fi ;;
+  opencode:*) export OPENCODE_CONFIG_DIR="$HOME/lonca/config/opencode" ;;
   claude:*) settings=$(python3 -I -c 'import json,shlex,sys; print(shlex.quote(json.dumps({"env":{"TMPDIR":sys.argv[1]}})))' "$ltmp")
             cmd="$cmd --settings $settings" ;;
   codex:*)  cmd="$cmd -c $(override shell_environment_policy.set.TMPDIR "$ltmp")" ;;
@@ -105,7 +117,7 @@ esac
   # Started by a lead in an hc terminal: the lane reports DONE and asks questions there; the lead answers with hc send
   if [ $ro = 1 ]; then
     # print mode: the answer streams into the tab and the report file; DONE goes to the lead from here
-    run="{ omp -p --no-session --model ${agent#omp:} --tools read,grep,glob '$quoted'; echo \$? > '$result.rc'; } | tee '$result.part' && [ \"\$(cat '$result.rc')\" = 0 ] && mv '$result.part' '$result'; rm -f '$result.rc'"
+    run="{ $cmd -p --no-session --tools read,grep,glob '$quoted'; echo \$? > '$result.rc'; } | tee '$result.part' && [ \"\$(cat '$result.rc')\" = 0 ] && mv '$result.part' '$result'; rm -f '$result.rc'"
     [ -n "${HC_TERMINAL_ID:-}" ] && run="$run && hc send $HC_TERMINAL_ID \"DONE: \$(grep -m1 . '$result' | cut -c1-120) — $result\""
   elif [ -n "${HC_TERMINAL_ID:-}" ]; then
     prompt="$prompt Talk to your lead (hc terminal $HC_TERMINAL_ID; hc adds your name itself) only in two cases: a question the brief does not answer -> hc send $HC_TERMINAL_ID 'QUESTION: <question>' and wait, the answer is typed into your input; after writing the report -> hc send $HC_TERMINAL_ID 'DONE: <one plain line for the owner: the outcome, e.g. PR #N opened, tests pass / 3 findings, 1 high / blocked on X> — $result'. No progress or status messages: those go in the report."
@@ -135,15 +147,15 @@ PY
       main=$(realpath "$repo"); f="$HOME/.grok/trusted_folders.toml"
       grep -qF "[folders.\"$main\"]" "$f" 2>/dev/null || { mkdir -p "${f%/*}"; printf '[folders."%s"]\ntrusted = true\ndecided_at = %s\n' "$main" "$(date +%s)" >> "$f"; } ;;
   esac   # Copilot: install.sh lists ~/.herdr/worktrees in trustedFolders, which covers every worktree below it
+  # Record ownership before the terminal starts (a failed launch is still recoverable).
+  python3 "$HOME/lonca/bin/lane-record" "$name" "$wt" "${HC_TERMINAL_ID:-}" "$agent" "$base" "$result" "$card" \
+    "$( [ $ro = 1 ] || printf '%s' "$branch")" "$repo" "$proot" "$ltmp"
+  set -- "$@" --label "lonca.run=$ltmp"
   # --outlive-parent: a lane keeps running if the lead's session ends; its exit is noted in the lead's input
   # Expand the child shell's PATH and positional argument inside hc.
   # shellcheck disable=SC2016
   hc run --bg --outlive-parent --name "$name" --cwd "$wt" "$@" \
-    -- env "TMPDIR=$ltmp" "DEJA_POLICY_FILE=$DEJA_POLICY_FILE" sh -c 'export PATH="$HOME/lonca/shims:$HOME/lonca-local/shims:$PATH"; exec sh -c "$1"' sh "$run" >/dev/null   # hc passes no env: set it here
-  # lane record for lane-watch and a restarted lead
-  python3 -c 'import json,sys,time; k="name worktree lead agent base result card branch repo".split()
-d=dict(zip(k, sys.argv[1:])); d["started"]=int(time.time()); json.dump(d, open(sys.argv[-1], "w"))' \
-    "$name" "$wt" "${HC_TERMINAL_ID:-}" "$agent" "$base" "$result" "$card" "$( [ $ro = 1 ] || printf '%s' "$branch")" "$(realpath "$repo")" "$result.lane.json"
+    -- env ${OPENCODE_CONFIG_DIR:+"OPENCODE_CONFIG_DIR=$OPENCODE_CONFIG_DIR"} LONCA_LANE=1 "TMPDIR=$ltmp" "DEJA_POLICY_FILE=$DEJA_POLICY_FILE" sh -c 'export PATH="$HOME/lonca/shims:$HOME/lonca-local/shims:$PATH"; exec sh -c "$1"' sh "$run" >/dev/null   # hc passes no env: set it here
   [ -n "$card" ] && { "$HOME/lonca/bin/kanzo-sync" set "$card" doing >/dev/null 2>&1 || echo "lane: could not set $card to doing" >&2; }
   [ $ro = 1 ] && { echo "lane: read-only $name in $wt (hc terminal $name) -> $result"; exit 0; }
   echo "lane: $branch in $wt from origin/$base (hc terminal $name) -> $result"

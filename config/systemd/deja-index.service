@@ -4,4 +4,4 @@ Description=deja: read new agent sessions into the search index
 [Service]
 Environment=PATH=%h/.local/share/mise/command-wrappers/bin:%h/.local/share/mise/shims:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Type=oneshot
-ExecStart=/usr/bin/env deja index
+ExecStart=%h/lonca/bin/project-job deja-index
