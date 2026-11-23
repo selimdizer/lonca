@@ -41,6 +41,7 @@ def main():
         policy = home / "project-policy.json"
         policy.write_text('{"ignore":["*"]}')
         env = dict(HOME=tmp, PATH=tmp + ":/usr/local/bin:/usr/bin:/bin", TMPDIR=tmp, TERM="dumb",
+                   GIT_CONFIG_GLOBAL=str(home / ".gitconfig"), GIT_CONFIG_NOSYSTEM="1",
                    XDG_RUNTIME_DIR=tmp, XDG_CONFIG_HOME=str(home / ".config"), DEJA_POLICY_FILE=str(policy),
                    OMP_MCP_STARTUP_TIMEOUT_MS="3000", OMP_MCP_TIMEOUT_MS="3000")
         with tempfile.TemporaryFile() as log:

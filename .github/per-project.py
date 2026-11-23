@@ -13,6 +13,11 @@ AGENTS = ("CLAUDE.local.md", ".claude/settings.local.json", ".codex/config.toml"
           ".codex/rules/lonca.rules", ".codex/hooks.json")
 
 
+def fixture_home(home):
+    return dict(HOME=str(home), XDG_CONFIG_HOME=str(home / ".config"),
+                GIT_CONFIG_GLOBAL=str(home / ".gitconfig"), GIT_CONFIG_NOSYSTEM="1")
+
+
 def run(*args, cwd=None, ok=True, **kwargs):
     result = subprocess.run(args, cwd=cwd, capture_output=True, text=True, **kwargs)
     if ok and result.returncode:
@@ -33,7 +38,7 @@ def snapshot(repo, paths):
 def test(base):
     home = base / "home"
     home.mkdir()
-    os.environ.update(HOME=str(home), GIT_CONFIG_NOSYSTEM="1", XDG_CONFIG_HOME=str(home / ".config"))
+    os.environ.update(fixture_home(home))
     for key in ("LONCA_PROJECT", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "DEJA_POLICY_FILE"):
         os.environ.pop(key, None)
     (home / "lonca").symlink_to(SRC, target_is_directory=True)
@@ -241,6 +246,36 @@ def migration(base):
     settings.write_text(json.dumps({"extraKnownMarketplaces": market, "permissions": {"deny": [rule, "private"]},
         "hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": str(home / "lonca/bin/memory-context")},
                                               {"type": "command", "command": "echo personal"}]}]}}))
+    polluted = json.loads(settings.read_bytes())
+    keep_rule = "Bash(git reset --hard*)"
+    polluted["permissions"]["deny"].append(keep_rule)
+    polluted["hooks"]["PreToolUse"] = [{"hooks": [{"type": "command", "command": "~/lonca/bin/ai-trace-gh --hook"}]}]
+    settings.write_text(json.dumps(polluted))
+    polluted["permissions"]["deny"].remove(rule)   # Only this installed deny rule is demonstrably new.
+    settings.with_suffix(".json.lonca-bak").write_text(json.dumps(polluted))
+    hooks = home / ".codex/hooks.json"
+    hooks.parent.mkdir(exist_ok=True)
+    stop = {"type": "command", "command": "python3 ~/lonca/config/memory-nudge.py"}
+    personal = {"type": "command", "command": "python3 ~/lonca/config/memory-nudge.py --personal"}
+    old_hooks = {"hooks": {"Stop": [{"hooks": [stop, personal]}],
+                           "SessionStart": [{"hooks": [{"type": "command", "command": "cat ~/ai-memory/MEMORY.md"}]}]}}
+    hooks.write_text(json.dumps(old_hooks))
+    hooks.with_suffix(".json.lonca-bak").write_bytes(hooks.read_bytes())
+    private_links = []
+    for kind, name in (("agents", "reviewer.md"), ("skills", "private-skill")):
+        target = home / "lonca-local" / kind / name
+        target.parent.mkdir(parents=True)
+        if kind == "agents":
+            target.write_text("private agent")
+        else:
+            target.mkdir()
+        link = home / ".claude" / kind / name
+        link.parent.mkdir(parents=True)
+        link.symlink_to(target)
+        private_links.append((link, target))
+    copilot = home / ".copilot/config.json"
+    copilot.parent.mkdir()
+    copilot.write_text(json.dumps({"trustedFolders": [str(home / ".herdr/worktrees"), "/personal"]}))
     doc = home / ".claude/CLAUDE.md"
     doc.write_text("personal\n@~/lonca/AGENTS.md\n")
     codex = home / ".codex/AGENTS.md"
@@ -265,8 +300,13 @@ def migration(base):
     run(script, "migrate", explicit)
     assert run(script, "status", "--lane", repo)
     assert not codex.is_symlink() and doc.read_text() == "personal\n"
-    assert json.loads(settings.read_bytes())["permissions"]["deny"] == ["private"]
+    assert json.loads(settings.read_bytes())["permissions"]["deny"] == ["private", keep_rule]
     assert "echo personal" in settings.read_text()
+    assert "/bin/memory-context" not in settings.read_text() and "/bin/ai-trace-gh" not in settings.read_text()
+    assert json.loads(hooks.read_text())["hooks"]["Stop"] == [{"hooks": [personal]}]
+    assert "cat ~/ai-memory" not in hooks.read_text()
+    assert all(link.is_symlink() for link, _ in private_links)
+    assert str(home / ".herdr/worktrees") in json.loads(copilot.read_text())["trustedFolders"]
     assert json.loads(mcp.read_bytes()) == {"mcpServers": {"private": {}}}
     assert state.read_text() == "pi deja\n" and deferred.read_text() == original_pi
     assert "still global: pi MCP deja" in run(script, "status", repo)
@@ -311,6 +351,8 @@ if sys.argv[1] == "run":
     run("sh", SRC / "install.sh", "--uninstall")
     assert not (explicit / ".lonca.toml").exists() and (repo / ".lonca.toml").exists()
     assert not guards.exists()
+    assert all(not link.is_symlink() and target.exists() for link, target in private_links)
+    assert json.loads(copilot.read_text())["trustedFolders"] == ["/personal"]
     assert not list((home / ".local/state/lonca/projects").glob("*.json"))
     assert backups[0].is_dir() and "private" in settings.read_text()
     assert not state.exists() and json.loads(deferred.read_bytes())["mcpServers"] == {"personal": {}}
@@ -323,7 +365,7 @@ def overlapping_hooks(base):
     project = home / "demo"
     project.mkdir()
     (project / ".lonca.toml").touch()
-    env = dict(os.environ, HOME=str(home), CLAUDE_ENV_FILE=str(home / "session-env"))
+    env = dict(os.environ, **fixture_home(home), CLAUDE_ENV_FILE=str(home / "session-env"))
     env.pop("CLAUDE_PLUGIN_ROOT", None)
     env.pop("DEJA_POLICY_FILE", None)
     env.pop("LONCA", None)
@@ -342,7 +384,7 @@ def off_switch(base):
     repo = base / "hooks-test"
     repo.mkdir()
     git(repo, "init", "-q")
-    env = dict(os.environ, LONCA="0", HOME=str(base), CLAUDE_ENV_FILE=str(base / "env"))
+    env = dict(os.environ, **fixture_home(base), LONCA="0", CLAUDE_ENV_FILE=str(base / "env"))
     hook_event = json.dumps({"cwd": str(repo), "session_id": "test"})
     for program, args in (("bin/deja-scope", ["--session"]), ("bin/memory-context", []),
                           ("bin/session-tmpdir", []), ("bin/ai-trace-gh", ["--hook"])):
@@ -376,6 +418,7 @@ def off_switch(base):
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as dirname:
         base = Path(dirname).resolve()
+        os.environ.update(fixture_home(base))
         overlapping_hooks(base)
         off_switch(base)
         test(base)

@@ -60,7 +60,9 @@ jobs:
           PY
       - name: deja scope (this project's sessions only, checked with deja's own match rule)
         run: |
-          H=$(mktemp -d); R=$H/Work/Shop; mkdir -p $R/shop-api/.git $R/shop-wt && touch $R/.lonca.toml
+          H=$(mktemp -d)
+          export XDG_CONFIG_HOME="$H/.config" GIT_CONFIG_GLOBAL="$H/.gitconfig" GIT_CONFIG_NOSYSTEM=1
+          R=$H/Work/Shop; mkdir -p $R/shop-api/.git $R/shop-wt && touch $R/.lonca.toml
           f=$(HOME="$H" bin/deja-scope "$R") && test -f "${f%.json}.root"
           printf '%s\tin\n' Work/Shop shop-wt/wt-a shop-api/src Shop-shop-api/fix-x Shop/notes > $H/cases
           printf '%s\tout\n' Acme/billing me/Work Work/Shopping Work/Sho Work/Shop2 shop-wtx/a Shop-shop-apix/a apps/backend tmp Work Shopper/x -x/y Shop-x/y Shop,x/y Shop.x/y shop-wt-x/a Work-/Shop > $H/cases.out
@@ -82,17 +84,31 @@ jobs:
           checker="$PWD/bin/ai-trace-check"
           fixture=$(mktemp -d)
           cd "$fixture"
-          export HOME="$fixture" XDG_CONFIG_HOME="$fixture/.config"
+          export HOME="$fixture" XDG_CONFIG_HOME="$fixture/.config" GIT_CONFIG_GLOBAL="$fixture/.gitconfig" GIT_CONFIG_NOSYSTEM=1
           echo "add anthropic client" | "$checker"
           ! printf 'x\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n' | "$checker"
           ! echo "add anthropic client" | GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=lonca.strictTraces GIT_CONFIG_VALUE_0=true "$checker"
       - name: Install and uninstall in an empty home
         run: |
-          H=$(mktemp -d); HOME="$H" git config --global user.name ci; HOME="$H" git config --global user.email ci@localhost
-          mkdir -p "$H/bin" && for t in claude gh; do printf '#!/bin/sh\nexit 0\n' > "$H/bin/$t"; chmod +x "$H/bin/$t"; done
-          env -i HOME="$H" PATH="$H/bin:/usr/bin:/bin" sh ./install.sh --yes
+          H=$(mktemp -d)
+          export HOME="$H" XDG_CONFIG_HOME="$H/.config" GIT_CONFIG_GLOBAL="$H/.gitconfig" GIT_CONFIG_NOSYSTEM=1
+          # The installer supplies a command-local identity for the memory template.
+          mkdir -p "$H/bin" && for t in claude gh deja; do printf '#!/bin/sh\nexit 0\n' > "$H/bin/$t"; chmod +x "$H/bin/$t"; done
+          printf '#!/bin/sh\necho Linux\n' > "$H/bin/uname"
+          printf '#!/bin/sh\necho "$*" >> "$HOME/systemctl.calls"\n' > "$H/bin/systemctl"
+          chmod +x "$H/bin/uname" "$H/bin/systemctl"
+          install_fixture() {
+            env -i HOME="$H" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" GIT_CONFIG_GLOBAL="$GIT_CONFIG_GLOBAL" \
+              GIT_CONFIG_NOSYSTEM=1 PATH="$H/bin:/usr/bin:/bin" sh ./install.sh "$@"
+          }
+          install_fixture --yes
           test -L "$H/.local/bin/lane" && test ! -e "$H/.claude" && test ! -e "$H/.codex"
           test ! -e "$H/.config/systemd/user"
-          if HOME="$H" git config --global --get core.hooksPath; then exit 1; fi
-          env -i HOME="$H" PATH="$H/bin:/usr/bin:/bin" sh ./install.sh --uninstall
+          test ! -e "$GIT_CONFIG_GLOBAL" && test ! -e "$XDG_CONFIG_HOME/git/config"
+          install_fixture --yes --timers
+          for job in ai-memory-commit deja-index; do
+            test -L "$H/.config/systemd/user/$job.timer"
+            grep -Fx -- "--user enable --now $job.timer" "$H/systemctl.calls"
+          done
+          install_fixture --uninstall
           test ! -e "$H/.local/bin/lane"

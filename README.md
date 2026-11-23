@@ -73,10 +73,9 @@ git clone https://github.com/selimdizer/lonca ~/lonca
 
 From inside Herdr you can instead run `herdr plugin install selimdizer/lonca` and open the **Lonca: set up** pane.
 
-The installer links the commands in `~/.local/bin`, makes the plugin marketplace available at
-`~/lonca`, and creates `~/ai-memory` from a template on first install. Run `lonca init <folder>`
+The installer links the commands in `~/.local/bin` and creates `~/ai-memory` from a template on first install. Run `lonca init <folder>`
 in your shell, or tell your lead **“set this up for Lonca.”** The bundled `lonca` skill walks through
-agent selection and reports which guards are active. Each project's init registers its local marketplace.
+agent selection and reports which guards are active. Each project's init registers the `~/lonca` marketplace with local scope.
 Outside a project, a plain terminal session starts without Lonca. Run `lonca init <folder>` there, or
 open the folder from Herdr to see the setup hint when the session starts.
 
@@ -87,8 +86,9 @@ open the folder from Herdr to see the setup hint when the session starts.
   `claude plugin install move-lsp@lonca --scope local` to use the language server from the same marketplace.
 
 Cleanup checks Lonca's record of each worktree, terminal, run and temporary directory. Older lanes
-without ownership records stay in place. Whole-machine deja indexing and shared-memory auto-commit
-are off because their inputs span projects.
+without ownership records stay in place. With `--timers`, `ai-memory-commit` commits changes in
+`~/ai-memory` hourly. If deja is available, `deja-index` indexes machine-wide session history every
+30 minutes. Project policy limits which sessions an agent can recall at read time.
 
 ### Migrate an existing installation
 
@@ -103,6 +103,8 @@ Migration includes registered roots, marked folders under `~/Work`, the marked `
 and markers found in previous Lonca scope records. Pass additional roots as arguments to both commands.
 It moves the old Move marketplace to `~/lonca`, initializes the projects, and then removes identified
 global entries. Backups of changed global files are under `~/.local/state/lonca/migration-backups/`.
+Migration keeps skill and agent links into `~/lonca-local`. Full uninstall removes those links and
+keeps their targets. Known installer hook commands are removed even from a repeated installation.
 Matching deny rules already present in a legacy backup are preserved and reported. Repeated old installs
 could overwrite that backup, so its contents are the limit of what migration can attribute.
 If a command stops, correct the reported problem and repeat it.

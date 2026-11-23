@@ -13,7 +13,8 @@ BIN = Path(__file__).resolve().parents[1] / "bin"
 
 
 def check(home):
-    env = dict(os.environ, HOME=str(home), XDG_CONFIG_HOME=str(home / ".config"), PYTHONDONTWRITEBYTECODE="1")
+    env = dict(os.environ, HOME=str(home), XDG_CONFIG_HOME=str(home / ".config"),
+               GIT_CONFIG_GLOBAL=str(home / ".gitconfig"), GIT_CONFIG_NOSYSTEM="1", PYTHONDONTWRITEBYTECODE="1")
     env.pop("LONCA_PROJECT", None)
     logs = home / "calls"
     stubs = home / "bin"
@@ -30,8 +31,15 @@ def check(home):
     (home / "lonca").symlink_to(BIN.parent)
     for name in ("lane-watch", "ai-cleanup", "memory-review", "kanzo-sync", "monthly-card"):
         run(BIN / name)
-    for job in ("deja-index", "ai-memory-commit", "kanzo-backup"):
-        run(BIN / "project-job", job)
+    run(BIN / "project-job", "kanzo-backup")
+    memory = home / "ai-memory"
+    memory.mkdir()
+    run("git", "-C", memory, "init", "-q")
+    (memory / "MEMORY.md").write_text("fixture")
+    run(BIN / "project-job", "ai-memory-commit")
+    run(BIN / "project-job", "ai-memory-commit")
+    assert run("git", "-C", memory, "rev-list", "--count", "HEAD").strip() == "1"
+    assert run("git", "-C", memory, "show", "HEAD:MEMORY.md") == "fixture"
     assert not logs.exists() and not (home / ".local/state/lonca").exists()
 
     root = home / "project"
@@ -56,6 +64,26 @@ def check(home):
     owned = Path((home / "session-env").read_text().strip().split("=", 1)[1])
     assert owned.parent == temp and owned.exists()
     assert str(owned) in run(BIN / "ai-cleanup", "--dry-run", "--tmp-age-hours", "0")
+    # A single unavailable directory must not stop the rest of the sweep or lose its receipt.
+    run(BIN / "session-tmpdir", input=json.dumps({"cwd": str(root), "session_id": "second"}))
+    second = Path((home / "session-env").read_text().strip().splitlines()[-1].split("=", 1)[1])
+    sweep = """import runpy, shutil, sys
+from pathlib import Path
+from unittest.mock import patch
+program, unavailable = sys.argv[1:]
+sys.path.insert(0, str(Path(program).parent))
+sys.argv = [program, "--tmp-age-hours", "0"]
+rmtree = shutil.rmtree
+def remove(path):
+    if path.name == unavailable:
+        raise PermissionError("temporary fixture error")
+    return rmtree(path)
+with patch("shutil.rmtree", remove):
+    runpy.run_path(program, run_name="__main__")
+"""
+    out = run("python3", "-c", sweep, BIN / "ai-cleanup", owned.name)
+    assert "could not remove" in out and owned.is_dir() and not second.exists()
+    assert "temporary fixture error" in (home / ".cache/ai-runs/setup/cleanup.log").read_text()
     run(BIN / "ai-cleanup", "--tmp-age-hours", "0")
     assert not owned.exists() and other.is_dir()
     # A name or path alone never proves ownership of a replacement directory.

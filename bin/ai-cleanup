@@ -77,8 +77,13 @@ def touched_within(path, hours):
 
 def remove(path, why):
     if not DRY:
-        shutil.rmtree(path)
+        try:
+            shutil.rmtree(path)
+        except OSError as error:
+            say(f"could not remove {path}: {error}")
+            return False
     say(f"{'would remove' if DRY else 'removed'} {path} ({why})")
+    return True
 
 # Paths and identities come from receipts written when the resources were created.
 lanes = list(records(projects))
@@ -135,8 +140,7 @@ for root in projects:
     for folder in resources(root, "temp"):
         if (folder.name.startswith(("lane-", "session-")) and folder.is_dir() and folder.stat().st_uid == UID
                 and not busy(folder) and not touched_within(folder, AGE_H)):
-            remove(folder, f"recorded temp, unused for {AGE_H}h")
-            if not DRY:
+            if remove(folder, f"recorded temp, unused for {AGE_H}h") and not DRY:
                 forget_resource(root, "temp", folder)
 
 base = HOME / ".cache/ai-runs"
@@ -147,8 +151,7 @@ for folder, members in runs.items():
             or set(folder.glob("*.lane.json")) != {Path(rec["result"] + ".lane.json") for rec in members}):
         continue
     if not busy(folder) and not touched_within(folder, 30 * 24):
-        remove(folder, "recorded run unused for 30 days")
-        if not DRY:
+        if remove(folder, "recorded run unused for 30 days") and not DRY:
             for rec in members:
                 forget_resource(rec["project"], "lane", rec["result"] + ".lane.json")
                 forget_resource(rec["project"], "watch", rec["temp"])

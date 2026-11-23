@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run only background actions which support project-scoped inputs."""
+"""Run maintenance for registered project boards and the shared memory repository."""
 from datetime import date, timedelta
 from pathlib import Path
 import os
@@ -12,9 +12,21 @@ from lonca_registry import HOME, names, registered, remember, resources, forget_
 jobs = sys.argv[1:]
 if jobs[:1] == ["registered"]:
     sys.exit(0 if jobs[1] in names(registered()) else 1)
-if jobs in (["deja-index"], ["ai-memory-commit"]):
-    # Neither the installed index CLI nor the shared memory repository isolates
-    # input by registered root. Old timers may still invoke these units.
+if jobs == ["ai-memory-commit"]:
+    repo = HOME / "ai-memory"
+    if not (repo / ".git").is_dir() or repo.resolve() != repo:
+        sys.exit(0)
+    git = ["git", "-C", str(repo)]
+    root = subprocess.check_output([*git, "rev-parse", "--show-toplevel"], text=True).rstrip("\n")
+    if Path(root).resolve() != repo:
+        sys.exit("shared memory repository root changed")
+    subprocess.run([*git, "add", "-A"], check=True)
+    diff = subprocess.run([*git, "diff", "--cached", "--quiet"])
+    if diff.returncode == 1:
+        subprocess.run([*git, "-c", "user.name=memory-bot", "-c", "user.email=noreply@localhost",
+                        "commit", "-qm", "memory: auto-commit " + date.today().isoformat()], check=True)
+    else:
+        diff.check_returncode()
     sys.exit(0)
 if jobs != ["kanzo-backup"]:
     sys.exit("unknown project job")

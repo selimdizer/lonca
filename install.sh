@@ -1,7 +1,7 @@
 #!/bin/sh
 # install.sh [--yes] [--timers] [--memory-review] [--sui] [--uninstall]
 #   --yes             non-interactive (tools only)
-#   --timers          enable the available project-scoped background jobs
+#   --timers          enable project jobs, shared-memory commits and history indexing
 #   --memory-review   also enable review of registered projects' recent messages
 #   --sui             install Sui version selection and the Move LSP launcher
 #   --uninstall       restore registered projects and remove the tools and legacy installation
@@ -68,7 +68,8 @@ if [ ! -e "$HOME/ai-memory" ]; then
   git -C "$HOME/ai-memory" -c user.name=Lonca -c user.email=lonca@localhost commit -qm 'memory: start from the Lonca template'
 fi
 if [ "$timers" = 1 ]; then
-  skip="deja-index ai-memory-commit"
+  skip=""
+  command -v deja >/dev/null || skip="$skip deja-index"
   command -v hc >/dev/null || skip="$skip lane-watch"
   command -v kanzo >/dev/null || skip="$skip kanzo-sync kanzo-backup monthly-card"
   [ "$review" = 1 ] || skip="$skip memory-review"

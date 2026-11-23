@@ -5,10 +5,10 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Installation now provides commands, memory templates and the root plugin marketplace. Set up each project
-  from an owner or lead session with `lonca init`, or ask the lead to set it up for Lonca.
+- Installation now provides commands and memory templates. Run `lonca init` from an owner or lead session
+  to register the root plugin marketplace locally and set up the project.
 - `lonca migrate --dry-run [roots...]` previews the move from global settings. Migration initializes projects
-  and backs up the legacy files it changes. Background jobs require registered projects; timers are opt-in.
+  and backs up the legacy files it changes. Timers are opt-in. Project jobs require registration. Shared memory commits and machine-wide history indexing remain available.
 - Lanes check the project's guard settings before launch. Cleanup requires a matching ownership record.
 
 - `lonca init [--agents claude,codex] <dir>` registers a marked project and installs personal repo

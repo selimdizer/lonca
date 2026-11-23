@@ -109,7 +109,8 @@ class Legacy:
                 continue
             self.change(path, json_bytes(data), "remove Lonca marketplace" if uninstall else "repoint Lonca marketplace")
 
-    def harness_files(self):
+    def harness_files(self, uninstall):
+        link_roots = (LONCA, HOME / "lonca-local") if uninstall else (LONCA,)
         for dst, src in HARNESS_LINKS.items():
             path = HOME / dst
             if path.is_symlink() and path.resolve() == (LONCA / src).resolve():
@@ -118,7 +119,7 @@ class Legacy:
                            (".gemini/skills", "skills"), (".config/agents/skills", "skills")):
             for path in (HOME / dest).glob("*"):
                 if path.is_symlink() and any(path.resolve() == (root / kind / path.name).resolve()
-                                             for root in (LONCA, HOME / "lonca-local")):
+                                             for root in link_roots):
                     self.change(path, None, "unlink installed " + kind)
 
         doc = HOME / ".claude/CLAUDE.md"
@@ -140,7 +141,14 @@ class Legacy:
             bak = path.with_name(path.name + ".lonca-bak")
             previous = json.loads(bak.read_bytes()) if bak.is_file() else {}
             hooks_by_event = data.get("hooks", {})
-            ours = any("/lonca/bin/" in hook.get("command", "") for groups in hooks_by_event.values()
+            commands = {"SessionStart": {f"{LONCA}/bin/memory-context", f"{LONCA}/bin/deja-scope --session",
+                                         f"{LONCA}/bin/session-tmpdir", "cat ~/ai-memory/MEMORY.md"},
+                        "PreToolUse": {f"{LONCA}/bin/ai-trace-gh --hook"}, "Stop": {f"python3 {LONCA}/config/memory-nudge.py"}}
+            def installed_hook(event, hook):
+                cmd = hook.get("command", "").replace("~/lonca/", str(LONCA) + "/")
+                return hook.get("type") == "command" and cmd in commands.get(event, ())
+
+            ours = any(installed_hook(event, hook) for event, groups in hooks_by_event.items()
                        for group in groups for hook in group.get("hooks", []))
             if not bak.exists() and not ours:
                 continue
@@ -174,18 +182,14 @@ class Legacy:
                     del env["TMPDIR"]
                     if not env and "env" not in previous:
                         data.pop("env", None)
-            commands = {"SessionStart": {f"{LONCA}/bin/memory-context", f"{LONCA}/bin/deja-scope --session",
-                                         f"{LONCA}/bin/session-tmpdir", "cat ~/ai-memory/MEMORY.md"},
-                        "PreToolUse": {f"{LONCA}/bin/ai-trace-gh --hook"}, "Stop": {f"python3 {LONCA}/config/memory-nudge.py"}}
             for event, groups in list(data.get("hooks", {}).items()):
                 for group in list(groups):
                     hooks = group.get("hooks", [])
                     count = len(hooks)
                     for hook in list(hooks):
-                        cmd = hook.get("command", "").replace("~/lonca/", str(LONCA) + "/")
-                        existed = any(hook in g.get("hooks", []) for g in previous.get("hooks", {}).get(event, []))
-                        if hook.get("type") == "command" and cmd in commands.get(event, ()) and not existed:
-                            print(f"  remove {event} hook: {cmd}")
+                        # The legacy installer overwrote its backup on repeated installs.
+                        if installed_hook(event, hook):
+                            print(f"  remove {event} hook: {hook['command']}")
                             hooks.remove(hook)
                     if count and not hooks:
                         groups.remove(group)
@@ -201,7 +205,7 @@ class Legacy:
                 self.change(path, desired, "remove legacy harness settings")
 
         # Older installers did not record whether this folder was already trusted.
-        # Restore it only with an actual earlier configuration as evidence.
+        # Migration respects an existing trust grant. Full uninstall retires this shared folder grant.
         trust = HOME / ".copilot/config.json"
         if trust.is_file():
             def copilot_settings(path):
@@ -211,7 +215,7 @@ class Legacy:
             settings = copilot_settings(trust)
             folder = str(HOME / ".herdr/worktrees")
             if folder in settings.get("trustedFolders", []):
-                if before.is_file() and folder not in copilot_settings(before).get("trustedFolders", []):
+                if uninstall or before.is_file() and folder not in copilot_settings(before).get("trustedFolders", []):
                     settings["trustedFolders"].remove(folder)
                     comments = "".join(l for l in trust.read_text().splitlines(True) if l.lstrip().startswith("//"))
                     self.change(trust, comments.encode() + json_bytes(settings), "remove legacy worktree trust")
@@ -336,7 +340,7 @@ class Legacy:
             self.change(state, None, "remove empty MCP record")
 
     def cleanup(self, uninstall=False, upcoming=()):
-        self.harness_files()
+        self.harness_files(uninstall)
         self.global_git()
         self.scope_settings(upcoming)
         self.remove_mcp(uninstall)

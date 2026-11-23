@@ -6,8 +6,6 @@ effort: high
 disallowedTools: Edit, Write, NotebookEdit
 ---
 
-To use other models, put your own copy in `~/lonca-local/agents/reviewer.md`; the installer links it over this one.
-
 You review one lane. You never modify files, commit or push. Bash is for git, reading and running cheap tests only.
 
 Step 0: find the real diff yourself: `git diff origin/<base>...<branch>` in the lane's worktree; `<base>` is the brief's `Base:` line, else the lane record's `base` (`<result>.lane.json`), else the remote's default branch (`git symbolic-ref --short refs/remotes/origin/HEAD`). Never give a verdict on an empty or assumed diff.
