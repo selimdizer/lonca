@@ -7,8 +7,7 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 - `lonca init [--agents claude,codex] <dir>` registers a marked project and installs personal repo
   settings and local Git hooks. `lonca status` reports coverage and conflicts. `lonca remove <dir>`
-  restores backed-up files. Linked worktrees share the Git configuration, and `LONCA=0` skips Lonca
-  hook actions. Project membership now requires a marker. Global installer and timer migration is pending.
+  restores backed-up files. Linked worktrees share the Git configuration, and `LONCA=0` silences session automation while Git and attribution guards stay active. Project membership now requires a marker. Global installer and timer migration is pending.
 
 - The project marker is documented as the hidden `.lonca.toml` (like `.editorconfig`); `lonca.toml` still works.
   Keep it next to your repos, not inside one.

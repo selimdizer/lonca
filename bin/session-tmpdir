@@ -5,13 +5,18 @@ their own (lane-<name>, from `lane`) and keep it. ai-cleanup removes the folder 
 """
 import json, os, shlex, subprocess, sys
 
+from claude_session import duplicate
+
 if os.environ.get("LONCA") == "0":
     sys.exit(0)
 
 try:
-    sid = json.load(sys.stdin).get("session_id") or ""
+    event = json.load(sys.stdin)
 except ValueError:
-    sid = ""
+    event = {}
+if duplicate("session-tmpdir", event):
+    sys.exit(0)
+sid = event.get("session_id") or ""
 env_file = os.environ.get("CLAUDE_ENV_FILE")
 if not sid or not env_file or os.path.basename(os.environ.get("TMPDIR", "")).startswith("lane-"):
     sys.exit(0)

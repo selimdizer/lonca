@@ -138,8 +138,10 @@ lonca remove ~/work/shop
 
 The default agents are Claude and Codex. Start with `--agents codex` or `--agents claude` to select one.
 Running init again can add an agent. Each repository gets its own local Git hooks setting, which Git also
-uses in linked worktrees. A repository with a custom hooks path keeps it. `LONCA=0` disables Lonca's
-hook actions for that process and its children. Git still calls the repository's native hooks.
+uses in linked worktrees. Status lists linked worktrees inside the project next to their main checkout.
+A repository with a custom hooks path keeps it. `LONCA=0` silences memory, deja-scope and temporary-directory
+automation for that process and its children. The default-branch push guard, attribution checks and the
+repository's native Git hooks still run. The owner can remove the project integration with `lonca remove`.
 
 - Claude Code installs `lonca@lonca` with local scope. Its agents, skills, hooks and MCP servers come
   from the local marketplace. Personal settings hold the deny rules and deja policy, and
@@ -149,10 +151,15 @@ hook actions for that process and its children. Git still calls the repository's
 - Init merges personal files, registers the project and keeps private backups under
   `~/.local/state/lonca/projects/`. It adds generated paths to Git's local exclude file.
   Tracked target files and symlinks produce a diagnostic. Remove restores the original bytes. If a managed
-  file has since been edited, remove identifies the conflict and keeps the backup for a retry.
+  file has since been edited, remove takes out Lonca's entries and keeps personal changes. Private backup
+  files can contain the same sensitive values as the original settings. For a missing or moved checkout,
+  remove reports its path and keeps its recovery index beside the backups.
 
 The current installer still writes its legacy global configuration and installs timers. Status flags
-global Lonca settings during this transition. A marker in the project root names the project and
+global Lonca settings during this transition and lists former Git-only projects found in its local records.
+Use `lonca status <folder>` to check other repositories. An unmarked repository receives a recall-nothing
+deja policy. If the old `lonca` marketplace points at another source, init reports the conflict before
+installing anything. The global and plugin Bash guards can both run until the global install is migrated. A marker in the project root names the project and
 can set its merge policy. For a marker inside a repository, merge checks use the base branch's copy of the policy. For example:
 
 ```toml

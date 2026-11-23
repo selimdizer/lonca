@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Install and inspect personal Lonca settings for the repositories in a project."""
 import argparse
+from collections import Counter
 import base64
 import fcntl
 import hashlib
@@ -73,18 +74,34 @@ def marked(folder):
     return any((folder / name).is_file() for name in MARKERS)
 
 
-def repos(root):
+def repos(root, worktrees=None):
+    main = {}
+    linked = {}
+    ignored = {".git", "node_modules", "target", "vendor", ".venv", "venv", ".tox", ".nox", "__pycache__"}
     for dirname, dirs, files in os.walk(root):
         folder = Path(dirname)
         if folder != root and marked(folder):
             dirs.clear()
             continue
         if ".git" in dirs or ".git" in files:
-            common = Path(git(folder, "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()
+            gitdir, common = (Path(line).resolve() for line in
+                              git(folder, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir").splitlines())
+            if gitdir != common:
+                linked[folder] = common
+                dirs.clear()
+                continue
             if not common.is_relative_to(root) or Path(git(folder, "rev-parse", "--show-toplevel")).resolve() != folder:
                 raise ValueError(f"git repository points outside the project: {folder}")
-            yield folder, common
-        dirs[:] = sorted(d for d in dirs if d != ".git" and not (folder / d).is_symlink())
+            main[folder] = common
+        dirs[:] = sorted(d for d in dirs if d not in ignored and not d.startswith(".venv-") and not (folder / d).is_symlink())
+    owners = {common: repo for repo, common in main.items()}
+    for folder, common in linked.items():
+        if common not in owners:
+            raise ValueError(f"linked worktree {folder} belongs to a repository outside this project ({common}); "
+                             "choose its main checkout or move the worktree outside the project folder")
+        if worktrees is not None:
+            worktrees[folder] = owners[common]
+    return main.items()
 
 
 def personal(repo, name):
@@ -92,6 +109,126 @@ def personal(repo, name):
     if git(repo, "ls-files", "--", name):
         raise ValueError(f"{path} is tracked; personal settings would appear in your diff")
     return path
+
+
+MISSING = object()
+
+
+def undo_json(before, installed, current):
+    """Reverse only values this installation introduced; preserve subsequent edits."""
+    if current == installed:
+        return before
+    if isinstance(installed, dict) and isinstance(current, dict):
+        original = before if isinstance(before, dict) else {}
+        result = current.copy()
+        for key, value in installed.items():
+            if key in result and value != original.get(key, MISSING):
+                restored = undo_json(original.get(key, MISSING), value, result[key])
+                if restored is MISSING:
+                    del result[key]
+                else:
+                    result[key] = restored
+        return result if result or before is not MISSING else MISSING
+    if isinstance(installed, list) and isinstance(current, list):
+        original = before if isinstance(before, list) else []
+        result = current.copy()
+        for item in installed:
+            if item in original:
+                continue
+            if item in result:
+                result.remove(item)
+            elif isinstance(item, dict) and "hooks" in item:
+                # A user can append another handler to one of our matcher groups.
+                for group in result:
+                    if isinstance(group, dict) and group.get("matcher") == item.get("matcher"):
+                        hooks = group.get("hooks", [])
+                        if any(h in hooks for h in item["hooks"]):
+                            group["hooks"] = [h for h in hooks if h not in item["hooks"]]
+                            break
+        return result if result or before is not MISSING else MISSING
+    return current
+
+
+def without_lines(before, installed, current):
+    added = Counter(installed.splitlines()) - Counter(before.splitlines())
+    kept = []
+    for line in current.splitlines(keepends=True):
+        key = line.rstrip(b"\r\n")
+        if added[key]:
+            added[key] -= 1
+        else:
+            kept.append(line)
+    return b"".join(kept)
+
+
+def toml_sections(text):
+    """Keep comments and formatting while editing the simple tables init appends."""
+    sections = {}
+    header = b""
+    for line in text.splitlines(keepends=True):
+        if re.match(rb"^\s*\[.+\]\s*(?:#.*)?$", line):
+            header = line.strip().split(b"#", 1)[0].strip()
+        sections.setdefault(header, []).append(line)
+    return sections
+
+
+def undo_file(path, before, installed, current):
+    if current == installed:
+        return before
+    if current is None or current == before:
+        return current
+    original = before or b""
+    if path.name in ("settings.local.json", "hooks.json"):
+        value = undo_json(json.loads(before) if before is not None else MISSING,
+                          json.loads(installed or b"{}"), json.loads(current))
+        if value is MISSING:
+            return None
+        if before is not None and value == json.loads(before):
+            return before
+        return formatted(value)
+    if path.name == "config.toml":
+        # Only touch the MCP tables we wrote. Other TOML, including repeated
+        # array-of-tables sections, must keep its original order and bytes.
+        existing = toml_sections(original)
+        ours = toml_sections(installed or b"")
+        result = []
+        section = []
+        def flush():
+            if not section:
+                return
+            key = section[0].strip().split(b"#", 1)[0].strip()
+            if key not in (b"[mcp_servers.kanzo]", b"[mcp_servers.deja]", b"[mcp_servers.deja.env]") or key not in ours:
+                result.extend(section)
+                return
+            old = existing.get(key, [])
+            rest = without_lines(b"".join(old[1:]), b"".join(ours[key][1:]), b"".join(section[1:]))
+            if old or any(line.strip() and not line.lstrip().startswith(b"#") for line in rest.splitlines()):
+                result.append(section[0])
+            result.append(rest)
+        for line in current.splitlines(keepends=True):
+            if re.match(rb"^\s*\[.+\]\s*(?:#.*)?$", line):
+                flush()
+                section = []
+            section.append(line)
+        flush()
+        cleaned = b"".join(result)
+        try:
+            import tomllib
+        except ImportError:
+            pass
+        else:
+            # Text inside multiline strings can look like a table. Refuse an ambiguous edit.
+            expected = undo_json(tomllib.loads(original.decode()), tomllib.loads(installed.decode()), tomllib.loads(current.decode()))
+            if tomllib.loads(cleaned.decode()) != expected:
+                raise ValueError(f"ambiguous edits in {path}; preserve your custom settings before removal")
+    elif path.name in ("CLAUDE.local.md", "exclude"):
+        cleaned = without_lines(original, installed or b"", current)
+    elif path.name == "lonca.rules" and installed:
+        rules = (SRC / "config/codex-rules/default.rules").read_bytes()
+        cleaned = current.replace(rules, b"", 1) if rules not in original else current
+    else:
+        return current  # A changed project marker or policy belongs to its editor.
+    return cleaned if cleaned or before is not None else None
 
 
 class Project:
@@ -106,30 +243,61 @@ class Project:
     def save(self):
         atomic(self.file, formatted(self.data))
 
+    @property
+    def backups(self):
+        return self.file.with_suffix(".backups")
+
+    def backup(self, data):
+        key = digest(data)
+        if key is not None:
+            self.backups.mkdir(mode=0o700, exist_ok=True)
+            dest = plain(self.backups / key)
+            if not dest.exists():
+                atomic(dest, data)
+        return key
+
+    def original(self, entry):
+        if "original" in entry:
+            key = entry["original"]
+            return plain(self.backups / key).read_bytes() if key is not None else None
+        # Registrations written by the first phase-one preview.
+        return base64.b64decode(entry["before"]) if entry["before"] is not None else None
+
+    def restored(self, path, entry, current):
+        before = self.original(entry)
+        if digest(current) == entry["after"]:
+            return before
+        if current is None or current == before:
+            return current
+        applied = read(self.backups / entry["after"]) if entry["after"] else None
+        if applied is None:
+            raise ValueError(f"installed snapshot unavailable for {path}; keep your edited copy before restoring")
+        return undo_file(path, before, applied, current)
+
     def remember(self, path):
         data = read(path)
         files = self.data["files"]
         if str(path) not in files:
-            files[str(path)] = {
-                "before": base64.b64encode(data).decode() if data is not None else None,
-                "mode": stat.S_IMODE(path.stat().st_mode) if data is not None else 0o600,
-                "after": digest(data)
-            }
+            files[str(path)] = {"original": self.backup(data),
+                                "mode": stat.S_IMODE(path.stat().st_mode) if data is not None else 0o600,
+                                "after": digest(data)}
             parent = path.parent
             while not parent.exists():
                 if str(parent) not in self.data["dirs"]:
                     self.data["dirs"].append(str(parent))
                 parent = parent.parent
-            self.save()
-        return files[str(path)]
+        entry = files[str(path)]
+        # Fold later user edits into the baseline before applying a repair.
+        entry["original"] = self.backup(self.restored(path, entry, data))
+        entry.pop("before", None)
+        entry["after"] = self.backup(data)
+        self.save()
+        return entry
 
     def write(self, path, data):
-        old = read(path)
-        if data != old:
+        if data != read(path):
             entry = self.remember(path)
-            if digest(old) not in (entry["after"], digest(decode(entry))):
-                raise ValueError(f"{path} changed after init; keeping your edits")
-            entry["after"] = digest(data)
+            entry["after"] = self.backup(data)
             self.save()
             atomic(path, data, entry["mode"])
 
@@ -138,16 +306,10 @@ class Project:
         values = json.loads(read(path) or b"{}")
         if values.get("enabledPlugins", {}).get(PLUGIN) is False:
             raise ValueError(f"{PLUGIN} disabled in {path}")
-        market = values.get("extraKnownMarketplaces", {}).get("lonca")
-        if market and (market.get("source", {}).get("source") != "directory" or
-                       Path(market["source"].get("path", "/")).resolve() != (HOME / "lonca").resolve()):
-            raise ValueError(f"another local marketplace named lonca exists in {path}")
         installed = plugin_installed(repo)
         if installed and values.get("enabledPlugins", {}).get(PLUGIN):
             return
         entry = self.remember(path)
-        if digest(read(path)) != entry["after"]:
-            raise ValueError(f"{path} changed after init; keeping your edits")
         if not installed:
             rec["plugin"] = True
             self.save()
@@ -155,7 +317,7 @@ class Project:
             plugin_cmd(repo, "marketplace", "add", HOME / "lonca", "--scope", "local")
             plugin_cmd(repo, "install", PLUGIN, "--scope", "local")
         finally:
-            entry["after"] = digest(read(path))
+            entry["after"] = self.backup(read(path))
             self.save()
 
     def exclude(self, repo, common, names):
@@ -231,13 +393,15 @@ class Project:
         entry = self.data["files"].get(str(path))
         if entry and read(path) == data:
             # The periodic deja refresh can legitimately update this generated file.
-            entry["after"] = digest(data)
+            entry["after"] = self.backup(data)
         return path, data
 
     def init(self, agents):
         if agents:
             self.data["agents"] = sorted(set(self.data["agents"] + agents)) if self.file.exists() else agents
         found = list(repos(self.root))
+        if "claude" in self.data["agents"]:
+            check_marketplaces([repo for repo, _ in found])
         for file in REGISTRY.glob("*.json"):
             if file != self.file:
                 other = json.loads(file.read_bytes())
@@ -263,47 +427,88 @@ class Project:
         if marked(self.root) and self.data.get("policy"):
             self.policy()
         files = self.data["files"]
-        # Check every backup before uninstalling anything. Refuse to discard later user edits.
-        for name, entry in files.items():
-            current = digest(read(Path(name)))
-            before = decode(entry)
-            if current not in (entry["after"], digest(before)):
-                raise ValueError(f"{name} changed since init; preserve your edits before removing")
+        skipped = []
+        present = []
         for dirname, rec in self.data["repos"].items():
             repo = Path(dirname)
-            common = Path(git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()
-            if common != Path(rec["common"]) or [common.stat().st_dev, common.stat().st_ino] != rec["identity"]:
-                raise ValueError(f"repository moved: {repo}")
-            if rec.get("plugin") and plugin_installed(repo):
-                try:
-                    plugin_cmd(repo, "uninstall", PLUGIN, "--scope", "local", "--keep-data")
-                finally:
-                    path = repo / SETTINGS
-                    files[str(path)]["after"] = digest(read(path))
-                    self.save()
+            if repo.is_dir() and (repo / ".git").exists() and repo.resolve() == repo:
+                common = Path(git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()
+                if common == Path(rec["common"]) and [common.stat().st_dev, common.stat().st_ino] == rec["identity"]:
+                    present.append((repo, common, rec))
+                    continue
+            print(f"warning: {repo} moved, was deleted or replaced; skipping its checkout")
+            skipped.extend([repo, Path(rec["common"])])
+        restore = {}
+        for name, entry in files.items():
+            path = Path(name)
+            if not any(path.is_relative_to(folder) for folder in skipped):
+                restore[path] = self.restored(path, entry, read(path))
+        for repo, common, rec in present:
             plain(common / "config")
             if rec.get("hooks") and git(repo, "config", "--local", "--get", "core.hooksPath", optional=True) == rec["hooks"]:
                 git(repo, "config", "--local", "--unset", "core.hooksPath")
-        for name, entry in reversed(list(files.items())):
-            path = Path(name)
-            original = decode(entry)
+        for repo, common, rec in present:
+            if rec.get("plugin") and plugin_installed(repo):
+                path = repo / SETTINGS
+                try:
+                    plugin_cmd(repo, "uninstall", PLUGIN, "--scope", "local", "--keep-data")
+                finally:
+                    # Keep the retry baseline even when the CLI partially edits settings.
+                    entry = files[str(path)]
+                    entry["original"] = self.backup(restore[path])
+                    entry["after"] = self.backup(read(path))
+                    entry.pop("before", None)
+                    self.save()
+        for path, original in reversed(list(restore.items())):
             if original is None:
                 path.unlink(missing_ok=True)
             elif read(path) != original:
-                atomic(path, original, entry["mode"])
+                atomic(path, original, files[str(path)]["mode"])
         for dirname in sorted(self.data["dirs"], key=lambda p: len(Path(p).parts), reverse=True):
             path = Path(dirname)
-            if path.is_dir() and not any(path.iterdir()):
+            if not any(path.is_relative_to(folder) for folder in skipped) and path.resolve() == path and path.is_dir() and not any(path.iterdir()):
                 path.rmdir()
+        # A moved checkout may still contain installed settings. Leave its original files recoverable.
+        recovery = {}
+        for name, entry in files.items():
+            if any(Path(name).is_relative_to(folder) for folder in skipped):
+                recovery[name] = self.backup(self.original(entry))
+        if recovery:
+            directory = Path(tempfile.mkdtemp(prefix=self.file.stem + ".recovery-", dir=REGISTRY))
+            for key in set(recovery.values()) - {None}:
+                os.link(plain(self.backups / key), directory / key)
+            atomic(directory / "recovery.json", formatted(recovery))
+            print(f"original files for skipped checkouts: {directory / 'recovery.json'}")
+        if self.backups.exists():
+            for blob in self.backups.iterdir():
+                if re.fullmatch("[0-9a-f]{64}", blob.name):
+                    plain(blob).unlink()
+            if not any(self.backups.iterdir()):
+                self.backups.rmdir()
         self.file.unlink()
-
-
-def decode(entry):
-    return base64.b64decode(entry["before"]) if entry["before"] is not None else None
 
 
 def append(data, text):
     return data + (b"\n" if data and not data.endswith(b"\n") else b"") + text.encode() + b"\n"
+
+
+def check_marketplaces(repositories):
+    # Even a local install uses a shared marketplace cache. Never repoint an existing name.
+    config = Path(os.environ.get("CLAUDE_CONFIG_DIR") or HOME / ".claude")
+    sources = [(config / "settings.json", "extraKnownMarketplaces"),
+               (config / "plugins/known_marketplaces.json", None)]
+    for repo in repositories:
+        sources.extend([(repo / ".claude/settings.json", "extraKnownMarketplaces"), (repo / SETTINGS, "extraKnownMarketplaces")])
+    for path, key in sources:
+        if not path.is_file():
+            continue
+        data = json.loads(path.read_bytes())
+        catalog = (data.get(key, {}) if key else data).get("lonca")
+        if catalog is not None:
+            source = catalog.get("source", {})
+            location = Path(source.get("path", "")).expanduser()
+            if source.get("source") != "directory" or location.resolve() != (HOME / "lonca").resolve():
+                raise ValueError(f"marketplace 'lonca' in {path} uses another source; resolve the name before init")
 
 
 def plugin_cmd(repo, *args):
@@ -359,7 +564,8 @@ def codex_mcp(old, policy):
 def status(root):
     project = Project(root)
     print(f"{root} ({'registered' if project.file.exists() else 'unregistered'})")
-    for repo, common in repos(root):
+    worktrees = {}
+    for repo, common in repos(root, worktrees):
         local = git(repo, "config", "--local", "--get", "core.hooksPath", optional=True)
         effective = git(repo, "config", "--get", "core.hooksPath", optional=True)
         hooks = "on" if local == effective == HOOKS else "off"
@@ -387,8 +593,23 @@ def status(root):
             except ValueError as error:
                 print(f"    warning: {repo}/.codex/config.toml: {error}")
         print(f"  {repo}: git hooks {hooks}, Claude plugin {claude}, settings {'on' if configured else 'off'}, Codex {'on' if codex else 'off'}")
+        if local == HOOKS:
+            for hook in ("commit-msg", "pre-push"):
+                if not os.access(Path(HOOKS) / hook, os.X_OK):
+                    print(f"    warning: Git guard missing or not executable: {hook}")
+        elif project.data["repos"].get(str(repo), {}).get("hooks"):
+            print("    warning: project Git guard setting missing or changed")
+        if not marked(root):
+            print(f"    {repo} lost Git-only project status; add a project marker to opt in")
         if not project.data["repos"].get(str(repo), {}).get("ready"):
             print("    warning: repo not initialised")
+        else:
+            if "claude" in project.data["agents"] and not set(deny) <= set(settings.get("permissions", {}).get("deny", [])):
+                print(f"    warning: guard rules missing from {repo / SETTINGS}")
+            if "codex" in project.data["agents"] and (SRC / "config/codex-rules/default.rules").read_bytes() not in rules:
+                print(f"    warning: guard rules missing from {repo / '.codex/rules/lonca.rules'}")
+    for folder, owner in worktrees.items():
+        print(f"  {folder}: linked worktree of {owner} (shared Git configuration)")
 
 
 def global_status(folder):
@@ -404,7 +625,23 @@ def global_status(folder):
         if path.is_symlink() and path.resolve().is_relative_to(SRC):
             legacy.append(name)
     if legacy:
-        print("  warning: global Lonca configuration still present: " + ", ".join(legacy))
+        print("  warning: global install still present: remove in phase 2 (" + ", ".join(legacy) + ")")
+
+
+def report_former_projects():
+    # Consult Lonca's own legacy records without walking the user's home or other repositories.
+    directory = HOME / ".local/state/lonca/deja"
+    roots = {Path(p.read_text().strip()) for p in directory.glob("*.root")}
+    settings = directory / "settings-written"
+    if settings.is_file():
+        roots.update(Path(p).parent.parent for p in settings.read_text().splitlines() if p)
+    for root in sorted(roots):
+        if not root.exists():
+            print(f"  former project folder missing: {root}")
+        elif (root / ".git").exists():
+            result = subprocess.run([SRC / "bin/lonca-project", root], capture_output=True)
+            if result.returncode:
+                print(f"  {root} lost Git-only project status; run lonca init to opt in")
 
 
 def main():
@@ -416,8 +653,8 @@ def main():
     commands.add_parser("remove").add_argument("dir", type=Path)
     commands.add_parser("status").add_argument("dir", type=Path, nargs="?")
     args = parser.parse_args()
-    root = args.dir.resolve(strict=True) if args.dir else None
-    if root and not root.is_dir():
+    root = args.dir.resolve() if args.dir else None
+    if root and not root.is_dir() and args.command != "remove":
         parser.error(f"not a directory: {root}")
     if args.command == "status":
         if root:
@@ -429,6 +666,7 @@ def main():
                 print("No registered Lonca projects.")
             for record in records:
                 status(Path(json.loads(record.read_bytes())["root"]))
+            report_former_projects()
         global_status(Path.cwd())
         return
     agents = args.agents.split(",") if getattr(args, "agents", None) is not None else None

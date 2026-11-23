@@ -85,13 +85,46 @@ p.write_text(json.dumps(data))
     files = (*AGENTS, ".git/info/exclude", ".git/config")
     baseline = {repo: snapshot(repo, files) for repo in (a, b, other)}
     assert not run(SRC / "bin/lonca-project", other, ok=False)
-    assert not run(SRC / "bin/deja-scope", other, ok=False)
+    none = Path(run(SRC / "bin/deja-scope", other))
+    assert json.loads(none.read_bytes()) == {"ignore": ["*", "*/*"]}
+    assert not run(SRC / "bin/deja-scope", base, ok=False)
+    unmarked = base / "unmarked"
+    unmarked.mkdir()
+    git(unmarked, "init", "-q")
+    assert run(SRC / "bin/deja-scope", "--session", input=json.dumps({"cwd": str(unmarked)}),
+               env=dict(os.environ, CLAUDE_ENV_FILE=str(base / "session-env")))
+    assert str(none) in (base / "session-env").read_text()
+    assert str(unmarked) in run(SRC / "bin/lonca", "status")
     def lonca(*args, **kwargs):
         return run(SRC / "bin/lonca", *args, **kwargs)
+    internal = root / "lanes" / "feature"
+    git(a, "worktree", "add", "-q", "--detach", internal)
+    for name in ("node_modules", "vendor", "target", ".venv"):
+        ignored = a / name / "dependency"
+        ignored.mkdir(parents=True)
+        git(ignored, "init", "-q")
+    catalog = home / ".claude/plugins/known_marketplaces.json"
+    catalog.parent.mkdir(parents=True)
+    collision = '{"lonca":{"source":{"source":"directory","path":"/old/sui"}}}'
+    catalog.write_text(collision)
+    lonca("init", root, ok=False)
+    assert catalog.read_text() == collision and not (root / ".lonca.toml").exists()
+    catalog.unlink()
+    external = root / "external-lane"
+    host = base / "outside-owner"
+    host.mkdir()
+    git(host, "init", "-q")
+    git(host, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "Fixture")
+    git(host, "worktree", "add", "-q", "--detach", external)
+    rejected = subprocess.run([SRC / "bin/lonca", "init", root], capture_output=True, text=True)
+    assert rejected.returncode and "repository outside this project" in rejected.stderr
+    git(host, "worktree", "remove", external)
     lonca("init", root)
     report = lonca("status", root)
     assert "own hooksPath: team-hooks" in report and "Claude plugin enabled, settings on, Codex on" in report
     assert str(root) in lonca("status")
+    assert f"{internal}: linked worktree of {a}" in report
+    assert not (internal / AGENTS[0]).exists() and "dependency" not in report
     for repo in (a, b, lane):
         assert run(SRC / "bin/lonca-project", repo).endswith("\t" + str(root))
         assert run(SRC / "bin/lonca-project", "--claude-agent", "reviewer", repo) == "lonca:reviewer"
@@ -110,7 +143,7 @@ p.write_text(json.dumps(data))
         assert (repo / AGENTS[3]).read_bytes() == (SRC / "config/codex-rules/default.rules").read_bytes()
         for path in AGENTS:
             assert git(repo, "check-ignore", "--", path) == path
-        assert not git(repo, "status", "--porcelain")
+        assert not git(repo, "status", "--porcelain", "--", *AGENTS)
     assert json.loads((a / AGENTS[1]).read_bytes())["env"]["keep"] == "yes"
     assert tomllib.loads((a / AGENTS[2]).read_text())["model"] == "existing"
     assert "echo existing" in (a / AGENTS[4]).read_text()
@@ -138,14 +171,13 @@ p.write_text(json.dumps(data))
     lonca("init", "--agents", "codex", other)
     assert not (other / ".claude").exists() and not (other / ".lonca.toml").exists()
     assert run(SRC / "bin/lonca-project", other).startswith("custom\t")
-    # A user's later edits stay in place and the registry stays available for a retry.
     config = other / ".codex/config.toml"
-    old = config.read_bytes()
-    config.write_bytes(old + b"# personal edit\n")
-    lonca("remove", other, ok=False)
-    assert config.read_bytes().endswith(b"# personal edit\n")
-    config.write_bytes(old)
+    config.write_bytes(config.read_bytes() + b'[mcp_servers.my_tool]\ncommand = "mine"\n')
+    lonca("init", other)
     lonca("remove", other)
+    assert tomllib.loads(config.read_text()) == {"mcp_servers": {"my_tool": {"command": "mine"}}}
+    config.unlink()
+    config.parent.rmdir()
     assert (other / "lonca.toml").read_text() == 'name = "custom"\n'
     (other / "lonca.toml").unlink()
     lonca("init", "--agents", "claude", other)
@@ -153,7 +185,56 @@ p.write_text(json.dumps(data))
     assert not (other / ".codex").exists() and not git(other, "status", "--porcelain")
     lonca("remove", other)
     assert snapshot(other, files) == baseline[other]
+    # Later edits in each personal format survive repair and uninstall.
+    lonca("init", "--agents", "claude,codex", a)
+    settings_path = a / AGENTS[1]
+    values = json.loads(settings_path.read_bytes())
+    values["permissions"]["allow"].append("Write(notes)")
+    values["permissions"]["deny"].clear()
+    settings_path.write_text(json.dumps(values))
+    assert "guard rules missing" in lonca("status", a)
+    with (a / AGENTS[0]).open("a") as f:
+        f.write("Later note\n")
+    with (a / ".git/info/exclude").open("a") as f:
+        f.write("/later-ignore\n")
+    hookfile = a / AGENTS[4]
+    hooks = json.loads(hookfile.read_bytes())
+    hooks["hooks"]["Stop"].append({"hooks": [{"type": "command", "command": "echo later"}]})
+    hookfile.write_text(json.dumps(hooks))
+    lonca("init", a)
+    assert "guard rules missing" not in lonca("status", a)
+    lonca("remove", a)
+    assert json.loads(settings_path.read_bytes()) == {"permissions": {"allow": ["Read", "Write(notes)"]}, "env": {"keep": "yes"}}
+    assert "Later note" in (a / AGENTS[0]).read_text() and "@~/lonca" not in (a / AGENTS[0]).read_text()
+    assert "/later-ignore" in (a / ".git/info/exclude").read_text()
+    assert [g["hooks"][0]["command"] for g in json.loads(hookfile.read_bytes())["hooks"]["Stop"]] == ["echo existing", "echo later"]
+    lonca("init", "--agents", "codex", other)
+    moved = base / "moved"
+    other.rename(moved)
+    assert "skipping its checkout" in lonca("remove", other)
+    assert not list((home / ".local/state/lonca/projects").glob("*.json"))
     assert not (home / ".gitconfig").exists()
+
+
+def overlapping_hooks(base):
+    home = base / "hook-home"
+    home.mkdir()
+    (home / "lonca").symlink_to(SRC, target_is_directory=True)
+    project = home / "demo"
+    project.mkdir()
+    (project / ".lonca.toml").touch()
+    env = dict(os.environ, HOME=str(home), CLAUDE_ENV_FILE=str(home / "session-env"))
+    env.pop("CLAUDE_PLUGIN_ROOT", None)
+    env.pop("DEJA_POLICY_FILE", None)
+    env.pop("LONCA", None)
+    event = json.dumps({"session_id": "fixture", "source": "startup", "cwd": str(project)})
+    for order in ((env, dict(env, CLAUDE_PLUGIN_ROOT=str(SRC))), (dict(env, CLAUDE_PLUGIN_ROOT=str(SRC)), env)):
+        outputs = [run(SRC / "bin/memory-context", env=e, input=event) for e in order]
+        assert sum(bool(out) for out in outputs) == 1, outputs
+        for e in order:
+            run(SRC / "bin/deja-scope", "--session", env=e, input=event)
+    assert (home / "session-env").read_text().count("export DEJA_POLICY_FILE=") == 2
+    assert run(SRC / "bin/memory-context", env=env, input=event)
 
 
 def off_switch(base):
@@ -173,6 +254,16 @@ def off_switch(base):
             for hook in group["hooks"]:
                 assert not run("sh", "-c", hook["command"], cwd=repo, env=env, input=hook_event)
     assert not (base / "env").exists()
+    # No push takes place. Both guards must reject the inert input with automation off.
+    git(repo, "remote", "add", "origin", "https://example.invalid/test")
+    trace = "Co-Authored-By: Claude <noreply@anthropic.com>"
+    message = repo / "test"
+    message.write_text(trace)
+    run(SRC / "git-hooks/commit-msg", "test", cwd=repo, env=env, ok=False)
+    run(SRC / "git-hooks/pre-push", "origin", cwd=repo, env=env, input="x 1 refs/heads/main 2\n", ok=False)
+    run(SRC / "bin/ai-trace-gh", "--hook", cwd=repo, env=env,
+        input=json.dumps({"tool_input": {"command": f"gh pr comment 1 --body '{trace}'"}}), ok=False)
+    message.write_text("Ordinary message")
     # Native hooks still receive Git's input when Lonca is off.
     for name in ("pre-push", "commit-msg"):
         native = repo / ".git/hooks" / name
@@ -185,6 +276,7 @@ def off_switch(base):
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as dirname:
         base = Path(dirname).resolve()
+        overlapping_hooks(base)
         off_switch(base)
         test(base)
     print("per-project layout passed")
