@@ -203,6 +203,7 @@ deny += [r for r in json.load(open(f"{L}/config/claude-permissions.json"))["deny
 hooks = s.setdefault("hooks", {})
 add_hook(hooks, "SessionStart", "startup|resume|clear|compact", f"{L}/bin/memory-context")
 add_hook(hooks, "SessionStart", "startup|resume|clear|compact", f"{L}/bin/deja-scope --session")
+add_hook(hooks, "SessionStart", "startup|resume|clear|compact", f"{L}/bin/session-tmpdir")
 add_hook(hooks, "PreToolUse", "Bash", f"{L}/bin/ai-trace-gh --hook")
 if os.environ.get("LONCA_CLAUDE_TMPDIR"):
     s.setdefault("env", {}).setdefault("TMPDIR", os.environ["LONCA_CLAUDE_TMPDIR"])

@@ -28,6 +28,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 - Each lane gets its own temp folder (`<tmpdir>/lane-<name>`; Claude and Codex through their settings override flags,
   since their own settings may pin TMPDIR), so a cleanup inside it can't reach another lane's files. AGENTS.md: delete
   only what you created, by its exact path; never a glob in a shared folder.
+- Each Claude session (and the subagents it starts) gets its own temp folder too, `<tmpdir>/session-<id>`, from a
+  SessionStart hook (`session-tmpdir`); lanes keep theirs.
 - Grok lanes no longer wait at the folder-trust prompt: `lane` records the repo in `~/.grok/trusted_folders.toml`.
 
 ## [0.4.0] - 2026-11-22
