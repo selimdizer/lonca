@@ -50,7 +50,8 @@ if [ "$uninstall" = 1 ]; then
   links
   sui_links
   if [ -L "$L" ] && [ "$(cd "$L" && pwd -P)" = "$src" ]; then rm "$L"; fi
-  echo "Uninstalled Lonca. Memory, private extensions and backups are in your home directory."
+  python3 "$src/bin/lonca-uninstall" --prune-backups
+  echo "Uninstalled Lonca and pruned migration backups."
   exit 0
 fi
 if [ ! -e "$L" ]; then ln -s "$src" "$L"; fi

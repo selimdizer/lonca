@@ -115,7 +115,10 @@ case $agent in
   opencode:*) export OPENCODE_CONFIG_DIR="$HOME/lonca/config/opencode" ;;
   claude:*) settings=$(python3 -I -c 'import json,shlex,sys; print(shlex.quote(json.dumps({"env":{"TMPDIR":sys.argv[1]}})))' "$ltmp")
             cmd="$cmd --settings $settings" ;;
-  codex:*)  cmd="$cmd -c $(override shell_environment_policy.set.TMPDIR "$ltmp")" ;;
+  codex:*)  cmd="$cmd -c $(override shell_environment_policy.set.TMPDIR "$ltmp")"
+            cmd="$cmd -c $(override shell_environment_policy.set.GIT_CONFIG_COUNT 1)"
+            cmd="$cmd -c $(override shell_environment_policy.set.GIT_CONFIG_KEY_0 core.hooksPath)"
+            cmd="$cmd -c $(override shell_environment_policy.set.GIT_CONFIG_VALUE_0 "$HOME/lonca/git-hooks")" ;;
 esac
   # Started from a lead inside the Herdr app: open the lane as its own tab in the lead's space
   space=$( [ -n "${HC_TERMINAL_ID:-}" ] && hc get "$HC_TERMINAL_ID" --json 2>/dev/null | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("labels",{}).get("herdr.space",""))' 2>/dev/null || true)
@@ -160,7 +163,9 @@ PY
   # Expand the child shell's PATH and positional argument inside hc.
   # shellcheck disable=SC2016
   hc run --bg --outlive-parent --name "$name" --cwd "$wt" "$@" \
-    -- env ${OPENCODE_CONFIG_DIR:+"OPENCODE_CONFIG_DIR=$OPENCODE_CONFIG_DIR"} LONCA_LANE=1 "TMPDIR=$ltmp" "DEJA_POLICY_FILE=$DEJA_POLICY_FILE" sh -c 'export PATH="$HOME/lonca/shims:$HOME/lonca-local/shims:$PATH"; exec sh -c "$1"' sh "$run" >/dev/null   # hc passes no env: set it here
+    -- env ${OPENCODE_CONFIG_DIR:+"OPENCODE_CONFIG_DIR=$OPENCODE_CONFIG_DIR"} LONCA_LANE=1 \
+       GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath "GIT_CONFIG_VALUE_0=$HOME/lonca/git-hooks" \
+       "TMPDIR=$ltmp" "DEJA_POLICY_FILE=$DEJA_POLICY_FILE" sh -c 'export PATH="$HOME/lonca/shims:$HOME/lonca-local/shims:$PATH"; exec sh -c "$1"' sh "$run" >/dev/null   # hc passes no env: set it here
   [ -n "$card" ] && { "$HOME/lonca/bin/kanzo-sync" set "$card" doing >/dev/null 2>&1 || echo "lane: could not set $card to doing" >&2; }
   [ $ro = 1 ] && { echo "lane: read-only $name in $wt (hc terminal $name) -> $result"; exit 0; }
   echo "lane: $branch in $wt from origin/$base (hc terminal $name) -> $result"

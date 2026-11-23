@@ -58,6 +58,9 @@ for t in sorted(glob.glob(f"{L}/config/systemd/*.timer")):
         p["StartInterval"] = seconds(tk["OnUnitActiveSec"])
     else:
         p["StartCalendarInterval"] = calendar(tk["OnCalendar"])
+    if action in ("migrate", "preview"):
+        # Migration changes the job command alone. Keep local schedules and environment.
+        p = dict(old, ProgramArguments=args)
     if old == p:
         continue
     if action == "preview":
@@ -66,7 +69,8 @@ for t in sorted(glob.glob(f"{L}/config/systemd/*.timer")):
     if old:
         from lonca_legacy import Legacy
         from pathlib import Path
-        Legacy().backup(Path(dst))
+        if action == "migrate":
+            Legacy().backup(Path(dst), {"ProgramArguments": old.get("ProgramArguments", [])})
         subprocess.run(["launchctl", "bootout", f"gui/{UID}/{label}"], capture_output=True)
     os.makedirs(A, exist_ok=True); os.makedirs(LOGS, exist_ok=True)
     with open(dst, "wb") as f:

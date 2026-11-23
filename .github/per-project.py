@@ -46,12 +46,12 @@ def test(base):
     stub = base / "bin/claude"
     stub.parent.mkdir()
     stub.write_text('''#!/usr/bin/env python3
-import json, sys
+import hashlib, json, sys
 from pathlib import Path
 args = sys.argv[1:]
 assert args.pop(0) == "plugin"
 p = Path(".claude/settings.local.json")
-installed = Path(".git/plugin-test-install")
+installed = Path.home() / ("plugin-test-" + hashlib.sha256(bytes(Path.cwd())).hexdigest())
 if args == ["list", "--json"]:
     print(json.dumps([{"id": "lonca@lonca", "scope": "local", "projectPath": str(Path.cwd())}] if installed.exists() else []))
     sys.exit(0)
@@ -84,7 +84,7 @@ p.write_text(json.dumps(data))
     (a / ".claude").mkdir()
     (a / ".claude/settings.local.json").write_text('{"permissions":{"allow":["Read"]},"env":{"keep":"yes"}}')
     (a / ".codex").mkdir()
-    (a / ".codex/config.toml").write_text('model = "existing"\n[mcp_servers.other]\ncommand = "other"')
+    (a / ".codex/config.toml").write_text('model = "existing"\n[mcp_servers.other]\ncommand = "other"\nenv = { TOKEN = "project-only-fixture" }')
     (a / ".codex/hooks.json").write_text('{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo existing"}]}]}}')
     (a / "CLAUDE.local.md").write_text("Private notes without final newline")
     files = (*AGENTS, ".git/info/exclude", ".git/config")
@@ -129,8 +129,17 @@ p.write_text(json.dumps(data))
     rejected = subprocess.run([SRC / "bin/lonca", "init", root], capture_output=True, text=True)
     assert rejected.returncode and "repository outside this project" in rejected.stderr
     git(host, "worktree", "remove", external)
+    (root / "CLAUDE.local.md").write_text("root notes\n")
     lonca("init", root)
+    private_state = home / ".local/state/lonca/projects"
+    assert not any(b"project-only-fixture" in f.read_bytes() for f in private_state.rglob("*") if f.is_file())
+    assert run(SRC / "bin/lonca-project", "--claude-agent", "lead", root) == "lonca:lead"
+    root_settings = json.loads((root / AGENTS[1]).read_bytes())
+    assert set(json.loads((SRC / "config/claude-permissions.json").read_bytes())["deny"]) <= set(root_settings["permissions"]["deny"])
+    assert "@~/lonca/AGENTS.md" in (root / AGENTS[0]).read_text().splitlines()
+    assert Path(root_settings["env"]["DEJA_POLICY_FILE"]).is_file()
     report = lonca("status", root)
+    assert f"{root}: Claude lead guards on" in report
     assert "own hooksPath: team-hooks" in report and "Claude plugin enabled, settings on, Codex on" in report
     assert str(root) in lonca("status")
     assert f"{internal}: linked worktree of {a}" in report
@@ -160,6 +169,8 @@ p.write_text(json.dumps(data))
     installed = {r: snapshot(r, files) for r in (a, b)}
     lonca("init", root)
     assert all(snapshot(r, files) == installed[r] for r in installed)
+    (root / AGENTS[0]).write_text("updated root notes\n")
+    assert "Claude lead guards missing" in lonca("status", root)
     later = root / "new"
     later.mkdir()
     git(later, "init", "-q")
@@ -170,6 +181,7 @@ p.write_text(json.dumps(data))
     run(SRC / "bin/deja-scope", "--refresh")
     lonca("remove", root)
     assert not (root / ".lonca.toml").exists()
+    assert (root / AGENTS[0]).read_text() == "updated root notes\n" and not (root / AGENTS[1]).exists()
     assert not policy.exists() and not policy.with_suffix(".root").exists()
     assert not list((home / ".local/state/lonca/projects").glob("*.json"))
     for repo in (a, b, other):
@@ -283,13 +295,18 @@ def migration(base):
     codex.symlink_to(home / "lonca/AGENTS.md")
     mcp = home / ".omp/agent/mcp.json"
     mcp.parent.mkdir(parents=True)
-    mcp.write_text('{"mcpServers":{"kanzo":{"command":"kanzo","args":["mcp"]},"private":{}}}')
+    private_server = {"env": {"TOKEN": "global-only-fixture"}}
+    standard = {"command": "kanzo", "args": ["mcp"]}
+    mcp.write_text(json.dumps({"mcpServers": {"kanzo": standard, "private": private_server}}))
+    claude_mcp = home / ".claude.json"
+    customized = {"command": "deja", "args": ["mcp"], **private_server}
+    claude_mcp.write_text(json.dumps({"clientState": "global-only-fixture", "mcpServers": {"kanzo": standard, "deja": customized}}))
     state = home / ".local/state/lonca/mcp-added"
     deferred = home / ".pi/agent/mcp.json"
     deferred.parent.mkdir(parents=True)
     original_pi = '{"mcpServers":{"deja":{"command":"deja","args":["mcp"]},"personal":{}}}'
     deferred.write_text(original_pi)
-    state.write_text("omp kanzo\npi deja\n")
+    state.write_text("omp kanzo\nclaude kanzo\nclaude deja\npi deja\n")
     script = SRC / "bin/lonca"
     originals = {p: p.read_bytes() for p in (catalog, settings, doc, mcp, state, home / ".gitconfig")}
     preview = run(script, "migrate", "--dry-run", explicit)
@@ -307,7 +324,9 @@ def migration(base):
     assert "cat ~/ai-memory" not in hooks.read_text()
     assert all(link.is_symlink() for link, _ in private_links)
     assert str(home / ".herdr/worktrees") in json.loads(copilot.read_text())["trustedFolders"]
-    assert json.loads(mcp.read_bytes()) == {"mcpServers": {"private": {}}}
+    assert json.loads(mcp.read_bytes()) == {"mcpServers": {"private": private_server}}
+    assert json.loads(claude_mcp.read_bytes()) == {"clientState": "global-only-fixture", "mcpServers": {"deja": customized}}
+    assert not mcp.with_name("mcp.json.lonca-bak").exists()
     assert state.read_text() == "pi deja\n" and deferred.read_text() == original_pi
     assert "still global: pi MCP deja" in run(script, "status", repo)
     assert json.loads(catalog.read_bytes())["lonca"]["source"]["path"] == str(home / "lonca")
@@ -331,12 +350,19 @@ if sys.argv[1] == "run":
     main = git(repo, "branch", "--show-current")
     brief = base / "demo.brief"
     brief.write_text("Read the fixture.")
+    sibling = base / "sibling"
+    run("git", "clone", "-q", origin, sibling)
+    git(sibling, "config", "--get", "core.hooksPath", ok=False)
     for flags, branch, model in [(["--read"], "read", "example/small"), ([], "feat/fixture", "github-copilot/test")]:
         result = home / ".cache/ai-runs/fixture/run" / (branch.split("/")[-1] + ".result")
         run(SRC / "bin/lane", *flags, repo, branch, "omp:" + model, brief, result, main)
         argv = json.loads((home / "terminal.json").read_bytes())
         assert '--extension "$HOME/lonca/config/omp-lane"' in argv[-1]
         assert any(arg.startswith("DEJA_POLICY_FILE=") for arg in argv)
+        lane_env = dict(arg.split("=", 1) for arg in argv if arg.startswith("GIT_CONFIG_"))
+        hooks_path = git(sibling, "config", "--get", "core.hooksPath", env=dict(os.environ, **lane_env))
+        assert hooks_path == str(home / "lonca/git-hooks")
+        assert all(os.access(Path(hooks_path) / hook, os.X_OK) for hook in ("pre-push", "commit-msg"))
         rec = json.loads(Path(str(result) + ".lane.json").read_bytes())
         assert Path(rec["temp"]).is_dir() and Path(rec["project"]) == repo
     guards = repo / ".codex/rules/lonca.rules"
@@ -346,6 +372,10 @@ if sys.argv[1] == "run":
     run(script, "migrate")
     assert run(script, "status", "--lane", repo)
     backups = list((home / ".local/state/lonca/migration-backups").iterdir())
+    assert backups
+    records = [json.loads(line) for directory in backups for line in (directory / "changes.jsonl").read_text().splitlines()]
+    assert any(r["path"] == str(claude_mcp) and r["removed"] == {"mcpServers": {"kanzo": standard}} for r in records)
+    assert all("global-only-fixture" not in json.dumps(r) for r in records)
     run(script, "migrate")
     assert backups == list((home / ".local/state/lonca/migration-backups").iterdir())
     run("sh", SRC / "install.sh", "--uninstall")
@@ -354,7 +384,8 @@ if sys.argv[1] == "run":
     assert all(not link.is_symlink() and target.exists() for link, target in private_links)
     assert json.loads(copilot.read_text())["trustedFolders"] == ["/personal"]
     assert not list((home / ".local/state/lonca/projects").glob("*.json"))
-    assert backups[0].is_dir() and "private" in settings.read_text()
+    assert not any(p.exists() for p in backups) and "private" in settings.read_text()
+    assert not any((home / ".local/state/lonca/migration-backups").iterdir())
     assert not state.exists() and json.loads(deferred.read_bytes())["mcpServers"] == {"personal": {}}
 
 

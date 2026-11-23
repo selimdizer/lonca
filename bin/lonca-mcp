@@ -11,18 +11,27 @@ has() { grep -qs "$1" "$2"; }
 json() {  # json <file> <key> <command> <args...>: for CLIs with no `mcp add` (omp, pi); their documented mcpServers format
   f=$1 key=$2; shift 2
   python3 -I - "$f" "$key" "$op" "$n" "$@" <<'PY'
-import json, os, shutil, sys
+import json, os, sys, tempfile, stat
 f, key, op, name, *cmd = sys.argv[1:]
 try: d = json.load(open(f))
-except (OSError, ValueError): d = {}
+except FileNotFoundError: d = {}
 servers = d.setdefault(key, {})
 if op == "remove":
     if servers.pop(name, None) is None: sys.exit(0)
 elif name in servers: sys.exit(0)
 else:
     servers[name] = {"command": cmd[0], "args": cmd[1:]}
-if os.path.exists(f) and not os.path.exists(f + ".lonca-bak"): shutil.copy(f, f + ".lonca-bak")
-os.makedirs(os.path.dirname(f), exist_ok=True); json.dump(d, open(f, "w"), indent=2)
+os.makedirs(os.path.dirname(f), exist_ok=True)
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(f))
+try:
+    with os.fdopen(fd, "w") as out:
+        if os.path.exists(f):
+            os.fchmod(out.fileno(), stat.S_IMODE(os.stat(f).st_mode))
+        json.dump(d, out, indent=2)
+    os.replace(tmp, f)
+finally:
+    if os.path.exists(tmp):
+        os.unlink(tmp)
 PY
 }
 if [ "$op" = remove ] && ! grep -qx "$h $n" "$R" 2>/dev/null; then exit 0; fi   # not ours

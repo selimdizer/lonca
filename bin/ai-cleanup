@@ -4,6 +4,7 @@ Use --dry-run to preview, or --tmp-age-hours N to change the default 48-hour tem
 """
 import json, os, shutil, subprocess, sys, time
 from pathlib import Path
+from lonca_legacy import Legacy
 from lonca_registry import registered, records, lane_worktree, resources, identity, names, forget_resource
 
 DRY = "--dry-run" in sys.argv
@@ -46,6 +47,7 @@ def in_use_paths():
                 pass
     return used
 
+Legacy(DRY).prune()
 projects = registered()
 if not projects:
     sys.exit(0)

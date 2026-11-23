@@ -8,8 +8,8 @@ versions follow [Semantic Versioning](https://semver.org/).
 - Installation now provides commands and memory templates. Run `lonca init` from an owner or lead session
   to register the root plugin marketplace locally and set up the project.
 - `lonca migrate --dry-run [roots...]` previews the move from global settings. Migration initializes projects
-  and backs up the legacy files it changes. Timers are opt-in. Project jobs require registration. Shared memory commits and machine-wide history indexing remain available.
-- Lanes check the project's guard settings before launch. Cleanup requires a matching ownership record.
+  and records the removed global settings. These backups expire after 30 days or on uninstall. Timers are opt-in. Project jobs require registration. Shared memory commits and machine-wide history indexing remain available.
+- Lanes check project guards before launch and carry Git hooks into fresh clones. Folder roots receive local lead protections. Cleanup requires a matching ownership record.
 
 - `lonca init [--agents claude,codex] <dir>` registers a marked project and installs personal repo
   settings and local Git hooks. `lonca status` reports coverage and conflicts. `lonca remove <dir>`

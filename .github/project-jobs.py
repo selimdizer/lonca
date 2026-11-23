@@ -42,6 +42,23 @@ def check(home):
     assert run("git", "-C", memory, "show", "HEAD:MEMORY.md") == "fixture"
     assert not logs.exists() and not (home / ".local/state/lonca").exists()
 
+    backups = home / ".local/state/lonca/migration-backups"
+    backup = backups / "migration-12345678"
+    backup.mkdir(parents=True)
+    (backup / "changes.jsonl").touch()
+    old_layout = backups / "tmp12345678"
+    (old_layout / "filesystem").mkdir(parents=True)
+    foreign = backups / "personal"
+    foreign.mkdir()
+    recent = backups / "migration-87654321"
+    recent.mkdir()
+    (recent / "changes.jsonl").touch()
+    for folder in (backup, old_layout, foreign):
+        os.utime(folder, (1, 1))
+    assert str(backup) in run(BIN / "ai-cleanup", "--dry-run") and backup.exists()
+    run(BIN / "ai-cleanup")
+    assert not backup.exists() and not old_layout.exists() and recent.exists() and foreign.exists()
+
     root = home / "project"
     root.mkdir()
     run("git", "-C", root, "init", "-q")

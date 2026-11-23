@@ -2,11 +2,13 @@
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 
 from lonca_registry import BIN, HOME, STATE
 
@@ -48,23 +50,37 @@ class Legacy:
         self.dry = dry
         self.directory = None
 
-    def backup(self, path):
+    def prune(self, uninstall=False):
+        base = STATE / "migration-backups"
+        if base.resolve() != base:
+            raise ValueError(f"refusing symlink: {base}")
+        if not base.is_dir():
+            return
+        for folder in base.iterdir():
+            if folder.is_symlink() or not folder.is_dir() or folder.stat().st_uid != os.getuid():
+                continue
+            # Previous releases used mkdtemp's default name and a filesystem/ tree.
+            legacy = re.fullmatch(r"tmp[a-z0-9_]{8}", folder.name) and (folder / "filesystem").is_dir()
+            receipt = re.fullmatch(r"migration-[a-z0-9_]{8}", folder.name) and (folder / "changes.jsonl").is_file()
+            if (legacy or receipt) and (uninstall or folder.stat().st_mtime <= time.time() - 30 * 86400):
+                print(f"prune migration backup: {folder}")
+                if not self.dry:
+                    shutil.rmtree(folder)
+
+    def backup(self, path, removed):
         if not self.directory:
             base = STATE / "migration-backups"
+            if base.resolve() != base:
+                raise ValueError(f"refusing symlink: {base}")
             base.mkdir(parents=True, exist_ok=True, mode=0o700)
-            self.directory = Path(tempfile.mkdtemp(dir=base))
-            print(f"Backups (absolute paths below filesystem/): {self.directory}")
-        # Legacy scope records can point at a checkout on a separate volume.
-        target = self.directory / "filesystem" / path.relative_to(path.anchor)
-        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if not target.exists() and not target.is_symlink():
-            if path.is_symlink():
-                target.symlink_to(os.readlink(path))
-            elif path.is_file():
-                shutil.copyfile(path, target)
-                target.chmod(0o600)
+            self.directory = Path(tempfile.mkdtemp(prefix="migration-", dir=base))
+            print(f"Migration backup: {self.directory / 'changes.jsonl'}")
+        with (self.directory / "changes.jsonl").open("a", opener=lambda p, f: os.open(p, f, 0o600)) as out:
+            out.write(json.dumps({"path": str(path), "removed": removed}, ensure_ascii=False) + "\n")
+            out.flush()
+            os.fsync(out.fileno())
 
-    def change(self, path, data, description):
+    def change(self, path, data, description, removed=None):
         if path.parent.resolve() != path.parent or (path.is_symlink() and data is not None):
             raise ValueError(f"refusing to edit symlink: {path}")
         if data is not None and path.read_bytes() == data:
@@ -72,7 +88,9 @@ class Legacy:
         print(f"{description}: {path}")
         if self.dry:
             return
-        self.backup(path)
+        if removed is None:
+            removed = {"symlink": os.readlink(path)}
+        self.backup(path, removed)
         if data is None:
             path.unlink()
             return
@@ -99,6 +117,9 @@ class Legacy:
             target = Path(src.get("path", "")).expanduser().resolve()
             if target not in (OLD_MARKET.resolve(), LONCA.resolve()):
                 continue
+            removed = {"source": {"source": "directory", "path": src["path"]}}
+            if market.get("installLocation") in (str(target), str(OLD_MARKET), str(LONCA)):
+                removed["installLocation"] = market["installLocation"]
             if uninstall or path == CONF and target == OLD_MARKET.resolve():
                 del markets["lonca"]
             elif target == OLD_MARKET.resolve():
@@ -107,7 +128,8 @@ class Legacy:
                     market["installLocation"] = str(LONCA)
             else:
                 continue
-            self.change(path, json_bytes(data), "remove Lonca marketplace" if uninstall else "repoint Lonca marketplace")
+            self.change(path, json_bytes(data), "remove Lonca marketplace" if uninstall else "repoint Lonca marketplace",
+                        {"lonca": removed} if path == CACHE else {"extraKnownMarketplaces": {"lonca": removed}})
 
     def harness_files(self, uninstall):
         link_roots = (LONCA, HOME / "lonca-local") if uninstall else (LONCA,)
@@ -128,7 +150,7 @@ class Legacy:
             text = b"".join(line for line in original.splitlines(True) if line.rstrip(b"\r\n") != b"@~/lonca/AGENTS.md")
             previous = doc.with_name(doc.name + ".lonca-bak")
             if text != original and (not previous.is_file() or b"@~/lonca/AGENTS.md" not in previous.read_bytes().splitlines()):
-                self.change(doc, text if text or previous.exists() else None, "remove Lonca import")
+                self.change(doc, text if text or previous.exists() else None, "remove Lonca import", {"line": "@~/lonca/AGENTS.md"})
 
         for path in (CONF, HOME / ".codex/hooks.json"):
             if path.is_symlink() and path.resolve().is_relative_to(LONCA.resolve()):
@@ -140,6 +162,7 @@ class Legacy:
             before = json_bytes(data)
             bak = path.with_name(path.name + ".lonca-bak")
             previous = json.loads(bak.read_bytes()) if bak.is_file() else {}
+            removed = {}
             hooks_by_event = data.get("hooks", {})
             commands = {"SessionStart": {f"{LONCA}/bin/memory-context", f"{LONCA}/bin/deja-scope --session",
                                          f"{LONCA}/bin/session-tmpdir", "cat ~/ai-memory/MEMORY.md"},
@@ -162,6 +185,7 @@ class Legacy:
                 for rule in installed:
                     if rule in deny and rule not in prior_deny:
                         print(f"  remove deny rule {rule}")
+                        removed.setdefault("permissions", {}).setdefault("deny", []).append(rule)
                         deny.remove(rule)
                 if not deny and "deny" not in previous.get("permissions", {}):
                     data.get("permissions", {}).pop("deny", None)
@@ -171,14 +195,17 @@ class Legacy:
                                    ("autoMemoryDirectory", "~/ai-memory")):
                     if data.get(key) == value and key not in previous:
                         print(f"  remove {key}")
+                        removed[key] = value
                         del data[key]
                     elif data.get(key) == value and previous.get(key) != value:
                         print(f"  restore {key} from backup")
+                        removed[key] = value
                         data[key] = previous[key]
                 env = data.get("env", {})
                 tmp = subprocess.check_output([BIN / "lonca-config", "tmpdir", HOME / ".cache/lonca/tmp"], text=True).strip()
                 if env.get("TMPDIR") == tmp and "TMPDIR" not in previous.get("env", {}):
                     print("  remove env.TMPDIR")
+                    removed["env"] = {"TMPDIR": tmp}
                     del env["TMPDIR"]
                     if not env and "env" not in previous:
                         data.pop("env", None)
@@ -186,11 +213,18 @@ class Legacy:
                 for group in list(groups):
                     hooks = group.get("hooks", [])
                     count = len(hooks)
+                    removed_hooks = []
                     for hook in list(hooks):
                         # The legacy installer overwrote its backup on repeated installs.
                         if installed_hook(event, hook):
                             print(f"  remove {event} hook: {hook['command']}")
+                            removed_hooks.append({"type": "command", "command": hook["command"]})
                             hooks.remove(hook)
+                    if removed_hooks:
+                        group_copy = {"hooks": removed_hooks}
+                        if "matcher" in group:
+                            group_copy["matcher"] = group["matcher"]
+                        removed.setdefault("hooks", {}).setdefault(event, []).append(group_copy)
                     if count and not hooks:
                         groups.remove(group)
                 if not groups and event not in previous.get("hooks", {}):
@@ -202,7 +236,7 @@ class Legacy:
                     desired = bak.read_bytes()
                 else:
                     desired = json_bytes(data) if data or bak.exists() else None
-                self.change(path, desired, "remove legacy harness settings")
+                self.change(path, desired, "remove legacy harness settings", removed)
 
         # Older installers did not record whether this folder was already trusted.
         # Migration respects an existing trust grant. Full uninstall retires this shared folder grant.
@@ -218,7 +252,8 @@ class Legacy:
                 if uninstall or before.is_file() and folder not in copilot_settings(before).get("trustedFolders", []):
                     settings["trustedFolders"].remove(folder)
                     comments = "".join(l for l in trust.read_text().splitlines(True) if l.lstrip().startswith("//"))
-                    self.change(trust, comments.encode() + json_bytes(settings), "remove legacy worktree trust")
+                    self.change(trust, comments.encode() + json_bytes(settings), "remove legacy worktree trust",
+                                {"trustedFolders": [folder]})
                 else:
                     print(f"keep existing worktree trust in {trust} (ownership unrecorded)")
 
@@ -238,7 +273,7 @@ class Legacy:
                     raise ValueError(f"refusing symlink: {path}")
                 print(f"remove global core.hooksPath: {path}")
                 if not self.dry:
-                    self.backup(path)
+                    self.backup(path, {"core.hooksPath": value})
                     subprocess.run(["git", "config", "--global", "--unset", "core.hooksPath"], check=True)
 
     def scope_settings(self, upcoming):
@@ -246,13 +281,15 @@ class Legacy:
         registry = registered()
         managed = {str(Path(repo) / ".claude/settings.local.json") for project in registry.values()
                    for repo in project["repos"]}
+        managed.update(str(root / ".claude/settings.local.json") for root, p in registry.items() if p.get("root_claude"))
         managed.update(str(repo / ".claude/settings.local.json") for repo in upcoming)
         directory = STATE / "deja"
         record = directory / "settings-written"
         if not record.is_file():
             return
         keep = []
-        for line in record.read_text().splitlines():
+        lines = record.read_text().splitlines()
+        for line in lines:
             path = Path(line)
             if str(path) in managed:
                 keep.append(line)
@@ -267,11 +304,13 @@ class Legacy:
                 del data["env"]["DEJA_POLICY_FILE"]
                 if not data["env"]:
                     del data["env"]
-                self.change(path, json_bytes(data), "remove recorded legacy session scope")
+                self.change(path, json_bytes(data), "remove recorded legacy session scope",
+                            {"env": {"DEJA_POLICY_FILE": value}})
         if keep:
-            self.change(record, ("\n".join(keep) + "\n").encode(), "update legacy scope record")
+            self.change(record, ("\n".join(keep) + "\n").encode(), "update legacy scope record",
+                        {"lines": [line for line in lines if line not in keep]})
         else:
-            self.change(record, None, "remove legacy scope record")
+            self.change(record, None, "remove legacy scope record", {"lines": lines})
 
     def timers(self):
         if sys.platform == "darwin":
@@ -319,25 +358,40 @@ class Legacy:
             entry = self.mcp_entry(harness, server)
             command = (entry or {}).get("command", "")
             argv = command if isinstance(command, list) else [command, *(entry or {}).get("args", [])]
-            if entry is None or not argv or Path(argv[0]).name != server or argv[1:] != ["mcp"]:
+            # Only remove the plain stdio registration installed by lonca-mcp.
+            # A customized environment, URL or credential belongs to its owner.
+            simple = (isinstance(entry, dict) and set(entry) <= {"type", "command", "args", "env", "enabled"}
+                      and entry.get("type", "stdio") in ("stdio", "local") and not entry.get("env")
+                      and entry.get("enabled", True) is True)
+            if not simple or not argv or Path(argv[0]).name != server or argv[1:] != ["mcp"]:
                 print(f"keep current {harness} MCP settings; release old record for {server}")
                 remaining = state.read_text().splitlines()
                 remaining.remove(line)
-                self.change(state, "".join(row + "\n" for row in remaining).encode(), "release stale MCP record")
+                self.change(state, "".join(row + "\n" for row in remaining).encode(), "release stale MCP record", {"line": line})
                 continue
             print(f"remove recorded user MCP {harness} {server}")
             if not self.dry:
-                self.backup(state)
-                self.backup(HOME / MCP[harness])
-                subprocess.run([BIN / "lonca-mcp", "remove", harness, server], check=True)
+                path = HOME / MCP[harness]
+                key = "mcp_servers" if path.suffix == ".toml" else "mcp" if harness == "opencode" else "mcpServers"
+                removed = {key: {server: entry}}
+                if harness == "claude":
+                    data = json.loads(path.read_bytes())
+                    del data[key][server]
+                    self.change(path, json_bytes(data), "remove user MCP entry", removed)
+                    remaining = [row for row in state.read_text().splitlines() if row != line]
+                    self.change(state, "".join(row + "\n" for row in remaining).encode(), "update MCP record", {"line": line})
+                else:
+                    self.backup(state, {"line": line})
+                    self.backup(path, removed)
+                    subprocess.run([BIN / "lonca-mcp", "remove", harness, server], check=True)
                 current = state.read_text().splitlines()
                 if self.mcp_entry(harness, server) is not None and line not in current:
                     current.append(line)
-                    self.change(state, "".join(row + "\n" for row in current).encode(), "retain pending MCP removal")
+                    self.change(state, "".join(row + "\n" for row in current).encode(), "retain pending MCP removal", {"line_added": line})
                 if line in current:
                     raise ValueError(f"could not remove recorded {harness} MCP {server}; check its CLI before retrying")
         if state.is_file() and not state.read_text().strip():
-            self.change(state, None, "remove empty MCP record")
+            self.change(state, None, "remove empty MCP record", {"lines": []})
 
     def cleanup(self, uninstall=False, upcoming=()):
         self.harness_files(uninstall)

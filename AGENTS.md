@@ -14,6 +14,7 @@
 - Delete only what you created, by the exact path you created (the one `mktemp` printed). Never `rm` with a glob or pattern in a folder others use (temp folders, `~/.herdr/worktrees`, run folders).
 - Never print, store, commit or send secrets, passwords or tokens. Credentials go over stdin only.
 - Don't change global agent config (`~/.claude`, `~/.codex`, `~/lonca`, ...) unless the owner asked for that change.
+- In lanes, leave project guards to the lead or owner: `.git/config`, `.claude/settings.local.json`, `CLAUDE.local.md`, `.codex/config.toml`, `.codex/hooks.json`, `.codex/rules/lonca.rules` and the lane’s Git hook environment. Ask the lead to repair them with `lonca init`. Only the owner runs migration or uninstall.
 - Don't start other agents or CLIs unless your brief says so; the lead dispatches (see the `dispatch` skill).
 - Stay in your project: no other project's files, past sessions or Kanzo cards. A question for another project goes to its lead (`orchestrate` skill, section 10).
 - Work that reaches other projects or the whole machine (stopping or removing containers you did not start, cleanup runs, killing processes, removing packages or users, freeing disk): label your session first (`hc label $HC_TERMINAL_ID lonca.role=machine lonca.does="<what>"`), tell every session `leads` lists what you will do and wait for objections (`hc send <address> "NOTICE from <you>: …"`), then tell them what you did.

@@ -102,7 +102,10 @@ lonca migrate
 Migration includes registered roots, marked folders under `~/Work`, the marked `~/lonca` checkout,
 and markers found in previous Lonca scope records. Pass additional roots as arguments to both commands.
 It moves the old Move marketplace to `~/lonca`, initializes the projects, and then removes identified
-global entries. Backups of changed global files are under `~/.local/state/lonca/migration-backups/`.
+global entries. Each migration writes the removed settings, import lines and link targets to a private
+`changes.jsonl` under `~/.local/state/lonca/migration-backups/`. Personal MCP credentials stay in
+their original files. Migration and the optional cleanup timer prune migration backups after 30 days.
+A successful uninstall prunes them immediately.
 Migration keeps skill and agent links into `~/lonca-local`. Full uninstall removes those links and
 keeps their targets. Known installer hook commands are removed even from a repeated installation.
 Matching deny rules already present in a legacy backup are preserved and reported. Repeated old installs
@@ -152,13 +155,14 @@ lonca remove ~/work/shop
 
 The default agents are Claude and Codex. Start with `--agents codex` or `--agents claude` to select one.
 Running init again can add an agent. Each repository gets its own local Git hooks setting, which Git also
-uses in linked worktrees. Status lists linked worktrees inside the project next to their main checkout.
+uses in linked worktrees. Inside a lane, Git also inherits Lonca’s hooks path for commands in sibling
+and newly cloned repositories. Status lists linked worktrees inside the project next to their main checkout.
 A repository with a custom hooks path keeps it. `LONCA=0` silences memory, deja-scope and temporary-directory
 automation for that process and its children. The default-branch push guard, attribution checks and the
 repository's native Git hooks still run. The owner can remove the project integration with `lonca remove`.
 
 - Claude Code installs `lonca@lonca` with local scope. Its agents, skills, hooks and MCP servers come
-  from the local marketplace. Personal settings hold the deny rules and deja policy, and
+  from the local marketplace. Init also installs these protections at a non-Git project root for leads. Personal settings hold the deny rules and deja policy, and
   `CLAUDE.local.md` imports `@~/lonca/AGENTS.md`. Use a CLI with local marketplace scope support.
 - Codex reads the project's `.codex/config.toml`, `.codex/rules/lonca.rules` and `.codex/hooks.json`.
   Trust the project and review the hooks in `/hooks`.
@@ -250,7 +254,7 @@ Crush and Amp take no starting prompt, so they get the rules and skills but don'
 ```
 
 Uninstall restores the registered projects, removes installed tool links and timers, and cleans up
-legacy harness settings. Your checkout, memory, private extensions and migration backups stay in place.
+legacy harness settings and migration backups. Your checkout, memory and private extensions stay in place.
 
 ## FAQ
 
