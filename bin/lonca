@@ -716,7 +716,7 @@ def status(root, target=None):
 
 
 def legacy_settings(folder):
-    from lonca_legacy import CONF, OLD_MARKET, deny_rules, has_installed_hooks
+    from lonca_legacy import CONF, OLD_MARKET, deny_rules, has_installed_hooks, installed_claude_values
     legacy = []
     if git(folder, "config", "--global", "--get", "core.hooksPath", optional=True) == HOOKS:
         legacy.append("git hooksPath")
@@ -731,7 +731,7 @@ def legacy_settings(folder):
             source = data.get("extraKnownMarketplaces", {}).get("lonca", {}).get("source", {})
             old_market = (source.get("source") == "directory"
                           and Path(source.get("path", "")).expanduser().resolve() == OLD_MARKET.resolve())
-            if old_market or deny_rules().intersection(data.get("permissions", {}).get("deny", [])):
+            if old_market or installed_claude_values(data) or deny_rules().intersection(data.get("permissions", {}).get("deny", [])):
                 legacy.append(name)
     doc = HOME / ".claude/CLAUDE.md"
     if doc.is_file() and IMPORT in doc.read_text().splitlines():

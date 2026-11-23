@@ -110,6 +110,8 @@ Migration keeps skill and agent links into `~/lonca-local`. Full uninstall remov
 keeps their targets. Known installer hook commands are removed even from a repeated installation.
 Migration removes each exact match for a shipped deny rule from the user settings, including duplicates
 and matches present in an older backup. The receipt records each removed rule. Custom rules keep their order.
+Migration and uninstall also clear the old installer’s exact attribution and memory settings and its
+optional `env.TMPDIR` value. A distinct prior value in the backup is restored.
 If a command stops, correct the reported problem and repeat it.
 
 Both interactive and read-only omp lanes load Kanzo and deja through the lane extension. Deja receives

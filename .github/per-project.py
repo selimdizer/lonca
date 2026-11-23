@@ -246,6 +246,33 @@ p.write_text(json.dumps(data))
     assert not (home / ".gitconfig").exists()
 
 
+def legacy_defaults(home):
+    return {"attribution": {"commit": "", "pr": ""}, "includeCoAuthoredBy": False,
+            "autoMemoryDirectory": "~/ai-memory", "env": {"TMPDIR": str(home / ".cache/lonca/tmp")}}
+
+
+def direct_uninstall(base):
+    # A direct uninstall must clean the original polluted installation without a preceding migration.
+    shipped = json.loads((SRC / "config/claude-permissions.json").read_bytes())["deny"]
+    personal = {"permissions": {"deny": ["Read(private)"]}, "theme": "dark", "env": {"KEEP": "yes"}}
+    custom = {"attribution": {"commit": "personal", "pr": ""}, "includeCoAuthoredBy": True,
+              "autoMemoryDirectory": "~/my-notes", "env": {"KEEP": "yes", "TMPDIR": "/my-temp"}}
+    for case in ("polluted", "personal-current", "personal-backup"):
+        home = base / ("uninstall-" + case)
+        settings = home / ".claude/settings.json"
+        settings.parent.mkdir(parents=True)
+        (home / "lonca").symlink_to(SRC)
+        owned = legacy_defaults(home)
+        old = {**personal, **owned, "permissions": {"deny": [*shipped, "Read(private)"]},
+               "env": {**personal["env"], **owned["env"]}}
+        current = {**old, **custom} if case == "personal-current" else old
+        before = {**personal, **custom} if case == "personal-backup" else old
+        settings.write_text(json.dumps(current))
+        settings.with_suffix(".json.lonca-bak").write_text(json.dumps(before))
+        run("sh", SRC / "install.sh", "--uninstall", env=dict(os.environ, **fixture_home(home)))
+        assert json.loads(settings.read_bytes()) == (personal if case == "polluted" else {**personal, **custom}), case
+
+
 def migration(base):
     # test() has installed a fake local-scope plugin CLI in this temporary HOME.
     home = Path.home()
@@ -266,7 +293,9 @@ def migration(base):
     assert "Bash(*GIT_CONFIG_*)" in shipped
     owned = [*shipped, shipped[0]]
     private = ["Edit(~/.local/state/lonca/private/**)", "Bash(git clean ./private)"]
+    defaults = legacy_defaults(home)
     settings.write_text(json.dumps({
+        **defaults,
         "extraKnownMarketplaces": market,
         "permissions": {"deny": [private[0], *owned, private[1]]},
         "hooks": {
@@ -328,7 +357,10 @@ def migration(base):
     run(script, "migrate", explicit)
     assert run(script, "status", "--lane", repo)
     assert not codex.is_symlink() and doc.read_text() == "personal\n"
-    assert json.loads(settings.read_bytes())["permissions"]["deny"] == private
+    cleaned = json.loads(settings.read_bytes())
+    assert cleaned["permissions"]["deny"] == private
+    assert not ({"attribution", "includeCoAuthoredBy", "autoMemoryDirectory"} & cleaned.keys())
+    assert "TMPDIR" not in cleaned.get("env", {})
     assert "echo personal" in settings.read_text()
     assert "/bin/memory-context" not in settings.read_text() and "/bin/ai-trace-gh" not in settings.read_text()
     assert json.loads(hooks.read_text())["hooks"]["Stop"] == [{"hooks": [personal]}]
@@ -392,6 +424,8 @@ if sys.argv[1] == "run":
     recorded_deny = [rule for record in records if record["path"] == str(settings)
                      for rule in record["removed"].get("permissions", {}).get("deny", [])]
     assert recorded_deny == owned
+    assert any(r["path"] == str(settings) and all(r["removed"].get(k) == v for k, v in defaults.items())
+               for r in records)
     assert all("global-only-fixture" not in json.dumps(r) for r in records)
     run(script, "migrate")
     assert backups == list((home / ".local/state/lonca/migration-backups").iterdir())
@@ -471,4 +505,5 @@ if __name__ == "__main__":
         off_switch(base)
         test(base)
         migration(base)
+        direct_uninstall(base)
     print("per-project layout passed")

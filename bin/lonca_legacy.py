@@ -37,6 +37,25 @@ def deny_rules():
     return set(json.loads((BIN.parent / "config/claude-permissions.json").read_bytes())["deny"])
 
 
+def same_value(left, right):
+    # JSON false and 0 compare equal in Python.
+    return type(left) is type(right) and left == right
+
+
+def installed_claude_values(data):
+    """Only the exact key/value pairs the legacy installer wrote."""
+    defaults = {"attribution": {"commit": "", "pr": ""}, "includeCoAuthoredBy": False,
+                "autoMemoryDirectory": "~/ai-memory"}
+    matches = {key: value for key, value in defaults.items()
+               if same_value(data.get(key), value)}
+    env = data.get("env", {})
+    if "TMPDIR" in env:
+        tmp = subprocess.check_output([BIN / "lonca-config", "tmpdir", HOME / ".cache/lonca/tmp"], text=True).strip()
+        if env["TMPDIR"] == tmp:
+            matches["env"] = {"TMPDIR": tmp}
+    return matches
+
+
 LEGACY_HOOKS = {
     "SessionStart": {f"{LONCA}/bin/memory-context", f"{LONCA}/bin/deja-scope --session",
                      f"{LONCA}/bin/session-tmpdir", "cat ~/ai-memory/MEMORY.md"},
@@ -189,7 +208,8 @@ class Legacy:
             deny = data.get("permissions", {}).get("deny", []) if path == CONF else []
             owned = [rule for rule in deny if rule in installed_deny]
             ours = has_installed_hooks(data)
-            if not bak.exists() and not ours and not owned:
+            values = installed_claude_values(data) if path == CONF else {}
+            if not bak.exists() and not ours and not owned and not values:
                 continue
             if owned:
                 for rule in owned:
@@ -201,24 +221,20 @@ class Legacy:
                     data.get("permissions", {}).pop("deny", None)
                 if not data.get("permissions") and "permissions" not in previous:
                     data.pop("permissions", None)
-                for key, value in (("attribution", {"commit": "", "pr": ""}), ("includeCoAuthoredBy", False),
-                                   ("autoMemoryDirectory", "~/ai-memory")):
-                    if data.get(key) == value and key not in previous:
-                        print(f"  remove {key}")
-                        removed[key] = value
-                        del data[key]
-                    elif data.get(key) == value and previous.get(key) != value:
-                        print(f"  restore {key} from backup")
-                        removed[key] = value
-                        data[key] = previous[key]
-                env = data.get("env", {})
-                tmp = subprocess.check_output([BIN / "lonca-config", "tmpdir", HOME / ".cache/lonca/tmp"], text=True).strip()
-                if env.get("TMPDIR") == tmp and "TMPDIR" not in previous.get("env", {}):
-                    print("  remove env.TMPDIR")
-                    removed["env"] = {"TMPDIR": tmp}
-                    del env["TMPDIR"]
-                    if not env and "env" not in previous:
-                        data.pop("env", None)
+            for key, value in values.items():
+                dest, prior, field, label = data, previous, key, key
+                if key == "env":
+                    dest, prior = data["env"], previous.get("env", {})
+                    field, label = "TMPDIR", "env.TMPDIR"
+                if field in prior and not same_value(prior[field], dest[field]):
+                    print(f"  restore {label} from backup")
+                    dest[field] = prior[field]
+                else:
+                    print(f"  remove {label}")
+                    del dest[field]
+                if key == "env" and not dest and "env" not in previous:
+                    del data["env"]
+                removed[key] = value
             for event, groups in list(data.get("hooks", {}).items()):
                 for group in list(groups):
                     hooks = group.get("hooks", [])
