@@ -26,6 +26,8 @@ LOG=$HOME/.local/state/lonca/merge.log   # the audit trail: kept, unlike the run
 no() { echo "$me: refused PR #$pr: $*" >&2; echo "$(date -Iseconds) refused $repo #$pr: $*" >> "$LOG" 2>/dev/null || true; exit 1; }
 GH=$(PATH=$(printf '%s' "$PATH" | tr ':' '\n' | grep -v "lonca/shims" | paste -sd: -) command -v gh)   # the real gh, not the shim
 
+project=$("$L/lonca-project" "$repo") || { echo "$me: no Lonca project marker for $repo" >&2; exit 1; }
+proj=${project%%	*}
 mkdir -p "$N" "${LOG%/*}"; i=0   # one merge at a time on this machine (the night cap is counted inside the lock)
 until mkdir "$N/.merge.lock" 2>/dev/null; do
   i=$((i + 1)); [ $i -gt 300 ] && { echo "$me: another merge has held $N/.merge.lock for 5 min (remove it if stale)" >&2; exit 1; }
@@ -37,7 +39,6 @@ info=$(cd "$repo" && "$GH" pr view "$pr" --json state,isDraft,mergeable,title,bo
 head=$(printf '%s' "$info" | python3 -I -c 'import json,sys;print(json.load(sys.stdin)["headRefOid"])')
 base=$(printf '%s' "$info" | python3 -I -c 'import json,sys;print(json.load(sys.stdin)["baseRefName"])')
 nwo=$(cd "$repo" && "$GH" repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || no "cannot read the repo name"
-proj=$("$L/lonca-project" "$repo" 2>/dev/null | cut -f1) || proj=
 key=$(printf '%s' "$nwo" | tr '/' '_')_$pr short=${head%"${head#???????}"}
 
 # Risk tier (from the PR's diff; the lead may only raise it) and the project's settings

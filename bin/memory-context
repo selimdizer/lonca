@@ -1,18 +1,31 @@
-#!/bin/sh
-# SessionStart hook: print the memory group index for the session's working directory (stdout becomes context).
-# Input: hook JSON on stdin with "cwd"; falls back to $PWD.
-# Project = `lonca-project` (closest .lonca.toml up the tree, else the git repo); its memory group is ~/ai-memory/<name>/.
-cwd=$(python3 -I -c 'import json,sys
-try: print(json.load(sys.stdin).get("cwd",""))
-except Exception: print("")' 2>/dev/null)
-[ -n "$cwd" ] || cwd=$PWD
-p=$("$HOME/lonca/bin/lonca-project" "$cwd" 2>/dev/null) || exit 0   # project name<TAB>root (.lonca.toml, else the git repo)
-g=${p%%	*} root=${p#*	}
-case $g in owner|setup|personal) exit 0 ;; esac   # indexed in MEMORY.md, already loaded
-f=$HOME/ai-memory/$g/INDEX.md
-if [ -f "$f" ]; then
-  echo "# Project memory index ($f; notes are files next to it)"; cat "$f"
-else
-  echo "# Project memory: $root (project \"$g\") has no memory group yet. Save its notes in ~/ai-memory/$g/ and index them in ~/ai-memory/$g/INDEX.md (see ~/ai-memory/README.md)."
-fi
-exit 0
+#!/usr/bin/env python3
+"""SessionStart: print the marked project's memory index for the hook's cwd."""
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+from claude_session import duplicate
+
+if os.environ.get("LONCA") == "0":
+    sys.exit(0)
+try:
+    event = json.load(sys.stdin)
+except ValueError:
+    event = {}
+if duplicate("memory-context", event):
+    sys.exit(0)
+home = Path.home()
+project = subprocess.run([home / "lonca/bin/lonca-project", event.get("cwd") or os.getcwd()],
+                         capture_output=True, text=True)
+if project.returncode == 0:
+    group, root = project.stdout.rstrip("\n").split("\t")
+    if group not in ("owner", "setup", "personal"):
+        index = home / "ai-memory" / group / "INDEX.md"
+        if index.is_file():
+            print(f"# Project memory index ({index}; notes are files next to it)")
+            print(index.read_text(), end="")
+        else:
+            print(f'# Project memory: {root} (project "{group}") has no memory group yet. '
+                  f'Save its notes in {index.parent}/ and index them in {index} (see ~/ai-memory/README.md).')

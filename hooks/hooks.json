@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [{
+      "matcher": "startup|resume|clear|compact",
+      "hooks": [
+        {"type": "command", "command": "\"$HOME/lonca/bin/memory-context\""},
+        {"type": "command", "command": "\"$HOME/lonca/bin/deja-scope\" --session"},
+        {"type": "command", "command": "\"$HOME/lonca/bin/session-tmpdir\""}
+      ]
+    }],
+    "PreToolUse": [{
+      "matcher": "Bash",
+      "hooks": [{"type": "command", "command": "\"$HOME/lonca/bin/ai-trace-gh\" --hook"}]
+    }]
+  }
+}

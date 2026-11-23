@@ -1,0 +1,705 @@
+#!/usr/bin/env python3
+"""Install and inspect personal Lonca settings for the repositories in a project."""
+import argparse
+from collections import Counter
+import base64
+import fcntl
+import hashlib
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+SRC = Path(__file__).resolve().parent.parent
+HOME = Path.home().resolve()
+REGISTRY = HOME / ".local/state/lonca/projects"
+HOOKS = str(HOME / "lonca/git-hooks")
+PLUGIN = "lonca@lonca"
+SETTINGS = ".claude/settings.local.json"
+IMPORT = "@~/lonca/AGENTS.md"
+MARKERS = (".lonca.toml", "lonca.toml")
+
+
+def git(repo, *args, optional=False):
+    p = subprocess.run(["git", "-C", repo, *args], text=True, stdout=subprocess.PIPE)
+    if optional and p.returncode == 1:
+        return None
+    p.check_returncode()
+    return p.stdout.rstrip("\n")
+
+
+def plain(path):
+    # A checkout can contain symlinks to other repos or to the user's home.
+    if path.resolve() != path:
+        raise ValueError(f"refusing symlink: {path}")
+    if path.exists() and not path.is_file():
+        raise ValueError(f"expected a regular file: {path}")
+    return path
+
+
+def read(path):
+    return path.read_bytes() if plain(path).exists() else None
+
+
+def atomic(path, data, mode=0o600):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as out:
+            os.fchmod(out.fileno(), mode)
+            out.write(data)
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def formatted(data):
+    return (json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode()
+
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest() if data is not None else None
+
+
+def registry_file(root):
+    return REGISTRY / (hashlib.sha256(os.fsencode(root)).hexdigest() + ".json")
+
+
+def marked(folder):
+    return any((folder / name).is_file() for name in MARKERS)
+
+
+def repos(root, worktrees=None):
+    main = {}
+    linked = {}
+    ignored = {".git", "node_modules", "target", "vendor", ".venv", "venv", ".tox", ".nox", "__pycache__"}
+    for dirname, dirs, files in os.walk(root):
+        folder = Path(dirname)
+        if folder != root and marked(folder):
+            dirs.clear()
+            continue
+        if ".git" in dirs or ".git" in files:
+            gitdir, common = (Path(line).resolve() for line in
+                              git(folder, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir").splitlines())
+            if gitdir != common:
+                linked[folder] = common
+                dirs.clear()
+                continue
+            if not common.is_relative_to(root) or Path(git(folder, "rev-parse", "--show-toplevel")).resolve() != folder:
+                raise ValueError(f"git repository points outside the project: {folder}")
+            main[folder] = common
+        dirs[:] = sorted(d for d in dirs if d not in ignored and not d.startswith(".venv-") and not (folder / d).is_symlink())
+    owners = {common: repo for repo, common in main.items()}
+    for folder, common in linked.items():
+        if common not in owners:
+            raise ValueError(f"linked worktree {folder} belongs to a repository outside this project ({common}); "
+                             "choose its main checkout or move the worktree outside the project folder")
+        if worktrees is not None:
+            worktrees[folder] = owners[common]
+    return main.items()
+
+
+def personal(repo, name):
+    path = plain(repo / name)
+    if git(repo, "ls-files", "--", name):
+        raise ValueError(f"{path} is tracked; personal settings would appear in your diff")
+    return path
+
+
+MISSING = object()
+
+
+def undo_json(before, installed, current):
+    """Reverse only values this installation introduced; preserve subsequent edits."""
+    if current == installed:
+        return before
+    if isinstance(installed, dict) and isinstance(current, dict):
+        original = before if isinstance(before, dict) else {}
+        result = current.copy()
+        for key, value in installed.items():
+            if key in result and value != original.get(key, MISSING):
+                restored = undo_json(original.get(key, MISSING), value, result[key])
+                if restored is MISSING:
+                    del result[key]
+                else:
+                    result[key] = restored
+        return result if result or before is not MISSING else MISSING
+    if isinstance(installed, list) and isinstance(current, list):
+        original = before if isinstance(before, list) else []
+        result = current.copy()
+        for item in installed:
+            if item in original:
+                continue
+            if item in result:
+                result.remove(item)
+            elif isinstance(item, dict) and "hooks" in item:
+                # A user can append another handler to one of our matcher groups.
+                for group in result:
+                    if isinstance(group, dict) and group.get("matcher") == item.get("matcher"):
+                        hooks = group.get("hooks", [])
+                        if any(h in hooks for h in item["hooks"]):
+                            group["hooks"] = [h for h in hooks if h not in item["hooks"]]
+                            break
+        return result if result or before is not MISSING else MISSING
+    return current
+
+
+def without_lines(before, installed, current):
+    added = Counter(installed.splitlines()) - Counter(before.splitlines())
+    kept = []
+    for line in current.splitlines(keepends=True):
+        key = line.rstrip(b"\r\n")
+        if added[key]:
+            added[key] -= 1
+        else:
+            kept.append(line)
+    return b"".join(kept)
+
+
+def toml_sections(text):
+    """Keep comments and formatting while editing the simple tables init appends."""
+    sections = {}
+    header = b""
+    for line in text.splitlines(keepends=True):
+        if re.match(rb"^\s*\[.+\]\s*(?:#.*)?$", line):
+            header = line.strip().split(b"#", 1)[0].strip()
+        sections.setdefault(header, []).append(line)
+    return sections
+
+
+def undo_file(path, before, installed, current):
+    if current == installed:
+        return before
+    if current is None or current == before:
+        return current
+    original = before or b""
+    if path.name in ("settings.local.json", "hooks.json"):
+        value = undo_json(json.loads(before) if before is not None else MISSING,
+                          json.loads(installed or b"{}"), json.loads(current))
+        if value is MISSING:
+            return None
+        if before is not None and value == json.loads(before):
+            return before
+        return formatted(value)
+    if path.name == "config.toml":
+        # Only touch the MCP tables we wrote. Other TOML, including repeated
+        # array-of-tables sections, must keep its original order and bytes.
+        existing = toml_sections(original)
+        ours = toml_sections(installed or b"")
+        result = []
+        section = []
+        def flush():
+            if not section:
+                return
+            key = section[0].strip().split(b"#", 1)[0].strip()
+            if key not in (b"[mcp_servers.kanzo]", b"[mcp_servers.deja]", b"[mcp_servers.deja.env]") or key not in ours:
+                result.extend(section)
+                return
+            old = existing.get(key, [])
+            rest = without_lines(b"".join(old[1:]), b"".join(ours[key][1:]), b"".join(section[1:]))
+            if old or any(line.strip() and not line.lstrip().startswith(b"#") for line in rest.splitlines()):
+                result.append(section[0])
+            result.append(rest)
+        for line in current.splitlines(keepends=True):
+            if re.match(rb"^\s*\[.+\]\s*(?:#.*)?$", line):
+                flush()
+                section = []
+            section.append(line)
+        flush()
+        cleaned = b"".join(result)
+        try:
+            import tomllib
+        except ImportError:
+            pass
+        else:
+            # Text inside multiline strings can look like a table. Refuse an ambiguous edit.
+            expected = undo_json(tomllib.loads(original.decode()), tomllib.loads(installed.decode()), tomllib.loads(current.decode()))
+            if tomllib.loads(cleaned.decode()) != expected:
+                raise ValueError(f"ambiguous edits in {path}; preserve your custom settings before removal")
+    elif path.name in ("CLAUDE.local.md", "exclude"):
+        cleaned = without_lines(original, installed or b"", current)
+    elif path.name == "lonca.rules" and installed:
+        rules = (SRC / "config/codex-rules/default.rules").read_bytes()
+        cleaned = current.replace(rules, b"", 1) if rules not in original else current
+    else:
+        return current  # A changed project marker or policy belongs to its editor.
+    return cleaned if cleaned or before is not None else None
+
+
+class Project:
+    """One private write-ahead record per project; it is also the registration."""
+    def __init__(self, root):
+        self.root = root
+        self.file = registry_file(root)
+        self.data = json.loads(self.file.read_bytes()) if self.file.exists() else {
+            "root": str(root), "files": {}, "dirs": [], "repos": {}, "agents": ["claude", "codex"]
+        }
+
+    def save(self):
+        for name, entry in self.data["files"].items():
+            if "before" in entry:
+                entry["original"] = self.backup(self.original(entry))
+                entry.pop("before")
+                current = read(Path(name))
+                if digest(current) == entry["after"]:
+                    self.backup(current)
+        atomic(self.file, formatted(self.data))
+
+    @property
+    def backups(self):
+        return self.file.with_suffix(".backups")
+
+    def backup(self, data):
+        key = digest(data)
+        if key is not None:
+            self.backups.mkdir(mode=0o700, exist_ok=True)
+            dest = plain(self.backups / key)
+            if not dest.exists():
+                atomic(dest, data)
+        return key
+
+    def original(self, entry):
+        if "original" in entry:
+            key = entry["original"]
+            return plain(self.backups / key).read_bytes() if key is not None else None
+        # Registrations written by the first phase-one preview.
+        return base64.b64decode(entry["before"]) if entry["before"] is not None else None
+
+    def restored(self, path, entry, current):
+        before = self.original(entry)
+        if digest(current) == entry["after"]:
+            return before
+        if current is None or current == before:
+            return current
+        applied = read(self.backups / entry["after"]) if entry["after"] else None
+        if applied is None:
+            raise ValueError(f"installed snapshot unavailable for {path}; keep your edited copy before restoring")
+        return undo_file(path, before, applied, current)
+
+    def remember(self, path):
+        data = read(path)
+        files = self.data["files"]
+        if str(path) not in files:
+            files[str(path)] = {"original": self.backup(data),
+                                "mode": stat.S_IMODE(path.stat().st_mode) if data is not None else 0o600,
+                                "after": digest(data)}
+            parent = path.parent
+            while not parent.exists():
+                if str(parent) not in self.data["dirs"]:
+                    self.data["dirs"].append(str(parent))
+                parent = parent.parent
+        entry = files[str(path)]
+        # Fold later user edits into the baseline before applying a repair.
+        entry["original"] = self.backup(self.restored(path, entry, data))
+        entry.pop("before", None)
+        entry["after"] = self.backup(data)
+        self.save()
+        return entry
+
+    def write(self, path, data):
+        if data != read(path):
+            entry = self.remember(path)
+            entry["after"] = self.backup(data)
+            self.save()
+            atomic(path, data, entry["mode"])
+
+    def install_plugin(self, repo, rec):
+        path = personal(repo, SETTINGS)
+        values = json.loads(read(path) or b"{}")
+        if values.get("enabledPlugins", {}).get(PLUGIN) is False:
+            raise ValueError(f"{PLUGIN} disabled in {path}")
+        installed = plugin_installed(repo)
+        if installed and values.get("enabledPlugins", {}).get(PLUGIN):
+            return
+        entry = self.remember(path)
+        if not installed:
+            rec["plugin"] = True
+            self.save()
+        try:
+            plugin_cmd(repo, "marketplace", "add", HOME / "lonca", "--scope", "local")
+            plugin_cmd(repo, "install", PLUGIN, "--scope", "local")
+        finally:
+            entry["after"] = self.backup(read(path))
+            self.save()
+
+    def exclude(self, repo, common, names):
+        exclude = plain(common / "info/exclude")
+        original = read(exclude) or b""
+        additions = ["/" + name for name in names if os.fsencode("/" + name) not in original.splitlines()]
+        if additions:
+            self.write(exclude, append(original, "\n".join(additions)))
+        for name in names:
+            if git(repo, "check-ignore", "--", name, optional=True) is None:
+                raise ValueError(f"{repo / name} is exposed by a higher-priority Git ignore rule")
+
+    def init_repo(self, repo, common, agents, policy):
+        identity = [common.stat().st_dev, common.stat().st_ino]
+        rec = self.data["repos"].setdefault(str(repo), {"common": str(common), "identity": identity})
+        if rec["common"] != str(common) or rec["identity"] != identity:
+            raise ValueError(f"{repo} now points to a different git directory")
+        names = []
+        if (repo / ".lonca.toml").as_posix() in self.data["files"]:
+            names.append(".lonca.toml")
+        if "claude" in agents:
+            names.extend([SETTINGS, "CLAUDE.local.md"])
+        if "codex" in agents:
+            names.extend([".codex/config.toml", ".codex/hooks.json", ".codex/rules/lonca.rules"])
+        paths = {name: personal(repo, name) for name in names}
+        self.exclude(repo, common, names)
+        plain(common / "config")
+        local = git(repo, "config", "--local", "--get", "core.hooksPath", optional=True)
+        effective = git(repo, "config", "--get", "core.hooksPath", optional=True)
+        if effective not in (None, HOOKS):
+            print(f"warning: {repo} keeps its hooksPath ({effective})")
+        elif local is None:
+            rec["hooks"] = HOOKS
+            self.save()
+            git(repo, "config", "--local", "core.hooksPath", HOOKS)
+        if "claude" in agents:
+            self.install_plugin(repo, rec)
+            path = paths[SETTINGS]
+            values = json.loads(read(path) or b"{}")
+            deny = values.setdefault("permissions", {}).setdefault("deny", [])
+            for rule in json.loads((SRC / "config/claude-permissions.json").read_bytes())["deny"]:
+                if rule not in deny:
+                    deny.append(rule)
+            values.setdefault("env", {})["DEJA_POLICY_FILE"] = str(policy)
+            self.write(path, formatted(values))
+            path = paths["CLAUDE.local.md"]
+            old = read(path) or b""
+            if IMPORT.encode() not in old.splitlines():
+                self.write(path, append(old, IMPORT))
+        if "codex" in agents:
+            path = paths[".codex/config.toml"]
+            self.write(path, codex_mcp(read(path) or b"", policy))
+            path = paths[".codex/hooks.json"]
+            hooks = json.loads(read(path) or b"{}")
+            for event, groups in codex_hooks()["hooks"].items():
+                dest = hooks.setdefault("hooks", {}).setdefault(event, [])
+                for group in groups:
+                    if group not in dest:
+                        dest.append(group)
+            self.write(path, formatted(hooks))
+            path = paths[".codex/rules/lonca.rules"]
+            old = read(path) or b""
+            rules = (SRC / "config/codex-rules/default.rules").read_bytes()
+            if rules not in old:
+                self.write(path, old + (b"\n" if old else b"") + rules)
+        rec["ready"] = True
+        self.save()
+
+    def policy(self):
+        spec = json.loads(subprocess.check_output([SRC / "bin/deja-scope", "--policy", self.root]))
+        path = Path(spec["file"])
+        data = json.dumps(spec["policy"], indent=0).encode()
+        entry = self.data["files"].get(str(path))
+        if entry and read(path) == data:
+            # The periodic deja refresh can legitimately update this generated file.
+            entry["after"] = self.backup(data)
+        return path, data
+
+    def init(self, agents):
+        if agents:
+            self.data["agents"] = sorted(set(self.data["agents"] + agents)) if self.file.exists() else agents
+        found = list(repos(self.root))
+        if "claude" in self.data["agents"]:
+            check_marketplaces([repo for repo, _ in found])
+        for file in REGISTRY.glob("*.json"):
+            if file != self.file:
+                other = json.loads(file.read_bytes())
+                if any(str(repo) in other["repos"] for repo, _ in found):
+                    raise ValueError(f"repository already managed by project {other['root']}")
+        if not marked(self.root):
+            marker = self.root / MARKERS[0]
+            if (self.root / ".git").exists():
+                personal(self.root, MARKERS[0])
+                self.exclude(self.root, dict(found)[self.root], [MARKERS[0]])
+            self.write(marker, b"# Personal Lonca project settings\n")
+        policy, policy_data = self.policy()
+        self.data["policy"] = str(policy)
+        self.write(policy, policy_data)
+        self.write(policy.with_suffix(".root"), os.fsencode(self.root))
+        for repo, common in found:
+            self.init_repo(repo, common, self.data["agents"], policy)
+        self.save()
+
+    def remove(self):
+        if not self.file.exists():
+            raise ValueError(f"not registered: {self.root}")
+        if marked(self.root) and self.data.get("policy"):
+            self.policy()
+        files = self.data["files"]
+        skipped = []
+        present = []
+        for dirname, rec in self.data["repos"].items():
+            repo = Path(dirname)
+            if repo.is_dir() and (repo / ".git").exists() and repo.resolve() == repo:
+                common = Path(git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()
+                if common == Path(rec["common"]) and [common.stat().st_dev, common.stat().st_ino] == rec["identity"]:
+                    present.append((repo, common, rec))
+                    continue
+            print(f"warning: {repo} moved, was deleted or replaced; skipping its checkout")
+            skipped.extend([repo, Path(rec["common"])])
+        restore = {}
+        for name, entry in files.items():
+            path = Path(name)
+            if not any(path.is_relative_to(folder) for folder in skipped):
+                restore[path] = self.restored(path, entry, read(path))
+        for repo, common, rec in present:
+            plain(common / "config")
+            if rec.get("hooks") and git(repo, "config", "--local", "--get", "core.hooksPath", optional=True) == rec["hooks"]:
+                git(repo, "config", "--local", "--unset", "core.hooksPath")
+        for repo, common, rec in present:
+            if rec.get("plugin") and plugin_installed(repo):
+                path = repo / SETTINGS
+                try:
+                    plugin_cmd(repo, "uninstall", PLUGIN, "--scope", "local", "--keep-data")
+                finally:
+                    # Keep the retry baseline even when the CLI partially edits settings.
+                    entry = files[str(path)]
+                    entry["original"] = self.backup(restore[path])
+                    entry["after"] = self.backup(read(path))
+                    entry.pop("before", None)
+                    self.save()
+        for path, original in reversed(list(restore.items())):
+            if original is None:
+                path.unlink(missing_ok=True)
+            elif read(path) != original:
+                atomic(path, original, files[str(path)]["mode"])
+        for dirname in sorted(self.data["dirs"], key=lambda p: len(Path(p).parts), reverse=True):
+            path = Path(dirname)
+            if not any(path.is_relative_to(folder) for folder in skipped) and path.resolve() == path and path.is_dir() and not any(path.iterdir()):
+                path.rmdir()
+        # A moved checkout may still contain installed settings. Leave its original files recoverable.
+        recovery = {}
+        for name, entry in files.items():
+            if any(Path(name).is_relative_to(folder) for folder in skipped):
+                recovery[name] = self.backup(self.original(entry))
+        if recovery:
+            directory = Path(tempfile.mkdtemp(prefix=self.file.stem + ".recovery-", dir=REGISTRY))
+            for key in set(recovery.values()) - {None}:
+                os.link(plain(self.backups / key), directory / key)
+            atomic(directory / "recovery.json", formatted(recovery))
+            print(f"original files for skipped checkouts: {directory / 'recovery.json'}")
+        if self.backups.exists():
+            for blob in self.backups.iterdir():
+                if re.fullmatch("[0-9a-f]{64}", blob.name):
+                    plain(blob).unlink()
+            if not any(self.backups.iterdir()):
+                self.backups.rmdir()
+        self.file.unlink()
+
+
+def append(data, text):
+    return data + (b"\n" if data and not data.endswith(b"\n") else b"") + text.encode() + b"\n"
+
+
+def check_marketplaces(repositories):
+    # Even a local install uses a shared marketplace cache. Never repoint an existing name.
+    config = Path(os.environ.get("CLAUDE_CONFIG_DIR") or HOME / ".claude")
+    sources = [(config / "settings.json", "extraKnownMarketplaces"),
+               (config / "plugins/known_marketplaces.json", None)]
+    for repo in repositories:
+        sources.extend([(repo / ".claude/settings.json", "extraKnownMarketplaces"), (repo / SETTINGS, "extraKnownMarketplaces")])
+    for path, key in sources:
+        if not path.is_file():
+            continue
+        data = json.loads(path.read_bytes())
+        catalog = (data.get(key, {}) if key else data).get("lonca")
+        if catalog is not None:
+            source = catalog.get("source", {})
+            location = Path(source.get("path", "")).expanduser()
+            if source.get("source") != "directory" or location.resolve() != (HOME / "lonca").resolve():
+                raise ValueError(f"marketplace 'lonca' in {path} uses another source; resolve the name before init")
+
+
+def plugin_cmd(repo, *args):
+    subprocess.run(["claude", "plugin", *args], cwd=repo, check=True)
+
+
+def plugin_installed(repo):
+    result = subprocess.check_output(["claude", "plugin", "list", "--json"], cwd=repo)
+    return any(p.get("id") == PLUGIN and p.get("scope") == "local"
+               and Path(p.get("projectPath") or "/").resolve() == repo for p in json.loads(result))
+
+
+def codex_hooks():
+    start = []
+    for cmd in ('if [ "${LONCA:-}" != 0 ] && [ -f "$HOME/ai-memory/MEMORY.md" ]; then cat "$HOME/ai-memory/MEMORY.md"; fi',
+                '"$HOME/lonca/bin/memory-context"'):
+        start.append({"matcher": "startup|resume|clear|compact", "hooks": [{"type": "command", "command": cmd}]})
+    return {"hooks": {"SessionStart": start, "Stop": [
+        {"hooks": [{"type": "command", "command": 'python3 "$HOME/lonca/config/memory-nudge.py"'}]}]}}
+
+
+def codex_mcp(old, policy):
+    try:
+        import tomllib
+    except ImportError:  # macOS Python 3.9: only append to files with unambiguous, unrelated tables.
+        tomllib = None
+    text = old.decode()
+    servers = tomllib.loads(text).get("mcp_servers", {}) if tomllib else {}
+    for name in ("kanzo", "deja"):
+        block = f'[mcp_servers.{name}]\ncommand = "{name}"\nargs = ["mcp"]\n'
+        if name == "deja":
+            block += f"env = {{ DEJA_POLICY_FILE = {json.dumps(str(policy), ensure_ascii=False)} }}\n"
+        if name in servers:
+            server = servers[name]
+            if Path(server.get("command", "")).name != name or server.get("args") != ["mcp"]:
+                raise ValueError(f"existing mcp_servers.{name} conflicts with project settings")
+            if name == "deja" and server.get("env", {}).get("DEJA_POLICY_FILE") != str(policy):
+                if "env" in server:
+                    raise ValueError("existing mcp_servers.deja.env conflicts with the project policy")
+                text += f'\n[mcp_servers.deja.env]\nDEJA_POLICY_FILE = {json.dumps(str(policy), ensure_ascii=False)}\n'
+            continue
+        if not tomllib:
+            if block in text:
+                continue
+            if re.search(r"(?m)^\s*(?:\[\s*)?[\"']?mcp_servers[\"']?\s*(?:=|\.\s*[\"']?" + name + r"\b)", text):
+                raise ValueError(f"Python 3.11+ is needed to merge this existing mcp_servers.{name} configuration")
+        text += ("\n" if text else "") + block
+    if tomllib:
+        tomllib.loads(text)
+    return text.encode()
+
+
+def status(root):
+    project = Project(root)
+    print(f"{root} ({'registered' if project.file.exists() else 'unregistered'})")
+    worktrees = {}
+    for repo, common in repos(root, worktrees):
+        local = git(repo, "config", "--local", "--get", "core.hooksPath", optional=True)
+        effective = git(repo, "config", "--get", "core.hooksPath", optional=True)
+        hooks = "on" if local == effective == HOOKS else "off"
+        if effective is not None and effective != HOOKS:
+            hooks += f" (own hooksPath: {effective})"
+        settings = json.loads(read(repo / SETTINGS) or b"{}")
+        enabled = settings.get("enabledPlugins", {}).get(PLUGIN)
+        claude = "enabled" if enabled else "off"
+        deny = json.loads((SRC / "config/claude-permissions.json").read_bytes())["deny"]
+        configured = (set(deny) <= set(settings.get("permissions", {}).get("deny", []))
+                      and project.data.get("policy")
+                      and project.data["policy"] == settings.get("env", {}).get("DEJA_POLICY_FILE")
+                      and IMPORT.encode() in (read(repo / "CLAUDE.local.md") or b"").splitlines())
+        config = read(repo / ".codex/config.toml")
+        rules = read(repo / ".codex/rules/lonca.rules") or b""
+        hooks_file = json.loads(read(repo / ".codex/hooks.json") or b"{}").get("hooks", {})
+        policy = project.data.get("policy")
+        codex = False
+        if config and policy:
+            try:
+                codex = (config == codex_mcp(config, policy)
+                         and (SRC / "config/codex-rules/default.rules").read_bytes() in rules
+                         and all(g in hooks_file.get(event, []) for event, groups in codex_hooks()["hooks"].items()
+                                 for g in groups))
+            except ValueError as error:
+                print(f"    warning: {repo}/.codex/config.toml: {error}")
+        print(f"  {repo}: git hooks {hooks}, Claude plugin {claude}, settings {'on' if configured else 'off'}, Codex {'on' if codex else 'off'}")
+        if local == HOOKS:
+            for hook in ("commit-msg", "pre-push"):
+                if not os.access(Path(HOOKS) / hook, os.X_OK):
+                    print(f"    warning: Git guard missing or not executable: {hook}")
+        elif project.data["repos"].get(str(repo), {}).get("hooks"):
+            print("    warning: project Git guard setting missing or changed")
+        if not marked(root):
+            print(f"    {repo} lost Git-only project status; add a project marker to opt in")
+        if not project.data["repos"].get(str(repo), {}).get("ready"):
+            print("    warning: repo not initialised")
+        else:
+            if "claude" in project.data["agents"] and not set(deny) <= set(settings.get("permissions", {}).get("deny", [])):
+                print(f"    warning: guard rules missing from {repo / SETTINGS}")
+            if "codex" in project.data["agents"] and (SRC / "config/codex-rules/default.rules").read_bytes() not in rules:
+                print(f"    warning: guard rules missing from {repo / '.codex/rules/lonca.rules'}")
+    for folder, owner in worktrees.items():
+        print(f"  {folder}: linked worktree of {owner} (shared Git configuration)")
+
+
+def global_status(folder):
+    legacy = []
+    if git(folder, "config", "--global", "--get", "core.hooksPath", optional=True) == HOOKS:
+        legacy.append("git hooksPath")
+    for name in (".claude/settings.json", ".claude/CLAUDE.md", ".codex/hooks.json", ".codex/config.toml"):
+        path = HOME / name
+        if path.is_file() and any(word in path.read_bytes() for word in (b"/lonca/", b"mcp_servers.kanzo", b"mcp_servers.deja")):
+            legacy.append(name)
+    for name in (".claude/agents/lead.md", ".codex/AGENTS.md", ".codex/rules/default.rules"):
+        path = HOME / name
+        if path.is_symlink() and path.resolve().is_relative_to(SRC):
+            legacy.append(name)
+    if legacy:
+        print("  warning: global install still present: remove in phase 2 (" + ", ".join(legacy) + ")")
+
+
+def report_former_projects():
+    # Consult Lonca's own legacy records without walking the user's home or other repositories.
+    directory = HOME / ".local/state/lonca/deja"
+    roots = {Path(p.read_text().strip()) for pattern in ("*.root", "*.former-root")
+             for p in directory.glob(pattern)}
+    settings = directory / "settings-written"
+    if settings.is_file():
+        roots.update(Path(p).parent.parent for p in settings.read_text().splitlines() if p)
+    for root in sorted(roots):
+        if not root.exists():
+            print(f"  former project folder missing: {root}")
+        elif (root / ".git").exists():
+            result = subprocess.run([SRC / "bin/lonca-project", root], capture_output=True)
+            if result.returncode:
+                print(f"  {root} lost Git-only project status; run lonca init to opt in")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    init = commands.add_parser("init")
+    init.add_argument("--agents", help="comma-separated agents (default: claude,codex)")
+    init.add_argument("dir", type=Path)
+    commands.add_parser("remove").add_argument("dir", type=Path)
+    commands.add_parser("status").add_argument("dir", type=Path, nargs="?")
+    args = parser.parse_args()
+    root = args.dir.resolve() if args.dir else None
+    if root and not root.is_dir() and args.command != "remove":
+        parser.error(f"not a directory: {root}")
+    if args.command == "status":
+        if root:
+            p = subprocess.run([SRC / "bin/lonca-project", root], capture_output=True, text=True)
+            status(Path(p.stdout.strip().split("\t")[1]) if p.returncode == 0 else root)
+        else:
+            records = sorted(REGISTRY.glob("*.json"))
+            if not records:
+                print("No registered Lonca projects.")
+            for record in records:
+                status(Path(json.loads(record.read_bytes())["root"]))
+            report_former_projects()
+        global_status(Path.cwd())
+        return
+    agents = args.agents.split(",") if getattr(args, "agents", None) is not None else None
+    if agents is not None and set(agents) - {"claude", "codex"}:
+        parser.error("--agents accepts claude,codex")
+    # Serialize overlapping init/remove calls without leaving a stale lock after interruption.
+    REGISTRY.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd = os.open(REGISTRY, os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        project = Project(root)
+        if args.command == "remove":
+            project.remove()
+        else:
+            p = subprocess.run(["git", "-C", root, "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+            if p.returncode == 0 and Path(p.stdout.strip()).resolve() != root:
+                parser.error("choose the repository root or its parent project directory")
+            project.init(agents)
+        print(f"{args.command}: {root}")
+    finally:
+        os.close(fd)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+        sys.exit(f"lonca: {error}")

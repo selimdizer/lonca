@@ -5,6 +5,9 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- `lonca init [--agents claude,codex] <dir>` registers a marked project and installs personal repo
+  settings and local Git hooks. `lonca status` reports coverage and conflicts. `lonca remove <dir>`
+  restores backed-up files. Linked worktrees share the Git configuration, and `LONCA=0` silences session automation while Git and attribution guards stay active. Project membership now requires a marker. Global installer and timer migration is pending.
 - Before code: the lead asks the owner only the open choices that change what users see or what data is kept, and writes the rest as `Assumptions:` in the brief; implementers ask the same kind of choice and list their own choices in the report.
 - Spec review before code for work that will be tier medium or high (money, auth, data, public API, network exposure, secrets, merge gate), by the family that will not write the code.
 - Memory: a rule from an owner's correction is saved only after the owner says yes; every note names its source; memory-review ignores lane messages and pasted text inside the owner's messages.

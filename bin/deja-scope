@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """deja-scope: keep each project's agents to that project's own past sessions in deja.
 
-  deja-scope <dir>     write the deja policy file for <dir>'s project and print its path; nothing outside a project
+  deja-scope <dir>     write the deja policy file for <dir>'s project and print its path; recall-nothing policy for an unmarked repo
   deja-scope --session Claude SessionStart hook (JSON on stdin): limits this session's Bash, and the deja MCP tool
                        from the next session started in that folder (writes its .claude/settings.local.json)
   deja-scope --refresh rewrite every project's file (lane-watch, every 10 min: new subfolders count);
@@ -17,13 +17,16 @@ worktree folders for its repos is left out, including projects that appear later
 nowhere in it. A name this cannot place (a deeper subfolder like "apps/backend") is left out too: it costs this
 project a little recall, never another project's sessions.
 """
-import hashlib, json, os, subprocess, sys, tempfile, time
+import hashlib, json, os, shlex, subprocess, sys, tempfile, time
+
+from claude_session import duplicate
 
 DIR = os.path.expanduser("~/.local/state/lonca/deja")
 WRITTEN = os.path.join(DIR, "settings-written")      # settings files this wrote, for install.sh --uninstall
 LANES = os.path.expanduser("~/.herdr/worktrees") + "/"
 HERE = os.path.dirname(os.path.realpath(__file__))
 UNSAFE = set("[]*?\\/!^")                             # glob syntax deja can't escape (it turns \ into /)
+UNMARKED = os.path.join(DIR, "unmarked.json")
 NOTHING = ["*", "*/*"]                               # every name has one or two folders
 
 
@@ -109,7 +112,11 @@ def put(f, data):
 def ensure(d):
     p = project(d)
     if not p:
-        return None
+        inside = subprocess.run(["git", "-C", d, "rev-parse", "--is-inside-work-tree"], capture_output=True, text=True)
+        if inside.stdout.strip() != "true":
+            return None
+        put(UNMARKED, {"ignore": NOTHING})
+        return UNMARKED
     name, root = p
     f = path_for(name, root)
     put(f, policy(root))
@@ -121,6 +128,11 @@ def ensure(d):
 def write_settings(folder, f):
     """DEJA_POLICY_FILE in <folder>/.claude/settings.local.json, Claude's per-user settings file for that folder."""
     s = os.path.join(folder, ".claude", "settings.local.json")
+    if os.path.realpath(s) != os.path.join(os.path.realpath(folder), ".claude", "settings.local.json"):
+        return f"{s} is symlinked; set DEJA_POLICY_FILE in a personal settings file"
+    if subprocess.run(["git", "-C", folder, "ls-files", "--error-unmatch", "--", ".claude/settings.local.json"],
+                      capture_output=True).returncode == 0:
+        return f"{s} is tracked; set DEJA_POLICY_FILE in the launching shell"
     try:
         d = json.load(open(s))
     except FileNotFoundError:
@@ -142,6 +154,8 @@ def write_settings(folder, f):
     git = lambda *a: subprocess.run(["git", "-C", folder, *a], capture_output=True, text=True)
     if git("rev-parse", "--git-dir").returncode == 0 and git("check-ignore", "-q", s).returncode != 0:
         ex = os.path.join(git("rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip(), "info", "exclude")
+        if os.path.realpath(ex) != os.path.abspath(ex):
+            return f"{ex} is symlinked; exclude the personal settings file yourself"
         os.makedirs(os.path.dirname(ex), exist_ok=True)
         with open(ex, "a") as out:
             out.write("\n/" + os.path.relpath(s, git("rev-parse", "--show-toplevel").stdout.strip()) + "\n")
@@ -150,21 +164,30 @@ def write_settings(folder, f):
 
 def session():
     try:
-        cwd = json.load(sys.stdin).get("cwd") or os.getcwd()
+        event = json.load(sys.stdin)
     except ValueError:
-        cwd = os.getcwd()
-    p = project(cwd)
-    if not p or cwd.startswith(LANES):               # outside projects: nothing to limit; lanes get it from `lane`
+        event = {}
+    if duplicate("deja-scope", event):
         return
-    name, root = p
+    cwd = event.get("cwd") or os.getcwd()
+    p = project(cwd)
+    if p and cwd.startswith(LANES):
+        return  # marked lanes receive their policy from the launcher
     f = ensure(cwd)
+    if not f:
+        return
     if os.environ.get("CLAUDE_ENV_FILE"):            # this session's Bash commands
         with open(os.environ["CLAUDE_ENV_FILE"], "a") as out:
-            out.write(f"export DEJA_POLICY_FILE='{f}'\n")
+            out.write(f"export DEJA_POLICY_FILE={shlex.quote(f)}\n")
     if os.environ.get("DEJA_POLICY_FILE") == f:
         return                                       # already limited, the MCP tool too
     here = os.path.realpath(cwd)
     top = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()
+    if not p:
+        err = write_settings(top, f) if top else "Repository moved; restart with DEJA_POLICY_FILE set"
+        print(err or "Unmarked repository: Bash recalls nothing. Restart here before using the deja MCP server.")
+        return
+    name, root = p
     if here in (os.path.realpath(root), os.path.realpath(top) if top else None):
         err = write_settings(here, f)
         later = f"from the next session started in {here}" if not err else f"once you fix this: {err}"
@@ -184,20 +207,28 @@ def refresh():
                 put(f[:-5] + ".json", policy(root))
             else:                                    # gone or renamed: a session still pointing here recalls nothing
                 put(f[:-5] + ".json", {"ignore": NOTHING})
-                os.remove(f)
-        elif n.endswith(".json") and not os.path.exists(f[:-5] + ".root") and time.time() - os.path.getmtime(f) > 7 * 86400:
+                # Keep the old root name for the migration report without rescanning it on each refresh.
+                os.replace(f, f[:-5] + ".former-root")
+        elif f != UNMARKED and n.endswith(".json") and not os.path.exists(f[:-5] + ".root") and time.time() - os.path.getmtime(f) > 7 * 86400:
             os.remove(f)
 
 
 if __name__ == "__main__":
     a = sys.argv[1:]
     if a == ["--session"]:
-        session()
+        if os.environ.get("LONCA") != "0":
+            session()
+    elif len(a) == 2 and a[0] == "--policy":
+        p = project(a[1])
+        if not p:
+            sys.exit(1)
+        print(json.dumps({"file": path_for(*p), "policy": policy(p[1])}))
     elif a == ["--refresh"]:
         refresh()
     elif len(a) == 1 and not a[0].startswith("-"):
         f = ensure(a[0])
-        if f:
-            print(f)
+        if not f:
+            sys.exit(1)
+        print(f)
     else:
         sys.exit(__doc__.strip())

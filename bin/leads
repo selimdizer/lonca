@@ -28,7 +28,9 @@ for t in terms:
     cwd, argv = fg.get("cwd") or t.get("cwd", ""), fg.get("argv") or []   # the agent's own folder, not its shell's
     if cwd.startswith(LANES):
         continue
-    role = labels.get("lonca.role") or ("lead" if "--agent=lead" in argv or any(a == "--agent" and b == "lead" for a, b in zip(argv, argv[1:])) else "-")
+    roles = ("lead", "lonca:lead")
+    role = labels.get("lonca.role") or ("lead" if any("--agent=" + r in argv for r in roles) or any(
+        a == "--agent" and b in roles for a, b in zip(argv, argv[1:])) else "-")
     p = subprocess.run([os.path.join(HERE, "lonca-project"), cwd], capture_output=True, text=True)
     proj = p.stdout.split("\t")[0] if p.returncode == 0 else "-"
     st = info.get("status") or t.get("status")

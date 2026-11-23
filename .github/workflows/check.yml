@@ -20,6 +20,8 @@ jobs:
           for f in $(git ls-files); do
             if [ -f "$f" ] && [ ! -L "$f" ] && head -1 "$f" | grep -q python3; then python3 -m py_compile "$f"; fi
           done
+      - name: Per-project init, status and removal
+        run: python3 .github/per-project.py
       - name: Guard shim cases
         run: sh shims/check.sh
       - name: Merge evidence (head pairing, stale head, HIGH finding, missing file)
@@ -79,7 +81,7 @@ jobs:
           ! echo "add anthropic client" | GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=lonca.strictTraces GIT_CONFIG_VALUE_0=true bin/ai-trace-check
       - name: Install and uninstall in an empty home
         run: |
-          H=$(mktemp -d); git config --global user.name ci; git config --global user.email ci@localhost
+          H=$(mktemp -d); HOME="$H" git config --global user.name ci; HOME="$H" git config --global user.email ci@localhost
           mkdir -p "$H/bin" && for t in claude gh; do printf '#!/bin/sh\nexit 0\n' > "$H/bin/$t"; chmod +x "$H/bin/$t"; done
           env -i HOME="$H" PATH="$H/bin:/usr/bin:/bin" sh ./install.sh --yes
           test -L "$H/.claude/skills/orchestrate" && test -L "$H/.local/bin/lane"

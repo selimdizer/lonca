@@ -1,0 +1,8 @@
+{
+  "name": "lonca",
+  "description": "Agents, skills and hooks for a Lonca project",
+  "mcpServers": {
+    "kanzo": {"command": "kanzo", "args": ["mcp"]},
+    "deja": {"command": "deja", "args": ["mcp"], "env": {"DEJA_POLICY_FILE": "${DEJA_POLICY_FILE}"}}
+  }
+}
