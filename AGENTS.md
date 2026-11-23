@@ -16,7 +16,7 @@
 - Don't change global agent config (`~/.claude`, `~/.codex`, `~/lonca`, ...) unless the owner asked for that change.
 - Don't start other agents or CLIs unless your brief says so; the lead dispatches (see the `dispatch` skill).
 - Stay in your project: no other project's files, past sessions or Kanzo cards. A question for another project goes to its lead (`orchestrate` skill, section 10).
-- Work that reaches other projects or the whole machine (stopping or removing containers you did not start, cleanup runs, killing processes, removing packages or users, freeing disk): first tell every session `leads` lists what you will do and wait for objections (`hc send <address> "NOTICE from <you>: …"`), then tell them what you did.
+- Work that reaches other projects or the whole machine (stopping or removing containers you did not start, cleanup runs, killing processes, removing packages or users, freeing disk): label your session first (`hc label $HC_TERMINAL_ID lonca.role=machine lonca.does="<what>"`), tell every session `leads` lists what you will do and wait for objections (`hc send <address> "NOTICE from <you>: …"`), then tell them what you did.
 
 ## How to work
 - Smallest change that fully solves the task. No speculative options, wrappers or "for later" code.

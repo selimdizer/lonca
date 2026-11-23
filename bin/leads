@@ -2,7 +2,8 @@
 """leads: the open agent sessions (leads, and the owner's own sessions), with their project.
 
 Live hc terminals running an agent (claude-code, codex, omp, ...), lanes (~/.herdr/worktrees) left out. PROJECT is the
-folder's project (`lonca-project`), or "-" for a session outside every project (machine-wide work: setup, cleanup). ROLE is "lead" when it was started with `--agent lead`. Ask one with
+folder's project (`lonca-project`), or "-" for a session outside every project (machine-wide work: setup, cleanup). ROLE is the `lonca.role` label, else "lead" when it was started with `--agent lead`; DOING is the `lonca.does` label
+(`hc label $HC_TERMINAL_ID lonca.does="<one line>"`), else what the agent last said it is doing. Ask one with
 `hc send <address> "QUESTION from the <project> lead: ..."`; see the orchestrate skill for the rules.
 """
 import json, os, subprocess, sys
@@ -22,21 +23,25 @@ for t in terms:
     if t.get("state") != "live" or agent in ("", "sh", "bash", "zsh", "fish"):
         continue
     g = subprocess.run(["hc", "get", t["address"], "--json"], capture_output=True, text=True, env=env)
-    fg = (json.loads(g.stdout) if g.returncode == 0 and g.stdout.strip() else {}).get("foreground") or {}
+    info = json.loads(g.stdout) if g.returncode == 0 and g.stdout.strip() else {}
+    fg, labels = info.get("foreground") or {}, info.get("labels") or {}
     cwd, argv = fg.get("cwd") or t.get("cwd", ""), fg.get("argv") or []   # the agent's own folder, not its shell's
     if cwd.startswith(LANES):
         continue
-    role = "lead" if "--agent=lead" in argv or any(a == "--agent" and b == "lead" for a, b in zip(argv, argv[1:])) else "-"
+    role = labels.get("lonca.role") or ("lead" if "--agent=lead" in argv or any(a == "--agent" and b == "lead" for a, b in zip(argv, argv[1:])) else "-")
     p = subprocess.run([os.path.join(HERE, "lonca-project"), cwd], capture_output=True, text=True)
     proj = p.stdout.split("\t")[0] if p.returncode == 0 else "-"
-    st = t.get("status"); st = st.get("state") if isinstance(st, dict) else st
+    st = info.get("status") or t.get("status")
+    msg = st.get("msg", "") if isinstance(st, dict) else ""
+    st = st.get("state") if isinstance(st, dict) else st
+    doing = (labels.get("lonca.does") or msg or "-")[:60]
     rows.append((proj, t["address"] + (" (you)" if t["address"] == me else ""),
-                 agent, role, st or "-", t.get("where") or "-", cwd))
+                 agent, role, st or "-", doing, t.get("where") or "-", cwd))
 if not rows:
     print("No open agent sessions.")
     sys.exit(0)
 rows.sort()
-head = ("PROJECT", "ADDRESS", "AGENT", "ROLE", "STATUS", "WHERE", "FOLDER")
+head = ("PROJECT", "ADDRESS", "AGENT", "ROLE", "STATUS", "DOING", "WHERE", "FOLDER")
 w = [max(len(str(r[i])) for r in rows + [head]) for i in range(len(head))]
 for r in [head] + rows:
     print("  ".join(str(v).ljust(n) for v, n in zip(r, w)).rstrip())
