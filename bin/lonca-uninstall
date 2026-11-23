@@ -11,4 +11,4 @@ for file in sorted(REGISTRY.glob("*.json")):
     subprocess.run([BIN / "lonca", "remove", json.loads(file.read_bytes())["root"]], check=True)
 legacy = Legacy()
 legacy.marketplace(uninstall=True)
-legacy.cleanup()
+legacy.cleanup(uninstall=True)

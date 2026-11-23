@@ -649,6 +649,9 @@ def legacy_settings(folder):
 
 
 def global_status(folder):
+    from lonca_legacy import deferred_mcp
+    for harness, server in deferred_mcp():
+        print(f"  still global: {harness} MCP {server}")
     legacy = legacy_settings(folder)
     if legacy:
         print("  warning: global install still present: run lonca migrate --dry-run (" + ", ".join(legacy) + ")")

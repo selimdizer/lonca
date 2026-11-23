@@ -250,7 +250,11 @@ def migration(base):
     mcp.parent.mkdir(parents=True)
     mcp.write_text('{"mcpServers":{"kanzo":{"command":"kanzo","args":["mcp"]},"private":{}}}')
     state = home / ".local/state/lonca/mcp-added"
-    state.write_text("omp kanzo\n")
+    deferred = home / ".pi/agent/mcp.json"
+    deferred.parent.mkdir(parents=True)
+    original_pi = '{"mcpServers":{"deja":{"command":"deja","args":["mcp"]},"personal":{}}}'
+    deferred.write_text(original_pi)
+    state.write_text("omp kanzo\npi deja\n")
     script = SRC / "bin/lonca"
     originals = {p: p.read_bytes() for p in (catalog, settings, doc, mcp, state, home / ".gitconfig")}
     preview = run(script, "migrate", "--dry-run", explicit)
@@ -264,11 +268,37 @@ def migration(base):
     assert json.loads(settings.read_bytes())["permissions"]["deny"] == ["private"]
     assert "echo personal" in settings.read_text()
     assert json.loads(mcp.read_bytes()) == {"mcpServers": {"private": {}}}
-    assert not state.exists()
+    assert state.read_text() == "pi deja\n" and deferred.read_text() == original_pi
+    assert "still global: pi MCP deja" in run(script, "status", repo)
     assert json.loads(catalog.read_bytes())["lonca"]["source"]["path"] == str(home / "lonca")
     run("git", "config", "--global", "--get", "core.hooksPath", ok=False)
     assert git(repo, "config", "--local", "--get", "core.hooksPath") == str(home / "lonca/git-hooks")
     assert git(explicit, "config", "--local", "--get", "core.hooksPath") == str(home / "lonca/git-hooks")
+    # Capture both real launcher forms at the terminal boundary. The smoke test
+    # in omp-lane.py checks MCP discovery with the actual CLI when available.
+    hc = base / "bin/hc"
+    hc.write_text("""#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+if sys.argv[1] == "run":
+    Path(os.environ["HOME"], "terminal.json").write_text(json.dumps(sys.argv[1:]))
+""")
+    hc.chmod(0o755)
+    git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "Fixture")
+    origin = base / "fixture-origin"
+    run("git", "clone", "--bare", repo, origin)
+    git(repo, "remote", "add", "origin", origin)
+    main = git(repo, "branch", "--show-current")
+    brief = base / "demo.brief"
+    brief.write_text("Read the fixture.")
+    for flags, branch, model in [(["--read"], "read", "example/small"), ([], "feat/fixture", "github-copilot/test")]:
+        result = home / ".cache/ai-runs/fixture/run" / (branch.split("/")[-1] + ".result")
+        run(SRC / "bin/lane", *flags, repo, branch, "omp:" + model, brief, result, main)
+        argv = json.loads((home / "terminal.json").read_bytes())
+        assert '--extension "$HOME/lonca/config/omp-lane"' in argv[-1]
+        assert any(arg.startswith("DEJA_POLICY_FILE=") for arg in argv)
+        rec = json.loads(Path(str(result) + ".lane.json").read_bytes())
+        assert Path(rec["temp"]).is_dir() and Path(rec["project"]) == repo
     guards = repo / ".codex/rules/lonca.rules"
     guards.write_text("")
     denied = subprocess.run([script, "status", "--lane", repo], capture_output=True, text=True)
@@ -283,6 +313,7 @@ def migration(base):
     assert not guards.exists()
     assert not list((home / ".local/state/lonca/projects").glob("*.json"))
     assert backups[0].is_dir() and "private" in settings.read_text()
+    assert not state.exists() and json.loads(deferred.read_bytes())["mcpServers"] == {"personal": {}}
 
 
 def overlapping_hooks(base):

@@ -105,6 +105,11 @@ It moves the old Move marketplace to `~/lonca`, initializes the projects, and th
 global entries. Backups of changed global files are under `~/.local/state/lonca/migration-backups/`.
 If a command stops, correct the reported problem and repeat it.
 
+Both interactive and read-only omp lanes load Kanzo and deja through the lane extension. Deja receives
+the project's policy. Migration leaves existing user-level MCP entries for OpenCode, Copilot, Antigravity,
+Grok and pi in place. `lonca status` lists retained registrations as `still global`. Full uninstall
+removes the entries recorded by the legacy installer.
+
 ## Quick start
 
 ```sh

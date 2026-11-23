@@ -17,6 +17,7 @@ OLD_MARKET = LONCA / "extras/sui/plugins"
 MCP = {"claude": ".claude.json", "codex": ".codex/config.toml", "copilot": ".copilot/mcp-config.json",
        "agy": ".gemini/config/mcp_config.json", "grok": ".grok/config.toml", "omp": ".omp/agent/mcp.json",
        "pi": ".pi/agent/mcp.json", "opencode": ".config/opencode/opencode.json"}
+DEFERRED_MCP = {"opencode", "copilot", "agy", "grok", "pi"}
 HARNESS_LINKS = {
     ".codex/AGENTS.md": "AGENTS.md", ".codex/rules/default.rules": "config/codex-rules/default.rules",
     ".omp/agent/RULES.md": "AGENTS.md", ".omp/agent/extensions/lonca-guard": "config/omp-guard",
@@ -28,6 +29,18 @@ HARNESS_LINKS = {
 
 def json_bytes(data):
     return (json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode()
+
+
+def deferred_mcp():
+    for harness in sorted(DEFERRED_MCP):
+        for server in ("kanzo", "deja"):
+            try:
+                entry = Legacy.mcp_entry(harness, server)
+            except ValueError:
+                print(f"  cannot inspect {harness} MCP file", file=sys.stderr)
+                break
+            if entry is not None:
+                yield harness, server
 
 
 class Legacy:
@@ -224,7 +237,8 @@ class Legacy:
                     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
                 break
 
-    def mcp_entry(self, harness, server):
+    @staticmethod
+    def mcp_entry(harness, server):
         path = HOME / MCP[harness]
         if not path.exists():
             return None
@@ -242,13 +256,16 @@ class Legacy:
             servers = data.get("mcp" if harness == "opencode" else "mcpServers", {})
         return servers.get(server)
 
-    def remove_mcp(self):
+    def remove_mcp(self, uninstall):
         state = STATE / "mcp-added"
         if not state.is_file():
             return
         for line in state.read_text().splitlines():
             harness, server = line.split()
             if harness not in MCP or server not in ("kanzo", "deja"):
+                continue
+            if harness in DEFERRED_MCP and not uninstall:
+                print(f"still global: {harness} MCP {server}")
                 continue
             entry = self.mcp_entry(harness, server)
             command = (entry or {}).get("command", "")
@@ -269,8 +286,8 @@ class Legacy:
         if state.is_file() and not state.read_text().strip():
             self.change(state, None, "remove empty MCP record")
 
-    def cleanup(self):
+    def cleanup(self, uninstall=False):
         self.harness_files()
         self.global_git()
         self.scope_settings()
-        self.remove_mcp()
+        self.remove_mcp(uninstall)

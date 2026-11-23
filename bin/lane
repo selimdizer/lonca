@@ -73,6 +73,7 @@ case $agent in
 esac
 quoted=$(printf '%s' "$prompt" | sed "s/'/'\\\\''/g")
 
+rkey="$(basename "$(dirname "$repo")")-$(basename "$repo")"
 if [ $ro = 1 ]; then
   case $agent in omp:*) ;; *) echo "lane --read: omp agents only (Claude read-only roles are subagents)" >&2; exit 2 ;; esac
   wt=$(realpath "$repo") base=-
@@ -81,7 +82,6 @@ if [ $ro = 1 ]; then
 else
 # Worktrees live under ~/.herdr/worktrees: Claude already trusts that folder (no trust prompt in lanes).
 # <parent>-<repo> keeps same-named repos of different projects apart
-rkey="$(basename "$(dirname "$(realpath "$repo")")")-$(basename "$(realpath "$repo")")"
 wt="$HOME/.herdr/worktrees/$rkey/$(printf '%s' "$branch" | tr '/' '-')"
 mkdir -p "$(dirname "$wt")"
 git -C "$repo" fetch -q origin
@@ -106,7 +106,7 @@ name=$(printf '%s-%s' "$(basename "$(realpath "$repo")" | cut -c1-8)" "$branch" 
 # Claude's and Codex's own settings may pin TMPDIR for their tools, so they get it through their override flags too
 ltmp=$(mktemp -d "$TMPDIR/lane-$name.XXXXXXXX")
 case $agent in
-  omp:*) if [ ! -e "$HOME/.omp/agent/extensions/lonca-guard" ]; then cmd="$cmd --extension '$HOME/lonca/config/omp-guard/index.ts'"; fi ;;
+  omp:*) cmd="$cmd"' --extension "$HOME/lonca/config/omp-lane"' ;;
   opencode:*) export OPENCODE_CONFIG_DIR="$HOME/lonca/config/opencode" ;;
   claude:*) settings=$(python3 -I -c 'import json,shlex,sys; print(shlex.quote(json.dumps({"env":{"TMPDIR":sys.argv[1]}})))' "$ltmp")
             cmd="$cmd --settings $settings" ;;
