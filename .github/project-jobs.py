@@ -43,9 +43,18 @@ def check(home):
     assert not logs.exists() and not (home / ".local/state/lonca").exists()
 
     backups = home / ".local/state/lonca/migration-backups"
-    backup = backups / "migration-12345678"
-    backup.mkdir(parents=True)
-    (backup / "changes.jsonl").touch()
+    create_backup = """import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from lonca_legacy import Legacy
+legacy = Legacy()
+legacy.backup(Path.home() / ".gitconfig", {"core.hooksPath": "fixture"})
+print(legacy.directory)
+"""
+    backup = Path(run("python3", "-c", create_backup, str(BIN)).splitlines()[-1])
+    receipt = backup / "changes.jsonl"
+    assert receipt.stat().st_mode & 0o777 == 0o600
+    assert json.loads(receipt.read_bytes())["removed"] == {"core.hooksPath": "fixture"}
     old_layout = backups / "tmp12345678"
     (old_layout / "filesystem").mkdir(parents=True)
     foreign = backups / "personal"

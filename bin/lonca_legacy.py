@@ -75,7 +75,7 @@ class Legacy:
             base.mkdir(parents=True, exist_ok=True, mode=0o700)
             self.directory = Path(tempfile.mkdtemp(prefix="migration-", dir=base))
             print(f"Migration backup: {self.directory / 'changes.jsonl'}")
-        with (self.directory / "changes.jsonl").open("a", opener=lambda p, f: os.open(p, f, 0o600)) as out:
+        with open(self.directory / "changes.jsonl", "a", opener=lambda p, f: os.open(p, f, 0o600)) as out:
             out.write(json.dumps({"path": str(path), "removed": removed}, ensure_ascii=False) + "\n")
             out.flush()
             os.fsync(out.fileno())
