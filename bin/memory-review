@@ -5,7 +5,7 @@ Collects the owner's messages from all Claude sessions since the last review (st
 excerpt of the agent turn it answered, and lets Sonnet save durable decisions into ~/ai-memory following
 ~/lonca/config/memory-review.prompt.md. No new messages -> no model call. Log: ~/.cache/ai-runs/setup/memory-review.log
 """
-import calendar, glob, json, os, subprocess, sys, time
+import calendar, glob, json, os, re, subprocess, sys, time
 
 HOME = os.path.expanduser("~")
 STATE = f"{HOME}/.local/state/lonca/memory-review.last"
@@ -52,7 +52,8 @@ for f in glob.glob(f"{HOME}/.claude/projects/*/*.jsonl"):
             continue
         if m.get("isSidechain") or m.get("entrypoint") == "sdk-cli":   # subagents; headless claude -p runs
             continue
-        t = text_of((m.get("message") or {}).get("content")).strip()
+        t = text_of((m.get("message") or {}).get("content"))
+        t = re.sub(r"<hc from=.*?</hc>|<pasted_content[^>]*>.*?</pasted_content[^>]*>", "", t, flags=re.S).strip()  # lane messages, pasted text: not the owner
         if m.get("type") == "assistant" and t:
             last_agent = t
         elif m.get("type") == "user" and not m.get("isMeta") and t and not t.startswith("<") \

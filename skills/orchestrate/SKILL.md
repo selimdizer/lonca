@@ -17,13 +17,14 @@ Night mode: when the owner asks for it (in any language, e.g. "night mode", "gec
 ## 1. Clarify
 - Before any question to the owner, and for any status check ("anything pending or forgotten?"): `deja search "<topic>"` (this project's past sessions of every agent, this session's earlier parts too), memory, the project's decision files and the project's Kanzo cards. A status check ends with the board current: every open item you found (work still to do, a question waiting for the owner, a follow-up promised in a session) has a Kanzo card. Search the board first, done cards included, by title words and PR/issue numbers, and never open a second card for the same thing; work → a todo card, an owner decision → a `human` card with the question and your recommendation. Then tell the owner in one line which cards you opened. If it was settled before, apply it and say where it was decided.
 - Check memory for earlier owner decisions on this topic. If one answers a question, apply it and say which.
-- If a product or design choice is open, ask the owner: options + your recommendation. For a new feature with many unknowns, use the `grilling` skill.
+- List the choices the request leaves open. Each one that changes what a user sees or what data is kept (rounding, currencies, limits, who may do what, what is exposed on the network, what is deleted) goes to the owner in one message: options + your recommendation each. The rest you settle yourself and write in the brief's `Assumptions:` line, so the owner can read and overrule them. For a new feature with many unknowns, use the `grilling` skill.
 - Does the project's memory limit which providers may see its code (client work)? Then every role uses only those (e.g. omp `github-copilot/*`).
 
 ## 2. Plan
 - Small task (one file, under ~30 min): skip to step 4 with a single lane.
 - Otherwise write a short plan to `$RUN/plan.md`: lanes, files each lane touches, order, risks.
 - Big or architectural plan: get a second opinion from the routing table's plan-second-opinion model (`dispatch` skill). If you disagree after one exchange, put both views and your recommendation to the owner.
+- Spec review before code: when the work touches money, auth or access, stored data, a public API, network exposure, secrets or the merge gate (what will be tier medium or high), have the brief reviewed once by the family that will not write the code, before you dispatch: missing edge cases, limits and overflow, failure modes, what an attacker can reach. Fold the findings into the brief; a finding that changes product behaviour goes to the owner.
 
 ## 3. Split into lanes
 - Lanes must be independent and touch disjoint files; otherwise run them in sequence.
@@ -42,6 +43,7 @@ Done looks like: checkable bullet points
 Paths:           files/dirs this lane may touch
 Never:           what must not happen (scope, APIs, data)
 Quality bar:     tests required, standards, the `verify` skill if present
+Assumptions:     the open choices you settled yourself (step 1), one line each
 Worktree/branch: <path> / <branch>
 Base:            <branch the PR targets> (omit for the remote's default branch)
 Model:           <harness/model/effort> — <one-line reason from the routing table>

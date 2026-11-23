@@ -5,6 +5,9 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Before code: the lead asks the owner only the open choices that change what users see or what data is kept, and writes the rest as `Assumptions:` in the brief; implementers ask the same kind of choice and list their own choices in the report.
+- Spec review before code for work that will be tier medium or high (money, auth, data, public API, network exposure, secrets, merge gate), by the family that will not write the code.
+- Memory: a rule from an owner's correction is saved only after the owner says yes; every note names its source; memory-review ignores lane messages and pasted text inside the owner's messages.
 - `leads` also lists sessions outside every project (PROJECT `-`) and shows ROLE/DOING from the `lonca.role`/`lonca.does` hc labels (else the agent's own status), and machine-wide work (containers, cleanup, killing processes, packages, disk) is announced to every listed session first, then reported.
 - The project marker is documented as the hidden `.lonca.toml` (like `.editorconfig`); `lonca.toml` still works.
   Keep it next to your repos, not inside one.
