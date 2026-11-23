@@ -1,7 +1,0 @@
-{
-  "name": "lonca",
-  "owner": { "name": "lonca" },
-  "plugins": [
-    { "name": "move-lsp", "source": "./move-lsp", "description": "Sui Move language server (move-analyzer) for code intelligence" }
-  ]
-}

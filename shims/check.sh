@@ -22,6 +22,11 @@ t blocked git config --unset-all core.hookspath
 t ok      git config --local --get core.hooksPath
 t ok      git --version
 t ok      git status --short
+t blocked git config --local core.hooksPath "$HOME/lonca/git-hooks"
+t blocked git config --local --remove-section core
+t blocked git config rename-section core other
+t blocked git config remove-section CORE
+t blocked lonca init fixture
 t blocked lonca remove fixture
 t blocked pkill -f nothing-xyz
 [ $fail -eq 0 ] && echo "all shim cases pass"; exit $fail

@@ -10,7 +10,8 @@ deny() { echo "lonca guard: blocked '$name$args'— $1. Stop and report to the o
 case $name in
   pkill|killall) deny "stop only processes you started, by PID" ;;
   lonca)
-    case ${1:-} in remove) deny "remove project protections from the owner's shell" ;; esac ;;
+    case ${1:-} in init|remove|migrate) deny "manage project protections from the lead or owner shell" ;; esac
+    exec "$L/bin/lonca" "$@" ;;
   gh)
     case $args in
       " pr merge "*|*" api "*merge*) deny "merge only with merge-pr (checks first)" ;;
@@ -18,9 +19,8 @@ case $name in
     "$L/bin/ai-trace-gh" "$@" || exit 126 ;;
   git)
     case $(printf '%s' "$args" | tr '[:upper:]' '[:lower:]') in
-      *" config "*"core.hookspath "*) case $args in
-        *" --unset "*|*" --unset-all "*|*" unset "*) deny "don't remove git hooks" ;;
-      esac ;;
+      *hookspath*|*" config "*" core "*)
+        python3 -I "$L/shims/hooks-config.py" "$@" || deny "don't change git hooks" ;;
     esac
     case $args in
       *" push "*" --force"*|*" push "*" -f "*|*" push --force"*|*" push -f "*|*" push "*" +"*) deny "no force-push" ;;
@@ -31,7 +31,6 @@ case $name in
       *" reset --hard"*|*" reset "*" --hard"*) deny "no reset --hard" ;;
       *" clean "*) deny "no git clean" ;;
       *" branch -D "*|*" branch "*" -D "*) deny "no branch deletion" ;;
-      *" core.hooksPath "?*) case $args in *"config"*) deny "don't change git hooks" ;; esac ;;
     esac ;;
 esac
 
