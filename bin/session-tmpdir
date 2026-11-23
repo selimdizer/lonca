@@ -3,7 +3,7 @@
 the subagents it starts, so a cleanup inside it can't reach another session's or lane's files. Lanes already run in
 their own (lane-<name>, from `lane`) and keep it. ai-cleanup removes the folder once it has been idle.
 """
-import json, os, subprocess, sys
+import json, os, shlex, subprocess, sys
 
 if os.environ.get("LONCA") == "0":
     sys.exit(0)
@@ -23,4 +23,4 @@ if not base:
 d = os.path.join(base, "session-" + "".join(c for c in sid if c.isalnum() or c == "-")[:36])
 os.makedirs(d, exist_ok=True)
 with open(env_file, "a") as out:
-    out.write(f"export TMPDIR='{d}'\n")
+    out.write(f"export TMPDIR={shlex.quote(d)}\n")

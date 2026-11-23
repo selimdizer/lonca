@@ -36,6 +36,10 @@ card=$(sed -n 's/^Card:[[:space:]]*\([A-Za-z0-9_-]*#[0-9][0-9]*\).*/\1/p' "$brie
 [ -n "$card" ] && prompt="$prompt Your Kanzo card is $card (kanzo MCP tools; in Claude load them with ToolSearch first): set it to doing now, add a short comment on what you did at each milestone, set its url to your PR when you open it, and move it to review when you finish or get stuck."
 prompt="$prompt Stay inside this project: no other project's Kanzo cards (never project \"all\" or another slug) and no other project's files or past sessions."
 
+# Quote a TOML string as one argument of the command passed to the lane shell.
+override() {
+  python3 -I -c 'import json,shlex,sys; print(shlex.quote(sys.argv[1] + "=" + json.dumps(sys.argv[2], ensure_ascii=False)))' "$1" "$2"
+}
 case $agent in
   claude:*) role=$("$HOME/lonca/bin/lonca-project" --claude-agent "${agent#claude:}" "$repo")
             cmd="claude --agent $role --permission-mode bypassPermissions" ;;
@@ -45,7 +49,7 @@ case $agent in
   codex:*)  m=${agent#codex:}; e=${m#*:}; [ "$e" = "$m" ] && e=xhigh; m=${m%%:*}   # codex:<model>[:<effort>], default xhigh (routing.md)
             cmd="codex --no-daemon --dangerously-bypass-approvals-and-sandbox --disable apps -m $m -c model_reasoning_effort=$e"
             # Codex starts MCP servers with a minimal environment: hand deja its policy file explicitly
-            cmd="$cmd -c 'mcp_servers.deja.env.DEJA_POLICY_FILE=\"$DEJA_POLICY_FILE\"'"
+            cmd="$cmd -c $(override mcp_servers.deja.env.DEJA_POLICY_FILE "$DEJA_POLICY_FILE")"
             # Codex asks folder trust for the worktree's main repo; trust it once (else the lane waits at a prompt)
             main=$(realpath "$repo")
             grep -qF "[projects.\"$main\"]" ~/.codex/config.toml 2>/dev/null ||
@@ -92,9 +96,9 @@ name=$(printf '%s-%s' "$(basename "$(realpath "$repo")" | cut -c1-8)" "$branch" 
 # Claude's and Codex's own settings may pin TMPDIR for their tools, so they get it through their override flags too
 ltmp="$TMPDIR/lane-$name"; mkdir -p "$ltmp"
 case $agent in
-  claude:*) role=$("$HOME/lonca/bin/lonca-project" --claude-agent "${agent#claude:}" "$repo")
-            cmd="$cmd --settings '{\"env\":{\"TMPDIR\":\"$ltmp\"}}'" ;;
-  codex:*)  cmd="$cmd -c 'shell_environment_policy.set.TMPDIR=\"$ltmp\"'" ;;
+  claude:*) settings=$(python3 -I -c 'import json,shlex,sys; print(shlex.quote(json.dumps({"env":{"TMPDIR":sys.argv[1]}})))' "$ltmp")
+            cmd="$cmd --settings $settings" ;;
+  codex:*)  cmd="$cmd -c $(override shell_environment_policy.set.TMPDIR "$ltmp")" ;;
 esac
   # Started from a lead inside the Herdr app: open the lane as its own tab in the lead's space
   space=$( [ -n "${HC_TERMINAL_ID:-}" ] && hc get "$HC_TERMINAL_ID" --json 2>/dev/null | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("labels",{}).get("herdr.space",""))' 2>/dev/null || true)
@@ -132,8 +136,10 @@ PY
       grep -qF "[folders.\"$main\"]" "$f" 2>/dev/null || { mkdir -p "${f%/*}"; printf '[folders."%s"]\ntrusted = true\ndecided_at = %s\n' "$main" "$(date +%s)" >> "$f"; } ;;
   esac   # Copilot: install.sh lists ~/.herdr/worktrees in trustedFolders, which covers every worktree below it
   # --outlive-parent: a lane keeps running if the lead's session ends; its exit is noted in the lead's input
+  # Expand the child shell's PATH and positional argument inside hc.
+  # shellcheck disable=SC2016
   hc run --bg --outlive-parent --name "$name" --cwd "$wt" "$@" \
-    -- sh -c "export PATH=$HOME/lonca/shims:$HOME/lonca-local/shims:\$PATH TMPDIR=$ltmp DEJA_POLICY_FILE=$DEJA_POLICY_FILE; $run" >/dev/null   # hc passes no env: set it here
+    -- env "TMPDIR=$ltmp" "DEJA_POLICY_FILE=$DEJA_POLICY_FILE" sh -c 'export PATH="$HOME/lonca/shims:$HOME/lonca-local/shims:$PATH"; exec sh -c "$1"' sh "$run" >/dev/null   # hc passes no env: set it here
   # lane record for lane-watch and a restarted lead
   python3 -c 'import json,sys,time; k="name worktree lead agent base result card branch repo".split()
 d=dict(zip(k, sys.argv[1:])); d["started"]=int(time.time()); json.dump(d, open(sys.argv[-1], "w"))' \

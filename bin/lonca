@@ -158,9 +158,20 @@ class Project:
             entry["after"] = digest(read(path))
             self.save()
 
+    def exclude(self, repo, common, names):
+        exclude = plain(common / "info/exclude")
+        original = read(exclude) or b""
+        additions = ["/" + name for name in names if os.fsencode("/" + name) not in original.splitlines()]
+        if additions:
+            self.write(exclude, append(original, "\n".join(additions)))
+        for name in names:
+            if git(repo, "check-ignore", "--", name, optional=True) is None:
+                raise ValueError(f"{repo / name} is exposed by a higher-priority Git ignore rule")
+
     def init_repo(self, repo, common, agents, policy):
-        rec = self.data["repos"].setdefault(str(repo), {"common": str(common)})
-        if rec["common"] != str(common):
+        identity = [common.stat().st_dev, common.stat().st_ino]
+        rec = self.data["repos"].setdefault(str(repo), {"common": str(common), "identity": identity})
+        if rec["common"] != str(common) or rec["identity"] != identity:
             raise ValueError(f"{repo} now points to a different git directory")
         names = []
         if (repo / ".lonca.toml").as_posix() in self.data["files"]:
@@ -170,11 +181,8 @@ class Project:
         if "codex" in agents:
             names.extend([".codex/config.toml", ".codex/hooks.json", ".codex/rules/lonca.rules"])
         paths = {name: personal(repo, name) for name in names}
-        exclude = plain(common / "info/exclude")
-        original = read(exclude) or b""
-        additions = ["/" + name for name in names if os.fsencode("/" + name) not in original.splitlines()]
-        if additions:
-            self.write(exclude, append(original, "\n".join(additions)))
+        self.exclude(repo, common, names)
+        plain(common / "config")
         local = git(repo, "config", "--local", "--get", "core.hooksPath", optional=True)
         effective = git(repo, "config", "--get", "core.hooksPath", optional=True)
         if effective not in (None, HOOKS):
@@ -216,6 +224,16 @@ class Project:
         rec["ready"] = True
         self.save()
 
+    def policy(self):
+        spec = json.loads(subprocess.check_output([SRC / "bin/deja-scope", "--policy", self.root]))
+        path = Path(spec["file"])
+        data = json.dumps(spec["policy"], indent=0).encode()
+        entry = self.data["files"].get(str(path))
+        if entry and read(path) == data:
+            # The periodic deja refresh can legitimately update this generated file.
+            entry["after"] = digest(data)
+        return path, data
+
     def init(self, agents):
         if agents:
             self.data["agents"] = sorted(set(self.data["agents"] + agents)) if self.file.exists() else agents
@@ -229,11 +247,11 @@ class Project:
             marker = self.root / MARKERS[0]
             if (self.root / ".git").exists():
                 personal(self.root, MARKERS[0])
+                self.exclude(self.root, dict(found)[self.root], [MARKERS[0]])
             self.write(marker, b"# Personal Lonca project settings\n")
-        spec = json.loads(subprocess.check_output([SRC / "bin/deja-scope", "--policy", self.root]))
-        policy = Path(spec["file"])
+        policy, policy_data = self.policy()
         self.data["policy"] = str(policy)
-        self.write(policy, json.dumps(spec["policy"], indent=0).encode())
+        self.write(policy, policy_data)
         self.write(policy.with_suffix(".root"), os.fsencode(self.root))
         for repo, common in found:
             self.init_repo(repo, common, self.data["agents"], policy)
@@ -242,6 +260,8 @@ class Project:
     def remove(self):
         if not self.file.exists():
             raise ValueError(f"not registered: {self.root}")
+        if marked(self.root) and self.data.get("policy"):
+            self.policy()
         files = self.data["files"]
         # Check every backup before uninstalling anything. Refuse to discard later user edits.
         for name, entry in files.items():
@@ -251,7 +271,8 @@ class Project:
                 raise ValueError(f"{name} changed since init; preserve your edits before removing")
         for dirname, rec in self.data["repos"].items():
             repo = Path(dirname)
-            if Path(git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve() != Path(rec["common"]):
+            common = Path(git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()
+            if common != Path(rec["common"]) or [common.stat().st_dev, common.stat().st_ino] != rec["identity"]:
                 raise ValueError(f"repository moved: {repo}")
             if rec.get("plugin") and plugin_installed(repo):
                 try:
@@ -260,6 +281,7 @@ class Project:
                     path = repo / SETTINGS
                     files[str(path)]["after"] = digest(read(path))
                     self.save()
+            plain(common / "config")
             if rec.get("hooks") and git(repo, "config", "--local", "--get", "core.hooksPath", optional=True) == rec["hooks"]:
                 git(repo, "config", "--local", "--unset", "core.hooksPath")
         for name, entry in reversed(list(files.items())):

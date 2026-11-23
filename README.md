@@ -153,7 +153,7 @@ hook actions for that process and its children. Git still calls the repository's
 
 The current installer still writes its legacy global configuration and installs timers. Status flags
 global Lonca settings during this transition. A marker in the project root names the project and
-can set its merge policy. For example:
+can set its merge policy. For a marker inside a repository, merge checks use the base branch's copy of the policy. For example:
 
 ```toml
 name = "shop"              # memory group ~/ai-memory/shop/ and Kanzo project slug; default: the folder's name
