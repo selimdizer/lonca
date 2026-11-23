@@ -55,10 +55,15 @@ case $agent in
   # --disable apps: the ChatGPT GitHub connector may act as a different GitHub account; lanes use gh
   codex:*)  m=${agent#codex:}; e=${m#*:}; [ "$e" = "$m" ] && e=xhigh; m=${m%%:*}   # codex:<model>[:<effort>], default xhigh (routing.md)
             cmd="codex --no-daemon --dangerously-bypass-approvals-and-sandbox --disable apps -m $m -c model_reasoning_effort=$e"
+            # An external worktree may not load the main checkout's personal MCP tables.
+            for server in kanzo deja; do
+              cmd="$cmd -c $(override "mcp_servers.$server.command" "$server") -c 'mcp_servers.$server.args=[\"mcp\"]'"
+            done
             # Codex starts MCP servers with a minimal environment: hand deja its policy file explicitly
             cmd="$cmd -c $(override mcp_servers.deja.env.DEJA_POLICY_FILE "$DEJA_POLICY_FILE")"
             # Codex asks folder trust for the worktree's main repo; trust it once (else the lane waits at a prompt)
             main=$(realpath "$repo")
+            mkdir -p "$HOME/.codex"
             grep -qF "[projects.\"$main\"]" ~/.codex/config.toml 2>/dev/null ||
               printf '\n[projects."%s"]\ntrust_level = "trusted"\n' "$main" >> ~/.codex/config.toml ;;
   # Copilot lanes (client work limited to Copilot): helpers stay on Copilot too, so no code goes to DeepSeek/GLM

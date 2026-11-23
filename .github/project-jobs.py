@@ -72,11 +72,56 @@ def check(home):
     def event_for(cwd, text):
         return json.dumps({"timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "cwd": str(cwd),
                            "type": "user", "message": {"content": text}})
-    (folder / "fixture.jsonl").write_text(event_for(root, "inside sample") + "\n" + event_for(home, "outside sample"))
+    nested = root / "other-project"
+    nested.mkdir()
+    (nested / ".lonca.toml").touch()
+    (folder / "fixture.jsonl").write_text("\n".join([event_for(root, "inside sample"), event_for(home, "outside sample"),
+                                                    event_for(nested, "unregistered nested sample")]))
     run(BIN / "memory-review", "--dry-run")
     summary, = (home / ".cache/ai-runs/setup/history-mining").glob("review-*.md")
-    assert "inside sample" in summary.read_text() and "outside sample" not in summary.read_text()
+    assert "inside sample" in summary.read_text() and "outside sample" not in summary.read_text() and "nested sample" not in summary.read_text()
     assert not logs.exists()
+
+    # A second linked checkout of the same repo has no lane receipt.
+    run("git", "-C", root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+        "commit", "--allow-empty", "-m", "Fixture")
+    wt_base = home / ".herdr/worktrees" / (home.name + "-project")
+    wt = wt_base / "feat-demo"
+    personal = wt_base / "personal"
+    wt_base.mkdir(parents=True)
+    run("git", "-C", root, "worktree", "add", "-qb", "feat/demo", wt)
+    run("git", "-C", root, "worktree", "add", "-qb", "personal", personal)
+    result = home / ".cache/ai-runs/test/demo/result"
+    result.parent.mkdir(parents=True)
+    lane_temp = temp / "lane-demo-private"
+    lane_temp.mkdir()
+    run(BIN / "lane-record", "lane-demo", wt, "", "fixture", "main", result, "", "feat/demo", root, root, lane_temp)
+    oid = run("git", "-C", wt, "rev-parse", "HEAD").strip()
+    prs = [{"headRefName": branch, "headRefOid": oid, "number": 1, "state": "CLOSED"}
+           for branch in ("feat/demo", "personal")]
+    gh = stubs / "gh"
+    gh.write_text("#!/bin/sh\necho '" + json.dumps(prs) + "'\n")
+    dry = run(BIN / "ai-cleanup", "--dry-run")
+    assert str(wt) in dry and str(personal) not in dry
+
+    run("git", "-C", root, "remote", "add", "origin", "https://example.invalid/own/repo.git")
+    tasks = [{"key": "test#" + str(i), "title": name, "status": "doing",
+              "url": "https://example.invalid/" + name + "/issues/1"} for i, name in enumerate(("own/repo", "other/no"))]
+    board = {"projects": [{"slug": "test", "repos": ["own/repo", "other/no"], "tasks": tasks}]}
+    (stubs / "kanzo").write_text("#!/bin/sh\n"
+        'test "$*" = "export --project test --format json" || exit 1\n'
+        + "echo '" + json.dumps(board) + "'\n")
+    gh.write_text("""#!/bin/sh
+echo "$*" >> "$HOME/calls"
+case "$*" in
+  "auth status") echo "Logged in to example.invalid account fixture" ;;
+  *" user") echo '{"login":"fixture"}' ;;
+  *"/issues/1") echo '{"state":"closed"}' ;;
+  *) echo '[]' ;;
+esac
+""")
+    out = run(BIN / "kanzo-sync", "--dry-run")
+    assert "own/repo#1" in out and "other/no" not in logs.read_text()
 
 
 if __name__ == "__main__":

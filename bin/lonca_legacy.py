@@ -125,7 +125,9 @@ class Legacy:
         if doc.is_file():
             original = doc.read_bytes()
             text = b"".join(line for line in original.splitlines(True) if line.rstrip(b"\r\n") != b"@~/lonca/AGENTS.md")
-            self.change(doc, text, "remove Lonca import")
+            previous = doc.with_name(doc.name + ".lonca-bak")
+            if text != original and (not previous.is_file() or b"@~/lonca/AGENTS.md" not in previous.read_bytes().splitlines()):
+                self.change(doc, text if text or previous.exists() else None, "remove Lonca import")
 
         for path in (CONF, HOME / ".codex/hooks.json"):
             if path.is_symlink() and path.resolve().is_relative_to(LONCA.resolve()):
@@ -145,34 +147,76 @@ class Legacy:
             if path == CONF:
                 deny = data.get("permissions", {}).get("deny", [])
                 installed = json.loads((BIN.parent / "config/claude-permissions.json").read_bytes())["deny"]
+                prior_deny = previous.get("permissions", {}).get("deny", [])
+                retained = [r for r in installed if r in deny and r in prior_deny]
+                if retained:
+                    print(f"keep {len(retained)} matching deny rules already in {bak}")
                 for rule in installed:
-                    if rule in deny and rule not in previous.get("permissions", {}).get("deny", []):
+                    if rule in deny and rule not in prior_deny:
+                        print(f"  remove deny rule {rule}")
                         deny.remove(rule)
+                if not deny and "deny" not in previous.get("permissions", {}):
+                    data.get("permissions", {}).pop("deny", None)
+                if not data.get("permissions") and "permissions" not in previous:
+                    data.pop("permissions", None)
                 for key, value in (("attribution", {"commit": "", "pr": ""}), ("includeCoAuthoredBy", False),
                                    ("autoMemoryDirectory", "~/ai-memory")):
                     if data.get(key) == value and key not in previous:
+                        print(f"  remove {key}")
                         del data[key]
                     elif data.get(key) == value and previous.get(key) != value:
+                        print(f"  restore {key} from backup")
                         data[key] = previous[key]
                 env = data.get("env", {})
                 tmp = subprocess.check_output([BIN / "lonca-config", "tmpdir", HOME / ".cache/lonca/tmp"], text=True).strip()
                 if env.get("TMPDIR") == tmp and "TMPDIR" not in previous.get("env", {}):
+                    print("  remove env.TMPDIR")
                     del env["TMPDIR"]
+                    if not env and "env" not in previous:
+                        data.pop("env", None)
             commands = {"SessionStart": {f"{LONCA}/bin/memory-context", f"{LONCA}/bin/deja-scope --session",
                                          f"{LONCA}/bin/session-tmpdir", "cat ~/ai-memory/MEMORY.md"},
                         "PreToolUse": {f"{LONCA}/bin/ai-trace-gh --hook"}, "Stop": {f"python3 {LONCA}/config/memory-nudge.py"}}
-            for event, groups in data.get("hooks", {}).items():
+            for event, groups in list(data.get("hooks", {}).items()):
                 for group in list(groups):
                     hooks = group.get("hooks", [])
+                    count = len(hooks)
                     for hook in list(hooks):
                         cmd = hook.get("command", "").replace("~/lonca/", str(LONCA) + "/")
                         existed = any(hook in g.get("hooks", []) for g in previous.get("hooks", {}).get(event, []))
                         if hook.get("type") == "command" and cmd in commands.get(event, ()) and not existed:
+                            print(f"  remove {event} hook: {cmd}")
                             hooks.remove(hook)
-                    if not hooks:
+                    if count and not hooks:
                         groups.remove(group)
+                if not groups and event not in previous.get("hooks", {}):
+                    del data["hooks"][event]
+            if data.get("hooks") == {} and "hooks" not in previous:
+                del data["hooks"]
             if json_bytes(data) != before:
-                self.change(path, json_bytes(data), "remove legacy harness settings")
+                if bak.is_file() and previous == data:
+                    desired = bak.read_bytes()
+                else:
+                    desired = json_bytes(data) if data or bak.exists() else None
+                self.change(path, desired, "remove legacy harness settings")
+
+        # Older installers did not record whether this folder was already trusted.
+        # Restore it only with an actual earlier configuration as evidence.
+        trust = HOME / ".copilot/config.json"
+        if trust.is_file():
+            def copilot_settings(path):
+                return json.loads("".join(line for line in path.read_text().splitlines(True)
+                                          if not line.lstrip().startswith("//")))
+            before = trust.with_name(trust.name + ".lonca-bak")
+            settings = copilot_settings(trust)
+            folder = str(HOME / ".herdr/worktrees")
+            if folder in settings.get("trustedFolders", []):
+                if before.is_file() and folder not in copilot_settings(before).get("trustedFolders", []):
+                    settings["trustedFolders"].remove(folder)
+                    comments = "".join(l for l in trust.read_text().splitlines(True) if l.lstrip().startswith("//"))
+                    self.change(trust, comments.encode() + json_bytes(settings), "remove legacy worktree trust")
+                else:
+                    print(f"keep existing worktree trust in {trust} (ownership unrecorded)")
 
     def global_git(self):
         # Only edit a single, identifiable value in the user's own Git config.
@@ -193,11 +237,12 @@ class Legacy:
                     self.backup(path)
                     subprocess.run(["git", "config", "--global", "--unset", "core.hooksPath"], check=True)
 
-    def scope_settings(self):
+    def scope_settings(self, upcoming):
         from lonca_registry import registered
         registry = registered()
         managed = {str(Path(repo) / ".claude/settings.local.json") for project in registry.values()
                    for repo in project["repos"]}
+        managed.update(str(repo / ".claude/settings.local.json") for repo in upcoming)
         directory = STATE / "deja"
         record = directory / "settings-written"
         if not record.is_file():
@@ -281,13 +326,17 @@ class Legacy:
                 self.backup(state)
                 self.backup(HOME / MCP[harness])
                 subprocess.run([BIN / "lonca-mcp", "remove", harness, server], check=True)
-                if line in state.read_text().splitlines() or self.mcp_entry(harness, server) is not None:
+                current = state.read_text().splitlines()
+                if self.mcp_entry(harness, server) is not None and line not in current:
+                    current.append(line)
+                    self.change(state, "".join(row + "\n" for row in current).encode(), "retain pending MCP removal")
+                if line in current:
                     raise ValueError(f"could not remove recorded {harness} MCP {server}; check its CLI before retrying")
         if state.is_file() and not state.read_text().strip():
             self.change(state, None, "remove empty MCP record")
 
-    def cleanup(self, uninstall=False):
+    def cleanup(self, uninstall=False, upcoming=()):
         self.harness_files()
         self.global_git()
-        self.scope_settings()
+        self.scope_settings(upcoming)
         self.remove_mcp(uninstall)

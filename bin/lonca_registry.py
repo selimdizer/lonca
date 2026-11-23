@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import secrets
 from pathlib import Path
 import subprocess
 import tempfile
@@ -62,7 +63,34 @@ def save(path, data):
 
 def remember(root, kind, path):
     directory = STATE / "activity" / key(root) / kind
-    save(directory / (key(path) + ".json"), {"path": str(path), "identity": identity(path)})
+    receipt = {"path": str(path), "identity": identity(path)}
+    if kind == "temp":
+        # A deleted directory's inode may be reused by an unrelated replacement.
+        receipt["token"] = secrets.token_hex(16)
+        with (path / ".lonca-temp-owner").open("x") as marker:
+            marker.write(receipt["token"])
+    save(directory / (key(path) + ".json"), receipt)
+
+
+def forget_activity(root):
+    directory = STATE / "activity" / key(root)
+    if directory.resolve() != directory:
+        raise ValueError(f"refusing symlink: {directory}")
+    for kind in ("lane", "temp", "watch", "backup"):
+        subdir = directory / kind
+        if not subdir.is_dir() or subdir.is_symlink():
+            continue
+        for file in subdir.glob("*.json"):
+            if len(file.stem) == 64 and all(c in "0123456789abcdef" for c in file.stem) and not file.is_symlink():
+                file.unlink()
+        if not any(subdir.iterdir()):
+            subdir.rmdir()
+    if directory.is_dir() and not any(directory.iterdir()):
+        directory.rmdir()
+
+
+def forget_resource(root, kind, path):
+    (STATE / "activity" / key(root) / kind / (key(path) + ".json")).unlink(missing_ok=True)
 
 
 def resources(root, kind):
@@ -71,6 +99,10 @@ def resources(root, kind):
             data = json.loads(receipt.read_bytes())
             path = Path(data["path"])
             if path.resolve() == path and receipt.stem == key(path) and data["identity"] == identity(path):
+                if kind == "temp":
+                    marker = path / ".lonca-temp-owner"
+                    if marker.is_symlink() or not marker.is_file() or marker.read_text() != data["token"]:
+                        continue
                 yield path
         except (OSError, ValueError, KeyError):
             continue
@@ -79,8 +111,11 @@ def resources(root, kind):
 def records(projects):
     for root, project in projects.items():
         for file in resources(root, "lane"):
-            rec = json.loads(file.read_bytes())
-            repo = Path(rec["repo"])
+            try:
+                rec = json.loads(file.read_bytes())
+                repo = Path(rec["repo"])
+            except (OSError, ValueError, KeyError):
+                continue
             entry = project["repos"].get(str(repo), {})
             if not (rec.get("project") == str(root) and entry.get("ready") and
                     file == Path(rec["result"] + ".lane.json") and repo.resolve() == repo and

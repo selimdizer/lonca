@@ -10,6 +10,7 @@ timers=0 review=0 sui=0 uninstall=0
 for arg in "$@"; do
   case $arg in
     --yes) ;; --timers) timers=1 ;; --memory-review) review=1 ;; --sui) sui=1 ;; --uninstall) uninstall=1 ;;
+    --agent-tmpdir) echo "Project sessions manage their own temporary directories." ;;
     --help|-h) sed -n '2,/^set -eu/p' "$0" | sed '$d; s/^# *//'; exit 0 ;;
     *) echo "unknown option: $arg (see --help)" >&2; exit 2 ;;
   esac

@@ -5,6 +5,7 @@ Collects the owner's messages from all Claude sessions since the last review (st
 excerpt of the agent turn it answered, and lets Sonnet save durable decisions into ~/ai-memory following
 ~/lonca/config/memory-review.prompt.md. No new messages -> no model call. Log: ~/.cache/ai-runs/setup/memory-review.log
 """
+from functools import lru_cache
 from pathlib import Path
 from lonca_registry import registered
 import calendar, glob, json, os, re, subprocess, sys, time
@@ -45,6 +46,16 @@ if not projects:
 # Claude encodes cwd in the directory name. Check each message's actual cwd as well,
 # since punctuation in the encoded directory name can collide across projects.
 prefixes = {re.sub(r"[^a-zA-Z0-9]", "-", str(root)) for root in projects}
+@lru_cache(maxsize=1024)
+def included(cwd):
+    if not any(cwd == root or root in cwd.parents for root in projects):
+        return False
+    for ancestor in (cwd, *cwd.parents):
+        if any((ancestor / name).is_file() for name in (".lonca.toml", "lonca.toml")):
+            return ancestor in projects
+    return False
+
+
 items = []
 session_base = Path(HOME) / ".claude/projects"
 folders = {folder for prefix in prefixes for folder in
@@ -62,7 +73,7 @@ for f in (file for folder in folders for file in folder.glob("*.jsonl") if file.
         except ValueError:
             continue
         cwd = Path(m.get("cwd") or "/").resolve()
-        if not any(cwd == root or root in cwd.parents for root in projects):
+        if not included(cwd):
             last_agent = ""
             continue
         if m.get("isSidechain") or m.get("entrypoint") == "sdk-cli":   # subagents; headless claude -p runs

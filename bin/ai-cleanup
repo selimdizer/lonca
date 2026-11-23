@@ -4,7 +4,7 @@ Use --dry-run to preview, or --tmp-age-hours N to change the default 48-hour tem
 """
 import json, os, shutil, subprocess, sys, time
 from pathlib import Path
-from lonca_registry import registered, records, lane_worktree, resources, identity, names
+from lonca_registry import registered, records, lane_worktree, resources, identity, names, forget_resource
 
 DRY = "--dry-run" in sys.argv
 AGE_H = int(sys.argv[sys.argv.index("--tmp-age-hours") + 1]) if "--tmp-age-hours" in sys.argv else 48
@@ -49,9 +49,13 @@ def in_use_paths():
 projects = registered()
 if not projects:
     sys.exit(0)
-USED = in_use_paths()
+UNREAD = object()
+USED = UNREAD
 
 def busy(path):
+    global USED
+    if USED is UNREAD:
+        USED = in_use_paths()
     s = str(path)
     if USED is None:
         return True
@@ -72,9 +76,9 @@ def touched_within(path, hours):
     return False
 
 def remove(path, why):
-    say(f"{'would remove' if DRY else 'removed'} {path} ({why})")
     if not DRY:
-        shutil.rmtree(path, ignore_errors=True)
+        shutil.rmtree(path)
+    say(f"{'would remove' if DRY else 'removed'} {path} ({why})")
 
 # Paths and identities come from receipts written when the resources were created.
 lanes = list(records(projects))
@@ -132,6 +136,8 @@ for root in projects:
         if (folder.name.startswith(("lane-", "session-")) and folder.is_dir() and folder.stat().st_uid == UID
                 and not busy(folder) and not touched_within(folder, AGE_H)):
             remove(folder, f"recorded temp, unused for {AGE_H}h")
+            if not DRY:
+                forget_resource(root, "temp", folder)
 
 base = HOME / ".cache/ai-runs"
 slugs = {str(root): names([root]) for root in projects}
@@ -142,6 +148,10 @@ for folder, members in runs.items():
         continue
     if not busy(folder) and not touched_within(folder, 30 * 24):
         remove(folder, "recorded run unused for 30 days")
+        if not DRY:
+            for rec in members:
+                forget_resource(rec["project"], "lane", rec["result"] + ".lane.json")
+                forget_resource(rec["project"], "watch", rec["temp"])
 
 if not DRY and out:
     LOG.parent.mkdir(parents=True, exist_ok=True)

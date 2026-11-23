@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Run only background actions which support project-scoped inputs."""
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 import os
 import subprocess
 import sys
 import tempfile
 
-from lonca_registry import HOME, names, registered
+from lonca_registry import HOME, names, registered, remember, resources, forget_resource
 
 jobs = sys.argv[1:]
 if jobs[:1] == ["registered"]:
@@ -18,14 +18,28 @@ if jobs in (["deja-index"], ["ai-memory-commit"]):
     sys.exit(0)
 if jobs != ["kanzo-backup"]:
     sys.exit("unknown project job")
-for slug in sorted(names(registered())):
+projects = registered()
+by_slug = {slug: root for root in projects for slug in names([root])}
+for slug, root in sorted(by_slug.items()):
     folder = HOME / "kanzo-backups" / slug
+    if folder.resolve() != folder:
+        continue
     folder.mkdir(parents=True, mode=0o700, exist_ok=True)
+    owned = set(resources(root, "backup"))
+    destination = folder / (date.today().isoformat() + ".json")
+    if destination.is_symlink() or destination.exists() and destination not in owned:
+        print(f"keep existing backup: {destination}")
+        continue
     fd, temp = tempfile.mkstemp(dir=folder)
     os.close(fd)
     try:
         subprocess.run(["kanzo", "export", "--project", slug, "--format", "json", "-o", temp], check=True)
-        os.replace(temp, folder / (date.today().isoformat() + ".json"))
+        os.replace(temp, destination)
+        remember(root, "backup", destination)
+        for path in owned:
+            if path.parent == folder and path.stem < (date.today() - timedelta(days=30)).isoformat():
+                path.unlink(missing_ok=True)
+                forget_resource(root, "backup", path)
     finally:
         if os.path.exists(temp):
             os.unlink(temp)

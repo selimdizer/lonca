@@ -103,6 +103,8 @@ Migration includes registered roots, marked folders under `~/Work`, the marked `
 and markers found in previous Lonca scope records. Pass additional roots as arguments to both commands.
 It moves the old Move marketplace to `~/lonca`, initializes the projects, and then removes identified
 global entries. Backups of changed global files are under `~/.local/state/lonca/migration-backups/`.
+Matching deny rules already present in a legacy backup are preserved and reported. Repeated old installs
+could overwrite that backup, so its contents are the limit of what migration can attribute.
 If a command stops, correct the reported problem and repeat it.
 
 Both interactive and read-only omp lanes load Kanzo and deja through the lane extension. Deja receives

@@ -21,7 +21,7 @@ if op == "remove":
 elif name in servers: sys.exit(0)
 else:
     servers[name] = {"command": cmd[0], "args": cmd[1:]}
-if os.path.exists(f): shutil.copy(f, f + ".lonca-bak")
+if os.path.exists(f) and not os.path.exists(f + ".lonca-bak"): shutil.copy(f, f + ".lonca-bak")
 os.makedirs(os.path.dirname(f), exist_ok=True); json.dump(d, open(f, "w"), indent=2)
 PY
 }

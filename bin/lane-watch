@@ -10,7 +10,7 @@ commits stay until their PR is merged (ai-cleanup closes those).
 It also refreshes every project's deja scope (deja-scope --refresh).
 """
 import json, os, subprocess, sys, time
-from lonca_registry import registered, records, lane_worktree
+from lonca_registry import STATE, key, save, registered, records, lane_worktree
 
 DRY = "--dry-run" in sys.argv
 IDLE_MIN = 30
@@ -79,7 +79,12 @@ now = time.time()
 projects = registered()
 if not projects:
     sys.exit(0)
-for rec_path, rec in records(projects):
+for _, rec in records(projects):
+    # The receipt identifies an immutable launch record. Persist watch state
+    # separately so a timer interruption cannot corrupt that launch record.
+    state_path = STATE / "activity" / key(rec["project"]) / "watch" / (key(rec["temp"]) + ".json")
+    previous = json.loads(state_path.read_bytes()) if state_path.exists() else {}
+    rec.update(previous)
     if rec.get("closed"):
         continue
     if os.path.exists(rec["result"]) and os.path.getsize(rec["result"]) > 0:
@@ -110,8 +115,9 @@ for rec_path, rec in records(projects):
                 with open(LOG, "a") as f:
                     f.write(time.strftime("%Y-%m-%d %H:%M ") + msg + "\n")
                 rec["notified"] = why
-    if not DRY:
-        json.dump(rec, open(rec_path, "w"))
+    state = {k: rec[k] for k in ("done", "closed", "notified") if k in rec}
+    if not DRY and state != previous:
+        save(state_path, state)
 
 # keep every project's deja scope current (a project that appeared since the last run is left out of the others)
 if not DRY:

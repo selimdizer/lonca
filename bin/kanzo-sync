@@ -7,7 +7,9 @@
   kanzo-sync set <id> <status>     one card, e.g. from `lane` when a lane starts (doing)
 Human cards are left alone. Writes go through `kanzo mcp`; reads use `kanzo export`. Log: ~/.cache/ai-runs/setup/kanzo-sync.log
 """
-from lonca_registry import names, registered, records
+from pathlib import Path
+from urllib.parse import urlsplit
+from lonca_registry import names, registered, records, identity
 import datetime, json, os, re, subprocess, sys, time
 
 DRY = "--dry-run" in sys.argv
@@ -91,31 +93,46 @@ def link_lane_prs():
                         t["url"] = url
 
 
+# A board can contain URLs and repository links beyond the registered checkouts.
+origins = {}
+for root, project in projects.items():
+    for path, entry in project["repos"].items():
+        common = Path(path) / ".git"
+        if not entry.get("ready") or not common.is_dir() or common.resolve() != common or identity(common) != entry["identity"]:
+            continue
+        remote = subprocess.run(["git", "-C", path, "remote", "get-url", "origin"], text=True, capture_output=True)
+        url = remote.stdout.strip()
+        if "://" not in url:
+            match = re.fullmatch(r"(?:[^@/:]+@)?([^/:]+):(.+)", url)
+            if not match:
+                continue
+            url = f"ssh://{match[1]}/{match[2]}"
+        parsed = urlsplit(url)
+        full_name = parsed.path.strip("/").removesuffix(".git").lower()
+        if parsed.hostname and full_name.count("/") == 1:
+            for slug in names([root]):
+                origins.setdefault(slug, set()).add((parsed.hostname.lower(), full_name))
+
 board = {"projects": []}
 for slug in sorted(slugs):
     result = subprocess.run(["kanzo", "export", "--project", slug, "--format", "json"], capture_output=True, text=True)
     if result.returncode == 0:
         board["projects"].extend(p for p in json.loads(result.stdout)["projects"] if p["slug"] == slug)
-if not board["projects"]:
+if not board["projects"] or not origins:
     sys.exit(0)
 k = None if DRY else Kanzo()
 HOSTS = re.findall(r"Logged in to (\S+) account", subprocess.run([GH, "auth", "status"], capture_output=True, text=True).stdout
                    + subprocess.run([GH, "auth", "status"], capture_output=True, text=True).stderr) or ["github.com"]
+HOSTS = [h for h in HOSTS if any(host == h.lower() for pairs in origins.values() for host, _ in pairs)]
 me = {h: gh("user", h)["login"] for h in HOSTS}
 
 
-def host_of(repo):  # which GitHub holds this repo (github.com or a GitHub Enterprise host)
-    for h in HOSTS:
-        try:
-            gh(f"repos/{repo}", h)
-            return h
-        except RuntimeError:
-            pass
 link_lane_prs()
 since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=3)
 
 for proj in board["projects"]:
     known, mentioned = set(), set()
+    allowed = origins.get(proj["slug"], set())
     for t in proj.get("tasks", []):
         text = (t.get("title") or "") + (t.get("description") or "") + " ".join(c.get("body", "") for c in t.get("comments", []))
         mentioned |= set(re.findall(r"#(\d+)", text))      # a card that already talks about #N covers it
@@ -123,6 +140,8 @@ for proj in board["projects"]:
         if not m:
             continue
         host, repo, kind, n = m.groups()
+        if (host.lower(), repo.lower()) not in allowed:
+            continue
         known.add((repo.lower(), n))
         if t["status"] == "done" or t.get("human"):
             continue
@@ -144,9 +163,8 @@ for proj in board["projects"]:
                 k.call("update_task", id=t["key"], status=new)
                 k.call("add_comment", id=t["key"], body=why)
     for repo in proj.get("repos") or []:
-        host = host_of(repo)
+        host = next((h for h in HOSTS if (h.lower(), repo.lower()) in allowed), None)
         if not host:
-            log(f"{proj['slug']}: {repo} not found on {HOSTS}")
             continue
         try:
             items = gh(f"repos/{repo}/issues?state=open&creator={me[host]}&per_page=50", host)

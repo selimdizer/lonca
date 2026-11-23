@@ -493,6 +493,8 @@ class Project:
                     plain(blob).unlink()
             if not any(self.backups.iterdir()):
                 self.backups.rmdir()
+        from lonca_registry import forget_activity
+        forget_activity(self.root)
         self.file.unlink()
 
 
@@ -703,13 +705,14 @@ def migrate(args):
     roots = migration_roots(args.roots)
     if not roots:
         raise ValueError("no project roots found; pass a project directory to lonca migrate")
+    found = {}
     for root in roots:
         if not root.is_dir():
             raise ValueError(f"registered root unavailable: {root}")
         top = subprocess.run(["git", "-C", root, "rev-parse", "--show-toplevel"], capture_output=True, text=True)
         if top.returncode == 0 and Path(top.stdout.strip()).resolve() != root:
             raise ValueError(f"choose the repository root or its parent project directory: {root}")
-        list(repos(root))
+        found[root] = list(repos(root))
     legacy = Legacy(args.dry_run)
     legacy.marketplace()
     for root in roots:
@@ -718,16 +721,33 @@ def migrate(args):
         if args.dry_run:
             if not marked(root):
                 print(f"  create {root / MARKERS[0]}")
-            print(f"  register {project.file}; generate project deja policy and backups")
-            for repo, common in repos(root):
-                print(f"  inspect {common / 'config'} (local core.hooksPath), update {common / 'info/exclude'}")
+            if marked(root):
+                spec = json.loads(subprocess.check_output([SRC / "bin/deja-scope", "--policy", root]))
+                policy, data = Path(spec["file"]), json.dumps(spec["policy"], indent=0).encode()
+            else:
+                # init writes an empty marker and uses the folder name as the default project name.
+                import runpy
+                scope = runpy.run_path(str(SRC / "bin/deja-scope"))
+                policy = Path(scope["path_for"](os.environ.get("LONCA_PROJECT") or root.name.lower(), str(root)))
+                data = json.dumps(scope["policy"](str(root)), indent=0).encode()
+            for path, expected in ((policy, data), (policy.with_suffix(".root"), os.fsencode(root))):
+                if read(path) != expected:
+                    print(f"  write {path}")
+            print(f"  reconcile registration {project.file} and backups {project.backups}")
+            for repo, common in found[root]:
+                local = git(repo, "config", "--local", "--get", "core.hooksPath", optional=True)
+                effective = git(repo, "config", "--get", "core.hooksPath", optional=True)
+                if local is None and effective in (None, HOOKS):
+                    print(f"  set core.hooksPath to {HOOKS} in {common / 'config'}")
+                print(f"  reconcile exclusions in {common / 'info/exclude'}")
                 if "claude" in project.data["agents"]:
                     print(f"  install {PLUGIN} locally; merge {repo / SETTINGS} and {repo / 'CLAUDE.local.md'}")
                 if "codex" in project.data["agents"]:
-                    print(f"  merge {repo / '.codex'}: config.toml, hooks.json, rules/lonca.rules")
+                    for name in ("config.toml", "hooks.json", "rules/lonca.rules"):
+                        print(f"  reconcile {repo / '.codex' / name}")
         else:
             project.init(None)
-    legacy.cleanup()
+    legacy.cleanup(upcoming=[repo for items in found.values() for repo, _ in items])
     legacy.timers()
 
 
