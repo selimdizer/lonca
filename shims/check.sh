@@ -10,6 +10,10 @@ for n in git gh pkill; do
   chmod +x "$stubs/$n"
 done
 t() { want=$1; shift; PATH="$S:$stubs:$PATH" "$@" >/dev/null 2>&1; rc=$?; got=ok; [ $rc -eq 126 ] && got=blocked; [ "$got" = "$want" ] || { echo "FAIL: $* -> $got (want $want)"; fail=1; }; }
+export LONCA_LANE=1 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="$HOME/lonca/git-hooks"
+t blocked env GIT_CONFIG_COUNT=0 git status
+t blocked env -u GIT_CONFIG_KEY_0 git status
+t blocked env GIT_CONFIG_VALUE_0=fixture git status
 t blocked gh pr merge 3 --squash
 t blocked gh api repos/a/b/pulls/3/merge -X PUT
 t ok      gh --version

@@ -18,6 +18,10 @@ case $name in
     esac
     "$L/bin/ai-trace-gh" "$@" || exit 126 ;;
   git)
+    if [ -n "${LONCA_LANE:-}" ] && { [ "${GIT_CONFIG_COUNT:-}" != 1 ] ||
+        [ "${GIT_CONFIG_KEY_0:-}" != core.hooksPath ] || [ "${GIT_CONFIG_VALUE_0:-}" != "$HOME/lonca/git-hooks" ]; }; then
+      deny "lane Git hook environment changed or missing; restart the lane"
+    fi
     case $(printf '%s' "$args" | tr '[:upper:]' '[:lower:]') in
       *hookspath*|*include*".path"*|*" config "*)
         python3 -I "$L/shims/hooks-config.py" "$@" || deny "don't change git hooks" ;;

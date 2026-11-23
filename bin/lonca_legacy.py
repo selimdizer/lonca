@@ -33,6 +33,28 @@ def json_bytes(data):
     return (json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode()
 
 
+def deny_rules():
+    return set(json.loads((BIN.parent / "config/claude-permissions.json").read_bytes())["deny"])
+
+
+LEGACY_HOOKS = {
+    "SessionStart": {f"{LONCA}/bin/memory-context", f"{LONCA}/bin/deja-scope --session",
+                     f"{LONCA}/bin/session-tmpdir", "cat ~/ai-memory/MEMORY.md"},
+    "PreToolUse": {f"{LONCA}/bin/ai-trace-gh --hook"},
+    "Stop": {f"python3 {LONCA}/config/memory-nudge.py"},
+}
+
+
+def installed_hook(event, hook):
+    cmd = hook.get("command", "").replace("~/lonca/", str(LONCA) + "/")
+    return hook.get("type") == "command" and cmd in LEGACY_HOOKS.get(event, ())
+
+
+def has_installed_hooks(data):
+    return any(installed_hook(event, hook) for event, groups in data.get("hooks", {}).items()
+               for group in groups for hook in group.get("hooks", []))
+
+
 def deferred_mcp():
     for harness in sorted(DEFERRED_MCP):
         for server in ("kanzo", "deja"):
@@ -152,6 +174,7 @@ class Legacy:
             if text != original and (not previous.is_file() or b"@~/lonca/AGENTS.md" not in previous.read_bytes().splitlines()):
                 self.change(doc, text if text or previous.exists() else None, "remove Lonca import", {"line": "@~/lonca/AGENTS.md"})
 
+        installed_deny = deny_rules()
         for path in (CONF, HOME / ".codex/hooks.json"):
             if path.is_symlink() and path.resolve().is_relative_to(LONCA.resolve()):
                 self.change(path, None, "unlink installed hooks")
@@ -163,30 +186,17 @@ class Legacy:
             bak = path.with_name(path.name + ".lonca-bak")
             previous = json.loads(bak.read_bytes()) if bak.is_file() else {}
             removed = {}
-            hooks_by_event = data.get("hooks", {})
-            commands = {"SessionStart": {f"{LONCA}/bin/memory-context", f"{LONCA}/bin/deja-scope --session",
-                                         f"{LONCA}/bin/session-tmpdir", "cat ~/ai-memory/MEMORY.md"},
-                        "PreToolUse": {f"{LONCA}/bin/ai-trace-gh --hook"}, "Stop": {f"python3 {LONCA}/config/memory-nudge.py"}}
-            def installed_hook(event, hook):
-                cmd = hook.get("command", "").replace("~/lonca/", str(LONCA) + "/")
-                return hook.get("type") == "command" and cmd in commands.get(event, ())
-
-            ours = any(installed_hook(event, hook) for event, groups in hooks_by_event.items()
-                       for group in groups for hook in group.get("hooks", []))
-            if not bak.exists() and not ours:
+            deny = data.get("permissions", {}).get("deny", []) if path == CONF else []
+            owned = [rule for rule in deny if rule in installed_deny]
+            ours = has_installed_hooks(data)
+            if not bak.exists() and not ours and not owned:
                 continue
-            if path == CONF:
-                deny = data.get("permissions", {}).get("deny", [])
-                installed = json.loads((BIN.parent / "config/claude-permissions.json").read_bytes())["deny"]
-                prior_deny = previous.get("permissions", {}).get("deny", [])
-                retained = [r for r in installed if r in deny and r in prior_deny]
-                if retained:
-                    print(f"keep {len(retained)} matching deny rules already in {bak}")
-                for rule in installed:
-                    if rule in deny and rule not in prior_deny:
-                        print(f"  remove deny rule {rule}")
-                        removed.setdefault("permissions", {}).setdefault("deny", []).append(rule)
-                        deny.remove(rule)
+            if owned:
+                for rule in owned:
+                    print(f"  remove deny rule {rule}")
+                removed["permissions"] = {"deny": owned}
+                deny[:] = [rule for rule in deny if rule not in installed_deny]
+            if path == CONF and (bak.exists() or ours):
                 if not deny and "deny" not in previous.get("permissions", {}):
                     data.get("permissions", {}).pop("deny", None)
                 if not data.get("permissions") and "permissions" not in previous:
@@ -374,16 +384,9 @@ class Legacy:
                 path = HOME / MCP[harness]
                 key = "mcp_servers" if path.suffix == ".toml" else "mcp" if harness == "opencode" else "mcpServers"
                 removed = {key: {server: entry}}
-                if harness == "claude":
-                    data = json.loads(path.read_bytes())
-                    del data[key][server]
-                    self.change(path, json_bytes(data), "remove user MCP entry", removed)
-                    remaining = [row for row in state.read_text().splitlines() if row != line]
-                    self.change(state, "".join(row + "\n" for row in remaining).encode(), "update MCP record", {"line": line})
-                else:
-                    self.backup(state, {"line": line})
-                    self.backup(path, removed)
-                    subprocess.run([BIN / "lonca-mcp", "remove", harness, server], check=True)
+                self.backup(state, {"line": line})
+                self.backup(path, removed)
+                subprocess.run([BIN / "lonca-mcp", "remove", harness, server], check=True)
                 current = state.read_text().splitlines()
                 if self.mcp_entry(harness, server) is not None and line not in current:
                     current.append(line)

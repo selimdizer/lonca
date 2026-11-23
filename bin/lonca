@@ -656,7 +656,10 @@ def status(root, target=None):
         candidates = [(target, target / ".git")]
     else:
         candidates = repos(root, worktrees)
-    if not target and project.file.exists() and not (root / ".git").exists() and "claude" in project.data["agents"]:
+    folder_root = not target and project.file.exists() and not (root / ".git").exists()
+    if folder_root and "codex" in project.data["agents"]:
+        print(f"  warning: Codex lead guards are unavailable at {root}; start Codex in an initialized repository")
+    if folder_root and "claude" in project.data["agents"]:
         enabled, configured = claude_status(root, project)
         if enabled and configured:
             print(f"  {root}: Claude lead guards on")
@@ -713,13 +716,31 @@ def status(root, target=None):
 
 
 def legacy_settings(folder):
+    from lonca_legacy import CONF, OLD_MARKET, deny_rules, has_installed_hooks
     legacy = []
     if git(folder, "config", "--global", "--get", "core.hooksPath", optional=True) == HOOKS:
         legacy.append("git hooksPath")
-    for name in (".claude/settings.json", ".claude/CLAUDE.md", ".codex/hooks.json", ".codex/config.toml"):
+    for name in (".claude/settings.json", ".codex/hooks.json"):
         path = HOME / name
-        if path.is_file() and any(word in path.read_bytes() for word in (b"/lonca/", b"mcp_servers.kanzo", b"mcp_servers.deja")):
+        if not path.is_file():
+            continue
+        data = json.loads(path.read_bytes())
+        if has_installed_hooks(data) or path.is_symlink() and path.resolve().is_relative_to(SRC):
             legacy.append(name)
+        elif path == CONF:
+            source = data.get("extraKnownMarketplaces", {}).get("lonca", {}).get("source", {})
+            old_market = (source.get("source") == "directory"
+                          and Path(source.get("path", "")).expanduser().resolve() == OLD_MARKET.resolve())
+            if old_market or deny_rules().intersection(data.get("permissions", {}).get("deny", [])):
+                legacy.append(name)
+    doc = HOME / ".claude/CLAUDE.md"
+    if doc.is_file() and IMPORT in doc.read_text().splitlines():
+        legacy.append(".claude/CLAUDE.md")
+    config = HOME / ".codex/config.toml"
+    if config.is_file():
+        contents = config.read_bytes()
+        if any(key in contents for key in (b"mcp_servers.kanzo", b"mcp_servers.deja")):
+            legacy.append(".codex/config.toml")
     for name in (".claude/agents/lead.md", ".codex/AGENTS.md", ".codex/rules/default.rules"):
         path = HOME / name
         if path.is_symlink() and path.resolve().is_relative_to(SRC):

@@ -49,6 +49,13 @@ def test(base):
 import hashlib, json, sys
 from pathlib import Path
 args = sys.argv[1:]
+if args == ["mcp", "remove", "--scope", "user", "kanzo"]:
+    path = Path.home() / ".claude.json"
+    data = json.loads(path.read_bytes())
+    del data["mcpServers"]["kanzo"]
+    data["openSessionUpdate"] = True
+    path.write_text(json.dumps(data))
+    sys.exit(0)
 assert args.pop(0) == "plugin"
 p = Path(".claude/settings.local.json")
 installed = Path.home() / ("plugin-test-" + hashlib.sha256(bytes(Path.cwd())).hexdigest())
@@ -139,6 +146,7 @@ p.write_text(json.dumps(data))
     assert "@~/lonca/AGENTS.md" in (root / AGENTS[0]).read_text().splitlines()
     assert Path(root_settings["env"]["DEJA_POLICY_FILE"]).is_file()
     report = lonca("status", root)
+    assert "Codex lead guards are unavailable" in report
     assert f"{root}: Claude lead guards on" in report
     assert "own hooksPath: team-hooks" in report and "Claude plugin enabled, settings on, Codex on" in report
     assert str(root) in lonca("status")
@@ -254,17 +262,20 @@ def migration(base):
     catalog = home / ".claude/plugins/known_marketplaces.json"
     catalog.write_text(json.dumps(market))
     settings = home / ".claude/settings.json"
-    rule = "Bash(git clean *)"
-    settings.write_text(json.dumps({"extraKnownMarketplaces": market, "permissions": {"deny": [rule, "private"]},
-        "hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": str(home / "lonca/bin/memory-context")},
-                                              {"type": "command", "command": "echo personal"}]}]}}))
-    polluted = json.loads(settings.read_bytes())
-    keep_rule = "Bash(git reset --hard*)"
-    polluted["permissions"]["deny"].append(keep_rule)
-    polluted["hooks"]["PreToolUse"] = [{"hooks": [{"type": "command", "command": "~/lonca/bin/ai-trace-gh --hook"}]}]
-    settings.write_text(json.dumps(polluted))
-    polluted["permissions"]["deny"].remove(rule)   # Only this installed deny rule is demonstrably new.
-    settings.with_suffix(".json.lonca-bak").write_text(json.dumps(polluted))
+    shipped = json.loads((SRC / "config/claude-permissions.json").read_bytes())["deny"]
+    assert "Bash(*GIT_CONFIG_*)" in shipped
+    owned = [*shipped, shipped[0]]
+    private = ["Edit(~/.local/state/lonca/private/**)", "Bash(git clean ./private)"]
+    settings.write_text(json.dumps({
+        "extraKnownMarketplaces": market,
+        "permissions": {"deny": [private[0], *owned, private[1]]},
+        "hooks": {
+            "SessionStart": [{"hooks": [{"type": "command", "command": str(home / "lonca/bin/memory-context")},
+                                        {"type": "command", "command": "echo personal"}]}],
+            "PreToolUse": [{"hooks": [{"type": "command", "command": "~/lonca/bin/ai-trace-gh --hook"}]}],
+        },
+    }))
+    settings.with_suffix(".json.lonca-bak").write_bytes(settings.read_bytes())
     hooks = home / ".codex/hooks.json"
     hooks.parent.mkdir(exist_ok=True)
     stop = {"type": "command", "command": "python3 ~/lonca/config/memory-nudge.py"}
@@ -317,7 +328,7 @@ def migration(base):
     run(script, "migrate", explicit)
     assert run(script, "status", "--lane", repo)
     assert not codex.is_symlink() and doc.read_text() == "personal\n"
-    assert json.loads(settings.read_bytes())["permissions"]["deny"] == ["private", keep_rule]
+    assert json.loads(settings.read_bytes())["permissions"]["deny"] == private
     assert "echo personal" in settings.read_text()
     assert "/bin/memory-context" not in settings.read_text() and "/bin/ai-trace-gh" not in settings.read_text()
     assert json.loads(hooks.read_text())["hooks"]["Stop"] == [{"hooks": [personal]}]
@@ -325,10 +336,13 @@ def migration(base):
     assert all(link.is_symlink() for link, _ in private_links)
     assert str(home / ".herdr/worktrees") in json.loads(copilot.read_text())["trustedFolders"]
     assert json.loads(mcp.read_bytes()) == {"mcpServers": {"private": private_server}}
-    assert json.loads(claude_mcp.read_bytes()) == {"clientState": "global-only-fixture", "mcpServers": {"deja": customized}}
+    assert json.loads(claude_mcp.read_bytes()) == {"clientState": "global-only-fixture", "mcpServers": {"deja": customized},
+                                                 "openSessionUpdate": True}
     assert not mcp.with_name("mcp.json.lonca-bak").exists()
     assert state.read_text() == "pi deja\n" and deferred.read_text() == original_pi
-    assert "still global: pi MCP deja" in run(script, "status", repo)
+    status = run(script, "status", repo)
+    assert "still global: pi MCP deja" in status and "global install still present" not in status
+    assert "outside a Lonca project" in run(script, "outside-session", cwd=base)
     assert json.loads(catalog.read_bytes())["lonca"]["source"]["path"] == str(home / "lonca")
     run("git", "config", "--global", "--get", "core.hooksPath", ok=False)
     assert git(repo, "config", "--local", "--get", "core.hooksPath") == str(home / "lonca/git-hooks")
@@ -375,6 +389,9 @@ if sys.argv[1] == "run":
     assert backups
     records = [json.loads(line) for directory in backups for line in (directory / "changes.jsonl").read_text().splitlines()]
     assert any(r["path"] == str(claude_mcp) and r["removed"] == {"mcpServers": {"kanzo": standard}} for r in records)
+    recorded_deny = [rule for record in records if record["path"] == str(settings)
+                     for rule in record["removed"].get("permissions", {}).get("deny", [])]
+    assert recorded_deny == owned
     assert all("global-only-fixture" not in json.dumps(r) for r in records)
     run(script, "migrate")
     assert backups == list((home / ".local/state/lonca/migration-backups").iterdir())

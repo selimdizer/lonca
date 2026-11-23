@@ -20,6 +20,7 @@
     "Bash(git push *--no-verify*)",
     "Bash(git push --no-verify*)",
     "Bash(*ALLOW_MAIN_PUSH*)",
+    "Bash(*GIT_CONFIG_*)",
     "Bash(git config *hooksPath *)",
     "Bash(git config *--unset*hooksPath*)",
     "Bash(git -C * config *--unset*hooksPath*)",
