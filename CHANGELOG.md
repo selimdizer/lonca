@@ -5,6 +5,7 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Each lane runs in its own systemd scope capped at 16 GB memory and 4 GB swap (Linux with systemd 254 or later), so running out of memory kills that lane instead of every terminal in Herdr's unit. Where no such scope can be made (macOS, older systemd, no user manager) the lane starts uncapped, as before.
 - `lonca init [--agents claude,codex] <dir>` registers a marked project and installs personal repo
   settings and local Git hooks. `lonca status` reports coverage and conflicts. `lonca remove <dir>`
   restores backed-up files. Linked worktrees share the Git configuration, and `LONCA=0` silences session automation while Git and attribution guards stay active. Project membership now requires a marker. Global installer and timer migration is pending.

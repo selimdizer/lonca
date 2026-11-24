@@ -137,9 +137,13 @@ PY
   esac   # Copilot: install.sh lists ~/.herdr/worktrees in trustedFolders, which covers every worktree below it
   # --outlive-parent: a lane keeps running if the lead's session ends; its exit is noted in the lead's input
   # Expand the child shell's PATH and positional argument inside hc.
+  # The lane runs in its own memory-capped scope when one can be made where it runs: when memory runs out,
+  # only this lane is killed, not every terminal in Herdr's unit (lonca#336). $c splits into its words on purpose.
   # shellcheck disable=SC2016
   hc run --bg --outlive-parent --name "$name" --cwd "$wt" "$@" \
-    -- env "TMPDIR=$ltmp" "DEJA_POLICY_FILE=$DEJA_POLICY_FILE" sh -c 'export PATH="$HOME/lonca/shims:$HOME/lonca-local/shims:$PATH"; exec sh -c "$1"' sh "$run" >/dev/null   # hc passes no env: set it here
+    -- env "TMPDIR=$ltmp" "DEJA_POLICY_FILE=$DEJA_POLICY_FILE" ${XDG_RUNTIME_DIR:+"XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"} sh -c 'export PATH="$HOME/lonca/shims:$HOME/lonca-local/shims:$PATH"
+      c="systemd-run --user --scope --quiet --expand-environment=no -p MemoryMax=16G -p MemorySwapMax=4G --"; $c true 2>/dev/null || c=
+      exec $c sh -c "$1"' sh "$run" >/dev/null   # hc passes no env: set it here
   # lane record for lane-watch and a restarted lead
   python3 -c 'import json,sys,time; k="name worktree lead agent base result card branch repo".split()
 d=dict(zip(k, sys.argv[1:])); d["started"]=int(time.time()); json.dump(d, open(sys.argv[-1], "w"))' \
