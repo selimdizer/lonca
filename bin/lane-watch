@@ -13,7 +13,7 @@ evidence for the tier, attribution) gets one `READY: <repo>#<pr> head <sha> — 
 It also refreshes every project's deja scope (deja-scope --refresh).
 """
 import json, os, shlex, subprocess, sys, time
-from lonca_registry import STATE, key, save, registered, records, lane_worktree
+from lonca_registry import STATE, key, save, registered, records, lane_worktree, remove_lane_containers
 
 DRY = "--dry-run" in sys.argv
 IDLE_MIN = 30
@@ -160,9 +160,12 @@ def close_if_empty(rec):
             return False
         if branch:
             git(main, "branch", "-D", branch)   # never pushed and empty
+        lines = [msg] + remove_lane_containers({name})
+        for line in lines[1:]:
+            print(line)
         os.makedirs(os.path.dirname(LOG), exist_ok=True)
         with open(LOG, "a") as f:
-            f.write(time.strftime("%Y-%m-%d %H:%M ") + msg + "\n")
+            f.write("".join(time.strftime("%Y-%m-%d %H:%M ") + line + "\n" for line in lines))
     return True
 
 

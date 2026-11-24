@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""test-slot [-n N] -- <command>: run a heavy test command once one of N machine-wide slots is free.
+
+Heavy suites (live/integration tests, -race, perf runs, full gates) from every lane and project share the slots, so
+they wait instead of thrashing the machine. N: -n, else `test_slots` in ~/.config/lonca/config.toml, else 2.
+Slots are lock files under ~/.local/state/lonca/test-slots (flock; a crashed holder frees its slot).
+Prints once while it waits; the command's exit code is passed through.
+"""
+import fcntl, os, shlex, signal, subprocess, sys, time
+from pathlib import Path
+
+args = sys.argv[1:]
+n = None
+if args[:1] == ["-n"] and len(args) > 1:
+    n, args = args[1], args[2:]
+if args[:1] != ["--"] or len(args) < 2:
+    print(__doc__.strip(), file=sys.stderr)
+    sys.exit(0 if sys.argv[1:2] in (["-h"], ["--help"]) else 2)
+cmd = args[1:]
+if n is None:
+    n = subprocess.run([Path(__file__).resolve().parent / "lonca-config", "test_slots", "2"],
+                       capture_output=True, text=True).stdout.strip()
+try:
+    n = int(n)
+    assert n >= 1
+except (ValueError, AssertionError):
+    sys.exit(f"test-slot: the slot count must be a whole number of at least 1, not {n!r}")
+
+folder = Path.home() / ".local/state/lonca/test-slots"
+folder.mkdir(parents=True, exist_ok=True)
+holder = f"{os.environ.get('LONCA_LANE') or 'no lane'}: {shlex.join(cmd)}"
+told = False
+while True:
+    for i in range(n):
+        f = open(folder / f"slot-{i}", "a+")   # never truncated before the lock is ours: the holder line stays readable
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            f.close()
+            continue
+        f.truncate(0); f.write(holder + "\n"); f.flush()
+        p = subprocess.Popen(cmd)   # the lock stays with this process: a server the tests leave behind can't keep it
+        signal.signal(signal.SIGINT, signal.SIG_IGN)   # Ctrl-C reaches the command itself; wait for its exit code
+        for s in (signal.SIGTERM, signal.SIGHUP):
+            signal.signal(s, lambda sig, _: p.send_signal(sig))
+        rc = p.wait()
+        f.truncate(0)
+        sys.exit(rc if rc >= 0 else 128 - rc)
+    if not told:
+        busy = [(folder / f"slot-{i}").read_text().strip() for i in range(n)]
+        print("waiting for a test slot: " + "; ".join(b for b in busy if b), file=sys.stderr, flush=True)
+        told = True
+    time.sleep(2)

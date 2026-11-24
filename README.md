@@ -49,6 +49,7 @@ rails, not a sandbox: lanes run with full permissions as your user, so a determi
 - 🌙 **Night mode.** The lead asks every question up front and proposes tonight's work for its project. You answer `başla <code>` and go to bed: until the end time, every PR of that project that passes its checks merges without asking. In the morning you get what was done and the questions that came up.
 - 🧠 **Memory you only fill once.** `~/ai-memory` is plain Markdown that every agent loads at start, with one group per project. Agents save decisions as they go; an optional background review catches the ones they missed.
 - 📋 **A board that keeps itself current.** With [Kanzo](https://github.com/emanuele-em/kanzo), cards move by themselves: *doing* when a lane starts, *review* when its PR opens, *done* when it merges. Issues and PRs your account opens in a project's linked repos get a card too.
+- 🧯 **Machine load.** Containers a lane starts carry its name (`docker` shim: label `lonca.lane`, compose project) and go when the lane closes; heavy suites wait for one of N machine-wide slots (`test-slot -- <cmd>`); `lane --browser` gives only the Claude lane that needs one a chrome-devtools browser.
 - 🛡️ **Guards.** Deny rules, `gh`/`git` shims and git hooks block direct merges, pushes to the default branch, force-pushes, branch deletes, co-author lines and "Generated with" lines.
 
 ## Requirements
@@ -229,7 +230,7 @@ skills go in `<project root>/.claude/skills/`, next to the repos rather than ins
 | Run folders (briefs, reports, evidence) | `~/.cache/ai-runs/<project>/` |
 | Approval codes, merge log | `~/.local/state/lonca/approvals/`, `~/.local/state/lonca/merge.log` |
 | Per-project deja scope | `~/.local/state/lonca/deja/<project>.json` |
-| Settings (optional) | `~/.config/lonca/config.toml`: `tmpdir` (see `lonca-config --help`) |
+| Settings (optional) | `~/.config/lonca/config.toml`: `tmpdir`, `auto_merge`, `test_slots` (see `lonca-config --help`) |
 
 **Environment variables:**
 

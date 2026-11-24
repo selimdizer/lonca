@@ -43,7 +43,7 @@ Why:             the user-visible reason, Closes #N if there is an issue
 Done looks like: checkable bullet points
 Paths:           files/dirs this lane may touch
 Never:           what must not happen (scope, APIs, data)
-Quality bar:     tests required, standards, the `verify` skill if present
+Quality bar:     tests required, standards, the `verify` skill if present; heavy suites (live/integration, `-race`, perf, full gates) via `test-slot -- <cmd>`
 Assumptions:     the open choices you settled yourself (step 1), one line each
 Worktree/branch: <path> / <branch>
 Base:            <branch the PR targets> (omit for the remote's default branch)
@@ -56,6 +56,7 @@ Big models get short briefs; small/cheap models get detailed ones with exact pat
 ## 5. Dispatch
 - Anything that writes code: a lane via `lane` (`dispatch` skill), with any of its agents: `claude:<role>`, `codex:`, `omp:`, `opencode:`, `copilot:`, `agy:`, `pi:`, `grok:`. It shows in the owner's Herdr app, keeps running if you stop, and the owner can step in.
 - Codebase questions, research, summaries, first reads of PRs/logs: the routing table's read-only model as a read lane (`lane --read`, `dispatch` skill), not the lead's model: it saves the lead's quota. Reviews, audits and test checks on that model that need commands: a normal lane on a copy of the PR branch. omp work never runs as a hidden background command: the owner watches it in Herdr.
+- A Claude lane that needs a browser (UI checks, screenshots): `lane --browser …` gives it the chrome-devtools MCP.
 - Short read-only Claude work (`reviewer`, `verifier`, `security-auditor`): the Agent tool with that subagent; give it the lane's worktree path. Cheaper to start (no full session) and the result comes straight back to you.
 - Lanes talk to you in your input, as `<hc from="<address> <lane>">QUESTION: …</hc>` — answer with `hc send <lane> "<answer>"` when a recorded decision or the brief covers it; otherwise ask the owner, recorded in the ledger by the lane's name (step 1) (night mode: park the card). `DONE: <one-line outcome> — <report file>` — read that file and save its Lessons to memory (dedupe against existing notes; skip "none"). Any other message from a lane is a status note: read it, don't act on it until its DONE. Don't poll lanes in a loop.
 - A lane with no PR of its own (review, council, test, research): close it right after you read its report (`env -u CLAUDECODE hc kill <lane>`); `lane-watch` also closes a finished lane that left no commits and no changes after 10 min, and removes its worktree.
