@@ -73,5 +73,7 @@ t ok      git config --get include.path
 t blocked lonca migrate
 t blocked lonca init fixture
 t blocked lonca remove fixture
+t blocked lonca questions answer Q-1 fixture
+t blocked lonca questions drop Q-1 fixture
 t blocked pkill -f nothing-xyz
 [ $fail -eq 0 ] && echo "all shim cases pass"; exit $fail
