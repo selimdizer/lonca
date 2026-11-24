@@ -170,6 +170,21 @@ lost Lonca's `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_0` and `GIT_CONFIG_VALUE_0`: te
 git environment fail there. The deny rule `Bash(*GIT_CONFIG_*)` also stops Claude leads from running
 check steps that export `GIT_CONFIG_GLOBAL`. Run those in a plain shell or on CI.
 
+### Questions for the owner
+
+Every decision a lead asks the owner stays in `<project root>/.lonca/questions.md` until it is answered, so
+"what is still open?" is read from the file, not from a session's memory. Init hides `.lonca/` from Git at a
+repository root (`.git/info/exclude`); `remove` keeps the file.
+
+```sh
+lonca questions                           # open questions of this project, oldest first (--all: every one)
+lonca questions add --by lead --title "Who gets the leftover cent?" --context "10.00 / 3" \
+  --option "The first sharer" --option "The payer" --recommend A    # prints its id, e.g. Q-4
+lonca questions answer Q-4 "A"            # the owner's words; drop Q-4 "<why>" retires it
+```
+
+Ids count up per project and are never reused; answered and dropped questions keep their block.
+
 - Claude Code installs `lonca@lonca` with local scope. Its agents, skills, hooks and MCP servers come
   from the local marketplace. Init also installs these protections at a non-Git project root for leads. Personal settings hold the deny rules and deja policy, and
   `CLAUDE.local.md` imports `@~/lonca/AGENTS.md`. Use a CLI with local marketplace scope support.

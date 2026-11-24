@@ -3,6 +3,7 @@
 import argparse
 from collections import Counter
 import base64
+from datetime import datetime
 import fcntl
 import hashlib
 import json
@@ -412,7 +413,8 @@ class Project:
         if "codex" in agents:
             names.extend([".codex/config.toml", ".codex/hooks.json", ".codex/rules/lonca.rules"])
         paths = {name: personal(repo, name) for name in names}
-        self.exclude(repo, common, names)
+        # The questions ledger is the owner's data: hidden from Git here, kept by remove.
+        self.exclude(repo, common, names + [".lonca"] * (repo == self.root))
         plain(common / "config")
         local = git(repo, "config", "--local", "--get", "core.hooksPath", optional=True)
         effective = git(repo, "config", "--get", "core.hooksPath", optional=True)
@@ -857,8 +859,120 @@ def migrate(args):
     legacy.timers()
 
 
+LEDGER = ".lonca/questions.md"
+HEADING = re.compile(r"## Q-(\d+)\. ")
+
+
+def flat(text):
+    return " ".join(text.split())
+
+
+def indented(text):
+    # Continuation lines are indented so free text never starts a line the parser reads.
+    return "\n  ".join(line.strip() for line in text.strip().splitlines())
+
+
+def blocks(text):
+    """(start line, id, lines) per question; a heading counts only when an Asked: line follows it."""
+    lines = text.splitlines()
+    starts = [(i, int(m.group(1))) for i, line in enumerate(lines)
+              if (m := HEADING.match(line)) and i + 1 < len(lines) and lines[i + 1].startswith("Asked: ")]
+    ends = [i for i, _ in starts[1:]] + [len(lines)]
+    return [(i, n, lines[i:end]) for (i, n), end in zip(starts, ends)]
+
+
+def questions(argv):
+    """lonca questions [dir] [--all] | add [dir] --by WHO --title Q [--context T] --option A ... [--recommend A]
+    | answer [dir] Q-N WORDS | drop [dir] Q-N WHY"""
+    action = argv.pop(0) if argv and argv[0] in ("add", "answer", "drop") else "list"
+    parser = argparse.ArgumentParser(prog=f"lonca questions{'' if action == 'list' else ' ' + action}",
+                                     description="The project's ledger of questions for the owner.")
+    if action == "list":
+        parser.add_argument("--all", action="store_true", help="also answered and dropped questions")
+    parser.add_argument("dir", type=Path, nargs="?" if action in ("list", "add") else None, default=Path.cwd(),
+                        metavar="dir" if action in ("list", "add") else "[dir]")
+    if action == "add":
+        parser.add_argument("--by", required=True)
+        parser.add_argument("--title", required=True)
+        parser.add_argument("--context", default="")
+        parser.add_argument("--option", action="append", default=[])
+        parser.add_argument("--recommend")
+    else:
+        if action != "list":
+            parser.add_argument("id")
+            parser.add_argument("words")
+    if action in ("answer", "drop") and len(argv) == 2:
+        argv.insert(0, ".")  # dir is optional before the id
+    args = parser.parse_args(argv)
+    p = subprocess.run([SRC / "bin/lonca-project", args.dir], capture_output=True, text=True)
+    if p.returncode:
+        parser.error(f"not in a Lonca project: {args.dir.resolve()}")
+    name, root = p.stdout.rstrip("\n").split("\t")
+    root = Path(root)
+    ledger = plain(root / LEDGER)
+    if action == "list":
+        text = (read(ledger) or b"").decode()
+        shown = [b for b in blocks(text) if args.all or b[2][1].endswith("· Status: open")]
+        print("\n\n".join("\n".join(lines).strip() for _, _, lines in shown) or "No open questions.")
+        return
+    if action == "add":
+        letters = "ABCDEFGHIJKLMNOPQRSTUVW"
+        if len(args.option) > len(letters):
+            parser.error("too many options")
+        if args.recommend and args.recommend not in letters[:len(args.option)]:
+            parser.error(f"--recommend names none of the options: {args.recommend}")
+        ignored = subprocess.run(["git", "-C", root, "check-ignore", "-q", "--", LEDGER],
+                                 capture_output=True, text=True, env=dict(os.environ, LC_ALL="C"))
+        if ignored.returncode and "not a git repository" not in ignored.stderr:
+            parser.error(f"{root / LEDGER} would show in git; ask the owner or lead to run lonca init {shlex.quote(str(root))}")
+    ledger.parent.mkdir(mode=0o700, exist_ok=True)
+    fd = os.open(ledger.parent, os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        text = (read(ledger) or f"# Questions for the owner: {name}\n\nKept by `lonca questions`; nothing is deleted.\n".encode()).decode()
+        found = blocks(text)
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        lines = text.splitlines()
+        if action == "add":
+            n = max((b[1] for b in found), default=0) + 1
+            options = [f"{l}. {indented(o)}{' (recommended)' if l == args.recommend else ''}"
+                       for l, o in zip(letters, args.option)] + ["X. Other (please specify)"]
+            block = [f"## Q-{n}. {flat(args.title)}", f"Asked: {now} by {flat(args.by)} · Status: open", ""]
+            if args.context.strip():
+                block += [indented(args.context), ""]
+            block += options + ["", "[Answer]:"]
+            lines += [""] * (bool(lines) and lines[-1] != "") + block
+        else:
+            match = re.fullmatch(r"Q-(\d+)", args.id)
+            hit = [b for b in found if match and b[1] == int(match.group(1))]
+            if not hit:
+                parser.error(f"no question {args.id} in {ledger}")
+            start, n, block = hit[0]
+            if not block[1].endswith("· Status: open"):
+                parser.error(f"Q-{n} is not open: {block[1]}")
+            status = "answered" if action == "answer" else "dropped"
+            block = list(block)
+            block[1] = block[1].replace("· Status: open", f"· Status: {status}")
+            at = max(i for i, line in enumerate(block) if line.startswith("[Answer]:"))
+            while len(block) > at + 1 and not block[-1].strip():
+                block.pop()
+            if action == "answer":
+                block[at] = f"[Answer]: {indented(args.words)}"
+                block.insert(at + 1, f"Answered: {now}")
+            else:
+                block.insert(at + 1, f"Dropped: {now} · {indented(args.words)}")
+            end = start + len(hit[0][2])
+            lines[start:end] = block + ([""] if end < len(lines) else [])
+        atomic(ledger, ("\n".join(lines) + "\n").encode())
+    finally:
+        os.close(fd)
+    print(f"Q-{n}")
+
+
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    if sys.argv[1:2] == ["questions"]:
+        return questions(sys.argv[2:])
+    parser = argparse.ArgumentParser(description=__doc__, epilog="lonca questions --help: the owner's questions ledger")
     commands = parser.add_subparsers(dest="command", required=True)
     migration = commands.add_parser("migrate")
     migration.add_argument("--dry-run", action="store_true")

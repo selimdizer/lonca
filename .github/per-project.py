@@ -214,9 +214,11 @@ p.write_text(json.dumps(data))
     (other / "lonca.toml").unlink()
     lonca("init", "--agents", "claude", other)
     assert git(other, "check-ignore", ".lonca.toml") == ".lonca.toml"
+    assert lonca("questions", "add", other, "--by", "lead", "--title", "Kept?") == "Q-1"
     assert not (other / ".codex").exists() and not git(other, "status", "--porcelain")
     lonca("remove", other)
     assert snapshot(other, files) == baseline[other]
+    assert "Kept?" in (other / ".lonca/questions.md").read_text()   # the owner's ledger survives remove
     # Later edits in each personal format survive repair and uninstall.
     lonca("init", "--agents", "claude,codex", a)
     settings_path = a / AGENTS[1]
