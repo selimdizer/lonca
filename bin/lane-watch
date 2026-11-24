@@ -48,12 +48,14 @@ def ready(rec):
     fields = (repo, branch, lead, rec.get("name", ""), rec.get("result", ""))
     if not (repo and branch and lead and os.path.isdir(repo)) or any(c < " " for f in fields for c in f):
         return  # a control character would put extra lines into the lead's input
-    r = subprocess.run(["gh", "pr", "list", "--head", branch, "--state", "open",
-                        "--json", "number,headRefOid,isCrossRepository"], cwd=repo, capture_output=True, text=True)
-    try:  # the lane's own PR, not a fork's PR that happens to use the same branch name
-        pr = next((p for p in json.loads(r.stdout) if not p.get("isCrossRepository")), {})
-    except (ValueError, TypeError, AttributeError):
-        return
+    def own_pr():
+        r = subprocess.run(["gh", "pr", "list", "--head", branch, "--state", "open",
+                            "--json", "number,headRefOid,isCrossRepository"], cwd=repo, capture_output=True, text=True)
+        try:  # the lane's own PR, not a fork's PR that happens to use the same branch name
+            return next((p for p in json.loads(r.stdout) if not p.get("isCrossRepository")), {})
+        except (ValueError, TypeError, AttributeError):
+            return {}
+    pr = own_pr()
     head = pr.get("headRefOid", "")
     if not head or rec.get("ready_head") == head:
         return
@@ -70,6 +72,8 @@ def ready(rec):
     if subprocess.run([os.path.join(here, "merge-pr"), "--dry-run", repo, str(pr["number"]), run_dir, lane],
                       capture_output=True).returncode != 0:
         return
+    if own_pr().get("headRefOid") != head:
+        return  # pushed while checking: the dry run judged another head; the next run looks again
     name = os.path.basename(repo)
     msg = (f"READY: {name}#{pr['number']} head {head[:9]} — checks complete for this head (lane {rec['name']}). "
            f"Run: {shlex.join(['merge-pr', repo, str(pr['number']), run_dir, lane])}")
