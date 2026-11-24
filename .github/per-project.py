@@ -250,7 +250,7 @@ def off_switch(base):
     env = dict(os.environ, LONCA="0", HOME=str(base), CLAUDE_ENV_FILE=str(base / "env"))
     hook_event = json.dumps({"cwd": str(repo), "session_id": "test"})
     for program, args in (("bin/deja-scope", ["--session"]), ("bin/memory-context", []),
-                          ("bin/session-tmpdir", []), ("bin/ai-trace-gh", ["--hook"])):
+                          ("bin/session-tmpdir", []), ("bin/session-scope", []), ("bin/ai-trace-gh", ["--hook"])):
         assert not run(SRC / program, *args, cwd=repo, env=env, input=hook_event)
     hooks = runpy.run_path(str(SRC / "bin/lonca"))["codex_hooks"]()
     (base / "lonca").symlink_to(SRC, target_is_directory=True)
