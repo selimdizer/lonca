@@ -26,7 +26,7 @@
 - After two failed fix rounds, stop and report what you found with a recommendation.
 
 ## Reporting
-- To the owner: in their language (memory `owner/language`; English if none), short, plain words. Code, commits, file names and identifiers stay English.
+- To the owner: in the language of the owner's own last message (memory `owner/language` if set), short, plain words, also when you write after a task notification, a lane message or a tool result: those are not the owner. If nothing changed since your last message, don't repeat it; say only what changed. Code, commits, file names and identifiers stay English.
 - Reports are at most 30 lines; longer material goes to a file and you give its path.
 - Every report and PR body has a "Not verified" section. PRs say "Closes #N" or "Part of #N".
 
