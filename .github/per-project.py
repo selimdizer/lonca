@@ -295,14 +295,14 @@ def migration(base):
     settings = home / ".claude/settings.json"
     shipped = json.loads((SRC / "config/claude-permissions.json").read_bytes())["deny"]
     assert "Bash(*GIT_CONFIG_*)" in shipped
-    owned = [*shipped, shipped[0]]
+    owned = [*shipped, shipped[0], "Bash(ok-merge*)", "Bash(git push * main*)"]  # with rules earlier releases shipped
     private = ["Edit(~/.local/state/lonca/private/**)", "Bash(git clean ./private)"]
     defaults = legacy_defaults(home)
     settings.write_text(json.dumps({
         **defaults,
         "autoMemoryDirectory": "~/ai-memory",
         "extraKnownMarketplaces": market,
-        "permissions": {"deny": [private[0], *owned, "Bash(ok-merge*)", "Bash(git push * main*)", private[1]]},
+        "permissions": {"deny": [private[0], *owned, private[1]]},
         "hooks": {
             "SessionStart": [{"hooks": [{"type": "command", "command": str(home / "lonca/bin/memory-context")},
                                         {"type": "command", "command": str(home / "lonca/bin/session-scope")},
