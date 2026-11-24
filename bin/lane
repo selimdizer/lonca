@@ -142,7 +142,7 @@ PY
   # shellcheck disable=SC2016
   hc run --bg --outlive-parent --name "$name" --cwd "$wt" "$@" \
     -- env "TMPDIR=$ltmp" "DEJA_POLICY_FILE=$DEJA_POLICY_FILE" ${XDG_RUNTIME_DIR:+"XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"} sh -c 'export PATH="$HOME/lonca/shims:$HOME/lonca-local/shims:$PATH"
-      c="systemd-run --user --scope --quiet --expand-environment=no -p MemoryMax=16G -p MemorySwapMax=4G --"; $c true 2>/dev/null || c=
+      c="systemd-run --user --scope --quiet --expand-environment=no -p MemoryMax=16G -p MemorySwapMax=4G -p OOMPolicy=continue --"; $c true 2>/dev/null || c=
       exec $c sh -c "$1"' sh "$run" >/dev/null   # hc passes no env: set it here
   # lane record for lane-watch and a restarted lead
   python3 -c 'import json,sys,time; k="name worktree lead agent base result card branch repo".split()

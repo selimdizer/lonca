@@ -52,7 +52,7 @@ unit = f"lonca-session-{pid}.scope"
 try:
     moved = subprocess.run(["busctl", "--user", "call", "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
                             "org.freedesktop.systemd1.Manager", "StartTransientUnit", "ssa(sv)a(sa(sv))",
-                            unit, "fail", "3", "PIDs", "au", "1", str(pid),
+                            unit, "fail", "4", "PIDs", "au", "1", str(pid), "OOMPolicy", "s", "continue",
                             "MemoryMax", "t", str(MEMORY_MAX), "MemorySwapMax", "t", str(SWAP_MAX), "0"],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=5)
 except (OSError, subprocess.TimeoutExpired):  # no busctl, or a stuck user bus: start uncapped
