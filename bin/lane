@@ -136,14 +136,14 @@ PY
       grep -qF "[folders.\"$main\"]" "$f" 2>/dev/null || { mkdir -p "${f%/*}"; printf '[folders."%s"]\ntrusted = true\ndecided_at = %s\n' "$main" "$(date +%s)" >> "$f"; } ;;
   esac   # Copilot: install.sh lists ~/.herdr/worktrees in trustedFolders, which covers every worktree below it
   # --outlive-parent: a lane keeps running if the lead's session ends; its exit is noted in the lead's input
-  # Expand the child shell's PATH and positional argument inside hc.
-  # shellcheck disable=SC2016
   # Own memory-capped scope: when memory runs out, only this lane is killed, not every terminal in Herdr's unit (lonca#336)
-  cap=; [ -n "${XDG_RUNTIME_DIR:-}" ] && command -v systemd-run >/dev/null \
-    && cap="XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR systemd-run --user --scope --quiet -p MemoryMax=16G -p MemorySwapMax=4G --"
-  # shellcheck disable=SC2086
+  # (probed first: a scope that cannot be created would leave the lane never started)
+  cap="systemd-run --user --scope --quiet -p MemoryMax=16G -p MemorySwapMax=4G --"
+  [ -n "${XDG_RUNTIME_DIR:-}" ] && command -v systemd-run >/dev/null && $cap true 2>/dev/null || cap=
+  # Expand the child shell's PATH and positional argument inside hc; $cap splits into its words on purpose.
+  # shellcheck disable=SC2016,SC2086
   hc run --bg --outlive-parent --name "$name" --cwd "$wt" "$@" \
-    -- env "TMPDIR=$ltmp" "DEJA_POLICY_FILE=$DEJA_POLICY_FILE" $cap sh -c 'export PATH="$HOME/lonca/shims:$HOME/lonca-local/shims:$PATH"; exec sh -c "$1"' sh "$run" >/dev/null   # hc passes no env: set it here
+    -- env "TMPDIR=$ltmp" "DEJA_POLICY_FILE=$DEJA_POLICY_FILE" "XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-}" $cap sh -c 'export PATH="$HOME/lonca/shims:$HOME/lonca-local/shims:$PATH"; exec sh -c "$1"' sh "$run" >/dev/null   # hc passes no env: set it here
   # lane record for lane-watch and a restarted lead
   python3 -c 'import json,sys,time; k="name worktree lead agent base result card branch repo".split()
 d=dict(zip(k, sys.argv[1:])); d["started"]=int(time.time()); json.dump(d, open(sys.argv[-1], "w"))' \
