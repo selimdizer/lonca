@@ -419,6 +419,14 @@ if sys.argv[1] == "run":
         assert all(os.access(Path(hooks_path) / hook, os.X_OK) for hook in ("pre-push", "commit-msg"))
         rec = json.loads(Path(str(result) + ".lane.json").read_bytes())
         assert Path(rec["temp"]).is_dir() and Path(rec["project"]) == repo
+    # A read lane on a temp copy outside Git: no Git guard check, its own marker is the project.
+    copy = base / "read-copy"
+    copy.mkdir()
+    (copy / ".lonca.toml").write_text('name = "fixture"')
+    result = home / ".cache/ai-runs/fixture/run/copy.result"
+    run(SRC / "bin/lane", "--read", copy, "copy", "omp:example/small", brief, result)
+    assert "--tools read,grep,glob" in json.loads((home / "terminal.json").read_bytes())[-1]
+    assert json.loads(Path(str(result) + ".lane.json").read_bytes())["worktree"] == str(copy.resolve())
     guards = repo / ".codex/rules/lonca.rules"
     guards.write_text("")
     denied = subprocess.run([script, "status", "--lane", repo], capture_output=True, text=True)

@@ -20,7 +20,8 @@ case ${1:-} in -h|--help|"") sed -n '2,/^set -eu/p' "$0" | sed '$d; s/^# \{0,1\}
 [ $# -eq 5 ] || [ $# -eq 6 ] || { echo "usage: lane [--read] <repo-dir> <branch|name> <agent> <brief-file> <result-file> [base-branch]   (lane --help)" >&2; exit 2; }
 repo=$1 branch=$2 agent=$3 brief=$(realpath "$4") result=$5 base=${6:-}
 repo=$(realpath "$repo")
-if ! "$HOME/lonca/bin/lonca" status --lane --agent "${agent%%:*}" "$repo" >/dev/null; then
+# Read lanes only read files (also temp copies outside Git): no Git guards to check.
+if [ $ro = 0 ] && ! "$HOME/lonca/bin/lonca" status --lane --agent "${agent%%:*}" "$repo" >/dev/null; then
   root=$("$HOME/lonca/bin/lonca-project" "$repo" || true)
   root=${root#*	}
   python3 -I -c 'import shlex,sys; print("lane: ask your lead to run lonca init " + shlex.quote(sys.argv[1]), file=sys.stderr)' "${root:-$repo}"
@@ -114,7 +115,7 @@ ltmp=$(mktemp -d "$TMPDIR/lane-$name.XXXXXXXX")
 case $agent in
   omp:*) cmd="$cmd"' --extension "$HOME/lonca/config/omp-lane"' ;;
   opencode:*) export OPENCODE_CONFIG_DIR="$HOME/lonca/config/opencode" ;;
-  claude:*) settings=$(python3 -I -c 'import json,shlex,sys; print(shlex.quote(json.dumps({"env":{"TMPDIR":sys.argv[1]}})))' "$ltmp")
+  claude:*) settings=$(python3 -I -c 'import json,shlex,sys; print(shlex.quote(json.dumps({"env":{"TMPDIR":sys.argv[1]},"attribution":{"commit":"","pr":""},"includeCoAuthoredBy":False})))' "$ltmp")
             cmd="$cmd --settings $settings" ;;
   codex:*)  cmd="$cmd -c $(override shell_environment_policy.set.TMPDIR "$ltmp")"
             cmd="$cmd -c $(override shell_environment_policy.set.GIT_CONFIG_COUNT 1)"

@@ -164,16 +164,19 @@ and newly cloned repositories. Status lists linked worktrees inside the project 
 A repository with a custom hooks path keeps it. `LONCA=0` silences memory, deja-scope and temporary-directory
 automation for that process and its children. The default-branch push guard, attribution checks and the
 repository's native Git hooks still run. The owner can remove the project integration with `lonca remove`.
-In a lane, the git shim refuses any git command whose environment lost Lonca's `GIT_CONFIG_COUNT`,
-`GIT_CONFIG_KEY_0` and `GIT_CONFIG_VALUE_0`, or whose `GIT_CONFIG_PARAMETERS` sets a hooks path or an
-include: test suites that clean the git environment fail there. The deny rule `Bash(*GIT_CONFIG_*)` also stops
-Claude leads from running check steps that export `GIT_CONFIG_GLOBAL`. Run those in a plain shell or on CI.
+The git shim refuses `GIT_CONFIG_PARAMETERS` that sets a hooks path or an include, `--no-verify` on
+commit, merge and push, and `-n` on commit. In a lane it also refuses any git command whose environment
+lost Lonca's `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_0` and `GIT_CONFIG_VALUE_0`: test suites that clean the
+git environment fail there. The deny rule `Bash(*GIT_CONFIG_*)` also stops Claude leads from running
+check steps that export `GIT_CONFIG_GLOBAL`. Run those in a plain shell or on CI.
 
 - Claude Code installs `lonca@lonca` with local scope. Its agents, skills, hooks and MCP servers come
   from the local marketplace. Init also installs these protections at a non-Git project root for leads. Personal settings hold the deny rules and deja policy, and
   `CLAUDE.local.md` imports `@~/lonca/AGENTS.md`. Use a CLI with local marketplace scope support.
-  Personal settings also turn off Claude's commit and PR signature (`attribution`, `includeCoAuthoredBy`);
-  folders without Lonca get Claude's default signature.
+  Personal settings also turn off Claude's commit and PR signature (`attribution`, `includeCoAuthoredBy`).
+  Init replaces an existing `attribution` or `includeCoAuthoredBy` value there, and remove restores it.
+  Claude lanes get the same two settings through `--settings`, since their worktrees have no personal settings.
+  Folders without Lonca get Claude's default signature.
 - Codex reads the project's `.codex/config.toml`, `.codex/rules/lonca.rules` and `.codex/hooks.json`.
   Trust the project and review the hooks in `/hooks`.
 - Init merges personal files, registers the project and keeps private backups under

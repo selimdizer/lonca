@@ -22,12 +22,34 @@ case $name in
         [ "${GIT_CONFIG_KEY_0:-}" != core.hooksPath ] || [ "${GIT_CONFIG_VALUE_0:-}" != "$HOME/lonca/git-hooks" ]; }; then
       deny "lane Git hook environment changed or missing; restart the lane"
     fi
-    # GIT_CONFIG_PARAMETERS (git -c) wins over the triple above.
-    if [ -n "${LONCA_LANE:-}" ]; then
-      case $(printf '%s' "${GIT_CONFIG_PARAMETERS:-}" | tr '[:upper:]' '[:lower:]') in
-        *hookspath*|*include*) deny "don't bypass git hooks" ;;
+    # GIT_CONFIG_PARAMETERS (git -c) wins over the lane triple and the repo's hooksPath.
+    case $(printf '%s' "${GIT_CONFIG_PARAMETERS:-}" | tr '[:upper:]' '[:lower:]') in
+      *hookspath*|*include*) deny "don't bypass git hooks" ;;
+    esac
+    # Hook skips anywhere after the subcommand: --no-verify (or a unique prefix) on commit, merge and push,
+    # and -n alone or inside a short-option cluster (-an) on commit.
+    sub= skip=
+    for a do
+      if [ -n "$skip" ]; then skip=; continue; fi
+      if [ -z "$sub" ]; then
+        case $a in -C|-c|--git-dir|--work-tree|--namespace|--config-env) skip=1 ;; -*) ;; *) sub=$a ;; esac
+        continue
+      fi
+      case $sub:$a in
+        *:--) break ;;
+        commit:--no-veri*|merge:--no-veri*|push:--no-veri*) deny "don't skip git hooks" ;;
+        commit:-[!-]*)
+          o=${a#-}
+          while [ -n "$o" ]; do
+            c=${o%"${o#?}"}; o=${o#?}
+            case $c in
+              n) deny "don't skip git hooks" ;;
+              [mCcFt]) [ -z "$o" ] && skip=1; break ;;   # takes a value: the rest, or the next argument
+              [Su]) break ;;                              # optional value, only inline
+            esac
+          done ;;
       esac
-    fi
+    done
     case $(printf '%s' "$args" | tr '[:upper:]' '[:lower:]') in
       *hookspath*|*include*".path"*|*" config "*)
         python3 -I "$L/shims/hooks-config.py" "$@" || deny "don't change git hooks" ;;

@@ -17,6 +17,18 @@ t blocked env GIT_CONFIG_VALUE_0=fixture git status
 t blocked env "GIT_CONFIG_PARAMETERS='core.hooksPath'='/nonexistent'" git push origin x
 t blocked env "GIT_CONFIG_PARAMETERS='include.path'='fixture'" git status
 t ok      env "GIT_CONFIG_PARAMETERS='user.name'='fixture'" git status
+t blocked env -u LONCA_LANE "GIT_CONFIG_PARAMETERS='core.hooksPath'='/nonexistent'" git push origin x
+t blocked git commit -m x --no-verify
+t blocked git commit --no-veri -m x
+t blocked git -C . commit -n -m x
+t blocked git commit -anm x
+t blocked git merge feature --no-verify
+t blocked git push origin x --no-verify
+t ok      git commit -m -n
+t ok      git commit -uno -m x
+t ok      git commit -am "add notes"
+t ok      git log -n 3
+t ok      git commit -m x -- -n
 t blocked gh pr merge 3 --squash
 t blocked gh api repos/a/b/pulls/3/merge -X PUT
 t ok      gh --version
