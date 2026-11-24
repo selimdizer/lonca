@@ -25,7 +25,7 @@ Only cards tagged `night` (status todo, not `human`, nothing open in `waits_on`)
 - Keep the evidence where merge-pr reads it: `$RUN/<lane>*.md` must contain those verdict lines.
 
 ## 4. Merge only through merge-pr
-`merge-pr <repo-dir> <pr-number> <run-dir> <lane>` (`--dry-run` first). While night mode is on it merges every PR that passes its checks; it refuses otherwise, and you never merge another way or retry a refusal by changing evidence. Merge in a sensible order; when a lane's base moved, merge the base into its branch (no rebase, no force-push) and re-gate the new head.
+`merge-pr <repo-dir> <pr-number> <run-dir> <lane>` (`--dry-run` first). While night mode is on it merges every PR that passes its checks; it refuses otherwise, and you never merge another way or retry a refusal by changing evidence. Merge in a sensible order; when a lane's base moved, tell that lane to merge the base into its branch in its own worktree and push (no rebase, no force-push; stop it first if it is gone), then re-gate the new head.
 
 ## 5. After the merges
 One full gate on each merged target branch (the project's verify skill on that branch, including its slow/live tier). A failure: stop merging (`night-on --off <project>`), open a card with the failure, and fix forward only if the fix is itself a card tagged `night`.

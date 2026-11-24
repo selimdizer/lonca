@@ -135,9 +135,7 @@ def close_if_empty(rec):
         if term.get("state") != "finished" or time.time() - os.path.getmtime(rec["result"]) < 600:
             return False                 # look again next run
         print(f"removed the finished terminal of read lane {name}")
-        if not DRY:
-            hc("rm", name)
-        return True
+        return DRY or hc("rm", name)[0] == 0   # not removed: look again next run
     if time.time() - os.path.getmtime(rec["result"]) < 600 or not os.path.isdir(wt):
         return not os.path.isdir(wt)
     code, out = hc("get", name, "--json")
