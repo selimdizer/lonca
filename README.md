@@ -110,8 +110,10 @@ Migration keeps skill and agent links into `~/lonca-local`. Full uninstall remov
 keeps their targets. Known installer hook commands are removed even from a repeated installation.
 Migration removes each exact match for a shipped deny rule from the user settings, including duplicates
 and matches present in an older backup. The receipt records each removed rule. Custom rules keep their order.
-Migration and uninstall also clear the old installer’s exact attribution and memory settings and its
-optional `env.TMPDIR` value. A distinct prior value in the backup is restored.
+Migration also removes the rules earlier releases shipped and the current list no longer has.
+Migration and uninstall also clear the old installer’s exact attribution settings and its optional
+`env.TMPDIR` value. A distinct prior value in the backup is restored. `autoMemoryDirectory` stays in
+`~/.claude/settings.json`: Claude reads it only from user settings.
 If a command stops, correct the reported problem and repeat it.
 
 Both interactive and read-only omp lanes load Kanzo and deja through the lane extension. Deja receives
@@ -162,10 +164,16 @@ and newly cloned repositories. Status lists linked worktrees inside the project 
 A repository with a custom hooks path keeps it. `LONCA=0` silences memory, deja-scope and temporary-directory
 automation for that process and its children. The default-branch push guard, attribution checks and the
 repository's native Git hooks still run. The owner can remove the project integration with `lonca remove`.
+In a lane, the git shim refuses any git command whose environment lost Lonca's `GIT_CONFIG_COUNT`,
+`GIT_CONFIG_KEY_0` and `GIT_CONFIG_VALUE_0`, or whose `GIT_CONFIG_PARAMETERS` sets a hooks path or an
+include: test suites that clean the git environment fail there. The deny rule `Bash(*GIT_CONFIG_*)` also stops
+Claude leads from running check steps that export `GIT_CONFIG_GLOBAL`. Run those in a plain shell or on CI.
 
 - Claude Code installs `lonca@lonca` with local scope. Its agents, skills, hooks and MCP servers come
   from the local marketplace. Init also installs these protections at a non-Git project root for leads. Personal settings hold the deny rules and deja policy, and
   `CLAUDE.local.md` imports `@~/lonca/AGENTS.md`. Use a CLI with local marketplace scope support.
+  Personal settings also turn off Claude's commit and PR signature (`attribution`, `includeCoAuthoredBy`);
+  folders without Lonca get Claude's default signature.
 - Codex reads the project's `.codex/config.toml`, `.codex/rules/lonca.rules` and `.codex/hooks.json`.
   Trust the project and review the hooks in `/hooks`.
 - Init merges personal files, registers the project and keeps private backups under

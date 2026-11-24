@@ -22,6 +22,12 @@ case $name in
         [ "${GIT_CONFIG_KEY_0:-}" != core.hooksPath ] || [ "${GIT_CONFIG_VALUE_0:-}" != "$HOME/lonca/git-hooks" ]; }; then
       deny "lane Git hook environment changed or missing; restart the lane"
     fi
+    # GIT_CONFIG_PARAMETERS (git -c) wins over the triple above.
+    if [ -n "${LONCA_LANE:-}" ]; then
+      case $(printf '%s' "${GIT_CONFIG_PARAMETERS:-}" | tr '[:upper:]' '[:lower:]') in
+        *hookspath*|*include*) deny "don't bypass git hooks" ;;
+      esac
+    fi
     case $(printf '%s' "$args" | tr '[:upper:]' '[:lower:]') in
       *hookspath*|*include*".path"*|*" config "*)
         python3 -I "$L/shims/hooks-config.py" "$@" || deny "don't change git hooks" ;;

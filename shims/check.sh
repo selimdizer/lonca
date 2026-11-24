@@ -14,6 +14,9 @@ export LONCA_LANE=1 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFI
 t blocked env GIT_CONFIG_COUNT=0 git status
 t blocked env -u GIT_CONFIG_KEY_0 git status
 t blocked env GIT_CONFIG_VALUE_0=fixture git status
+t blocked env "GIT_CONFIG_PARAMETERS='core.hooksPath'='/nonexistent'" git push origin x
+t blocked env "GIT_CONFIG_PARAMETERS='include.path'='fixture'" git status
+t ok      env "GIT_CONFIG_PARAMETERS='user.name'='fixture'" git status
 t blocked gh pr merge 3 --squash
 t blocked gh api repos/a/b/pulls/3/merge -X PUT
 t ok      gh --version

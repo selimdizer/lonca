@@ -162,6 +162,8 @@ p.write_text(json.dumps(data))
         settings = json.loads((repo / AGENTS[1]).read_bytes())
         policy = Path(settings["env"]["DEJA_POLICY_FILE"])
         assert policy.is_file() and settings["enabledPlugins"]["lonca@lonca"]
+        assert settings["attribution"] == {"commit": "", "pr": ""} and settings["includeCoAuthoredBy"] is False
+        assert '"$HOME/lonca/bin/session-scope"' in [h["command"] for g in json.loads((repo / AGENTS[4]).read_bytes())["hooks"]["SessionStart"] for h in g["hooks"]]
         assert set(json.loads((SRC / "config/claude-permissions.json").read_bytes())["deny"]) <= set(settings["permissions"]["deny"])
         assert "@~/lonca/AGENTS.md" in (repo / AGENTS[0]).read_text().splitlines()
         cfg = tomllib.loads((repo / AGENTS[2]).read_text())
@@ -248,15 +250,17 @@ p.write_text(json.dumps(data))
 
 def legacy_defaults(home):
     return {"attribution": {"commit": "", "pr": ""}, "includeCoAuthoredBy": False,
-            "autoMemoryDirectory": "~/ai-memory", "env": {"TMPDIR": str(home / ".cache/lonca/tmp")}}
+            "env": {"TMPDIR": str(home / ".cache/lonca/tmp")}}
 
 
 def direct_uninstall(base):
     # A direct uninstall must clean the original polluted installation without a preceding migration.
     shipped = json.loads((SRC / "config/claude-permissions.json").read_bytes())["deny"]
-    personal = {"permissions": {"deny": ["Read(private)"]}, "theme": "dark", "env": {"KEEP": "yes"}}
+    # autoMemoryDirectory is user-level only: uninstall keeps it.
+    personal = {"permissions": {"deny": ["Read(private)"]}, "theme": "dark", "env": {"KEEP": "yes"},
+                "autoMemoryDirectory": "~/ai-memory"}
     custom = {"attribution": {"commit": "personal", "pr": ""}, "includeCoAuthoredBy": True,
-              "autoMemoryDirectory": "~/my-notes", "env": {"KEEP": "yes", "TMPDIR": "/my-temp"}}
+              "env": {"KEEP": "yes", "TMPDIR": "/my-temp"}}
     for case in ("polluted", "personal-current", "personal-backup"):
         home = base / ("uninstall-" + case)
         settings = home / ".claude/settings.json"
@@ -296,10 +300,12 @@ def migration(base):
     defaults = legacy_defaults(home)
     settings.write_text(json.dumps({
         **defaults,
+        "autoMemoryDirectory": "~/ai-memory",
         "extraKnownMarketplaces": market,
-        "permissions": {"deny": [private[0], *owned, private[1]]},
+        "permissions": {"deny": [private[0], *owned, "Bash(ok-merge*)", "Bash(git push * main*)", private[1]]},
         "hooks": {
             "SessionStart": [{"hooks": [{"type": "command", "command": str(home / "lonca/bin/memory-context")},
+                                        {"type": "command", "command": str(home / "lonca/bin/session-scope")},
                                         {"type": "command", "command": "echo personal"}]}],
             "PreToolUse": [{"hooks": [{"type": "command", "command": "~/lonca/bin/ai-trace-gh --hook"}]}],
         },
@@ -310,7 +316,8 @@ def migration(base):
     stop = {"type": "command", "command": "python3 ~/lonca/config/memory-nudge.py"}
     personal = {"type": "command", "command": "python3 ~/lonca/config/memory-nudge.py --personal"}
     old_hooks = {"hooks": {"Stop": [{"hooks": [stop, personal]}],
-                           "SessionStart": [{"hooks": [{"type": "command", "command": "cat ~/ai-memory/MEMORY.md"}]}]}}
+                           "SessionStart": [{"hooks": [{"type": "command", "command": "cat ~/ai-memory/MEMORY.md"},
+                                                       {"type": "command", "command": str(home / "lonca/bin/session-scope")}]}]}}
     hooks.write_text(json.dumps(old_hooks))
     hooks.with_suffix(".json.lonca-bak").write_bytes(hooks.read_bytes())
     private_links = []
@@ -359,12 +366,13 @@ def migration(base):
     assert not codex.is_symlink() and doc.read_text() == "personal\n"
     cleaned = json.loads(settings.read_bytes())
     assert cleaned["permissions"]["deny"] == private
-    assert not ({"attribution", "includeCoAuthoredBy", "autoMemoryDirectory"} & cleaned.keys())
+    assert not ({"attribution", "includeCoAuthoredBy"} & cleaned.keys())
+    assert cleaned["autoMemoryDirectory"] == "~/ai-memory"
     assert "TMPDIR" not in cleaned.get("env", {})
     assert "echo personal" in settings.read_text()
-    assert "/bin/memory-context" not in settings.read_text() and "/bin/ai-trace-gh" not in settings.read_text()
+    assert all(c not in settings.read_text() for c in ("/bin/memory-context", "/bin/ai-trace-gh", "/bin/session-scope"))
     assert json.loads(hooks.read_text())["hooks"]["Stop"] == [{"hooks": [personal]}]
-    assert "cat ~/ai-memory" not in hooks.read_text()
+    assert "cat ~/ai-memory" not in hooks.read_text() and "/bin/session-scope" not in hooks.read_text()
     assert all(link.is_symlink() for link, _ in private_links)
     assert str(home / ".herdr/worktrees") in json.loads(copilot.read_text())["trustedFolders"]
     assert json.loads(mcp.read_bytes()) == {"mcpServers": {"private": private_server}}

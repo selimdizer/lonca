@@ -33,8 +33,13 @@ def json_bytes(data):
     return (json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode()
 
 
+# Rules earlier releases shipped that the current list no longer has.
+HISTORICAL_DENY = {"Bash(ok-merge*)", "Bash(*/ok-merge *)", "Bash(*merge-grants*)", "Bash(night-on*)",
+                   "Bash(*/night-on *)", "Bash(git push * main*)", "Bash(git push * master*)"}
+
+
 def deny_rules():
-    return set(json.loads((BIN.parent / "config/claude-permissions.json").read_bytes())["deny"])
+    return set(json.loads((BIN.parent / "config/claude-permissions.json").read_bytes())["deny"]) | HISTORICAL_DENY
 
 
 def same_value(left, right):
@@ -44,8 +49,8 @@ def same_value(left, right):
 
 def installed_claude_values(data):
     """Only the exact key/value pairs the legacy installer wrote."""
-    defaults = {"attribution": {"commit": "", "pr": ""}, "includeCoAuthoredBy": False,
-                "autoMemoryDirectory": "~/ai-memory"}
+    # autoMemoryDirectory stays: Claude reads it only from user settings.
+    defaults = {"attribution": {"commit": "", "pr": ""}, "includeCoAuthoredBy": False}
     matches = {key: value for key, value in defaults.items()
                if same_value(data.get(key), value)}
     env = data.get("env", {})
@@ -58,7 +63,7 @@ def installed_claude_values(data):
 
 LEGACY_HOOKS = {
     "SessionStart": {f"{LONCA}/bin/memory-context", f"{LONCA}/bin/deja-scope --session",
-                     f"{LONCA}/bin/session-tmpdir", "cat ~/ai-memory/MEMORY.md"},
+                     f"{LONCA}/bin/session-tmpdir", f"{LONCA}/bin/session-scope", "cat ~/ai-memory/MEMORY.md"},
     "PreToolUse": {f"{LONCA}/bin/ai-trace-gh --hook"},
     "Stop": {f"python3 {LONCA}/config/memory-nudge.py"},
 }

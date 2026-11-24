@@ -391,6 +391,8 @@ class Project:
             if rule not in deny:
                 deny.append(rule)
         values.setdefault("env", {})["DEJA_POLICY_FILE"] = str(policy)
+        # No co-author or "Generated with" lines in this project's commits and PRs.
+        values.update(attribution={"commit": "", "pr": ""}, includeCoAuthoredBy=False)
         self.write(path, formatted(values))
         path = paths["CLAUDE.local.md"]
         old = read(path) or b""
