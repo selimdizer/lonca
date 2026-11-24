@@ -24,20 +24,20 @@ case $name in
     fi
     # GIT_CONFIG_PARAMETERS (git -c) wins over the lane triple and the repo's hooksPath.
     case $(printf '%s' "${GIT_CONFIG_PARAMETERS:-}" | tr '[:upper:]' '[:lower:]') in
-      *hookspath*|*include*) deny "don't bypass git hooks" ;;
+      *hookspath*|*include*|*alias.*) deny "don't bypass git hooks" ;;   # an alias can hide a hook skip
     esac
-    # Hook skips anywhere after the subcommand: --no-verify (or a unique prefix) on commit, merge and push,
-    # and -n alone or inside a short-option cluster (-an) on commit.
+    # Hook skips anywhere after the subcommand: --no-verify (a unique prefix on commit and push; exact on
+    # merge and pull, which also have --no-verify-signatures), and -n alone or in a cluster (-an) on commit.
     sub= skip=
     for a do
       if [ -n "$skip" ]; then skip=; continue; fi
       if [ -z "$sub" ]; then
-        case $a in -C|-c|--git-dir|--work-tree|--namespace|--config-env) skip=1 ;; -*) ;; *) sub=$a ;; esac
+        case $a in -C|-c|--git-dir|--work-tree|--namespace|--config-env|--attr-source) skip=1 ;; -*) ;; *) sub=$a ;; esac
         continue
       fi
       case $sub:$a in
         *:--) break ;;
-        commit:--no-veri*|merge:--no-veri*|push:--no-veri*) deny "don't skip git hooks" ;;
+        commit:--no-veri*|push:--no-veri*|merge:--no-verify|pull:--no-verify) deny "don't skip git hooks" ;;
         commit:-[!-]*)
           o=${a#-}
           while [ -n "$o" ]; do
@@ -51,7 +51,7 @@ case $name in
       esac
     done
     case $(printf '%s' "$args" | tr '[:upper:]' '[:lower:]') in
-      *hookspath*|*include*".path"*|*" config "*)
+      *hookspath*|*include*".path"*|*alias.*|*" config "*)
         python3 -I "$L/shims/hooks-config.py" "$@" || deny "don't change git hooks" ;;
     esac
     case $args in

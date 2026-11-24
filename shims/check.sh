@@ -29,6 +29,17 @@ t ok      git commit -uno -m x
 t ok      git commit -am "add notes"
 t ok      git log -n 3
 t ok      git commit -m x -- -n
+t ok      git merge --no-verify-signatures feature
+t ok      git pull --no-verify-signatures origin x
+t blocked git pull --no-verify origin x
+t blocked git -c alias.ci=commit ci --no-verify
+t blocked git --config-env=alias.ci=FIXTURE ci -m x
+t blocked env "GIT_CONFIG_PARAMETERS='alias.ci'='commit --no-verify'" git ci -m x
+t blocked git config alias.x "commit --no-verify"
+t blocked git config --global alias.x commit
+t ok      git config --get alias.x
+t blocked git --attr-source HEAD commit --no-verify -m x
+t blocked git --attr-source=HEAD commit -n -m x
 t blocked gh pr merge 3 --squash
 t blocked gh api repos/a/b/pulls/3/merge -X PUT
 t ok      gh --version

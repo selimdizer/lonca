@@ -164,8 +164,8 @@ and newly cloned repositories. Status lists linked worktrees inside the project 
 A repository with a custom hooks path keeps it. `LONCA=0` silences memory, deja-scope and temporary-directory
 automation for that process and its children. The default-branch push guard, attribution checks and the
 repository's native Git hooks still run. The owner can remove the project integration with `lonca remove`.
-The git shim refuses `GIT_CONFIG_PARAMETERS` that sets a hooks path or an include, `--no-verify` on
-commit, merge and push, and `-n` on commit. In a lane it also refuses any git command whose environment
+The git shim refuses `GIT_CONFIG_PARAMETERS` that sets a hooks path, an include or an alias, alias
+writes (`git config alias.*`, `git -c alias.*`), `--no-verify` on commit, merge, pull and push, and `-n` on commit. In a lane it also refuses any git command whose environment
 lost Lonca's `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_0` and `GIT_CONFIG_VALUE_0`: test suites that clean the
 git environment fail there. The deny rule `Bash(*GIT_CONFIG_*)` also stops Claude leads from running
 check steps that export `GIT_CONFIG_GLOBAL`. Run those in a plain shell or on CI.

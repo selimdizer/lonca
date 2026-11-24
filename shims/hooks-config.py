@@ -4,7 +4,9 @@ import re
 import sys
 
 def protected(key):
-    return key in ("core.hookspath", "include.path") or bool(re.fullmatch(r"includeif\..+\.path", key))
+    # An alias can run a command with its hooks skipped (alias.ci = commit --no-verify).
+    return (key in ("core.hookspath", "include.path") or key.startswith("alias.")
+            or bool(re.fullmatch(r"includeif\..+\.path", key)))
 
 
 args = sys.argv[1:]

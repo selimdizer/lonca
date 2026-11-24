@@ -222,6 +222,15 @@ elif sys.argv[1] == "get":
     assert "removed the finished terminal of read lane copy-ours" in out and "READY" not in out
     assert "rm copy-ours" in calls.read_text().splitlines() and "copy-stranger" not in calls.read_text()
     assert "pr list --head" not in logs.read_text()[len(gh_before):]   # a read lane has no PR to check
+    # Receipts of files that are not lane records are skipped, not fatal, for every record reader.
+    bad = home / ".cache/ai-runs/test/bad"
+    bad.mkdir(parents=True)
+    for n, data in enumerate(({"repo": str(root), "base": "-", "project": str(home / "copies")}, ["not", "a", "record"])):
+        (bad / f"{n}.lane.json").write_text(json.dumps(data))
+        run("python3", "-c", "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); "
+            "from lonca_registry import remember; remember(Path(sys.argv[2]), 'lane', Path(sys.argv[3]))",
+            str(BIN), str(root), str(bad / f"{n}.lane.json"))
+    run(BIN / "lane-watch", "--dry-run")
     run(BIN / "ai-cleanup", "--dry-run")   # the other record readers accept the mapped record
     run(BIN / "kanzo-sync", "--dry-run")
 

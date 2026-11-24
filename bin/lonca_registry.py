@@ -114,10 +114,13 @@ def records(projects):
         for file in resources(root, "lane"):
             try:
                 rec = json.loads(file.read_bytes())
+                # Fields every record reader uses; anything else is not a lane record.
+                if not all(isinstance(rec[k], str) for k in ("name", "worktree", "result", "repo", "project", "temp")):
+                    continue
                 repo = Path(rec["repo"])
-            except (OSError, ValueError, KeyError):
+            except (OSError, ValueError, KeyError, TypeError):
                 continue
-            if rec.get("project") not in (None, str(root)) and rec.get("base") == "-" and file == Path(rec["result"] + ".lane.json"):
+            if rec["project"] != str(root) and rec.get("base") == "-" and file == Path(rec["result"] + ".lane.json"):
                 # A read lane on a temp copy whose marker carries this project's name counts as this project's.
                 name = names([root]) if name is None else name
                 copy = Path(rec["project"])
@@ -125,7 +128,7 @@ def records(projects):
                     yield file, {**rec, "project": str(root)}
                 continue
             entry = project["repos"].get(str(repo), {})
-            if not (rec.get("project") == str(root) and entry.get("ready") and
+            if not (rec["project"] == str(root) and entry.get("ready") and
                     file == Path(rec["result"] + ".lane.json") and repo.resolve() == repo and
                     (repo / ".git").is_dir() and identity(repo / ".git") == entry["identity"]):
                 continue
