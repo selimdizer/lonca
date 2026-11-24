@@ -187,8 +187,7 @@ for rec_path in glob.glob(os.path.expanduser("~/.cache/ai-runs/**/*.lane.json"),
         if lead:
             msg = f"STALLED: {rec['name']} — {why}. Check: hc read {rec['name']} --lines 40; worktree {rec['worktree']}"
             print(msg)
-            if not DRY:
-                hc("send", lead, msg)
+            if not DRY and hc("send", lead, msg)[0] == 0:   # not delivered: try again next run
                 os.makedirs(os.path.dirname(LOG), exist_ok=True)
                 with open(LOG, "a") as f:
                     f.write(time.strftime("%Y-%m-%d %H:%M ") + msg + "\n")
