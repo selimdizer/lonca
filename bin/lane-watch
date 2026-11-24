@@ -42,9 +42,38 @@ def git(wt, *a):
     return subprocess.run(["git", "-C", wt, *a], capture_output=True, text=True)
 
 
+_leads = None
+
+
+def lead_of(rec):
+    """The lane's lead now: the recorded terminal while it is still a live lead, else the one live lead of the lane's
+    project (a lead restarted in a new terminal); the record is updated. None when there is no single answer."""
+    global _leads
+    if _leads is None:
+        here = os.path.dirname(os.path.realpath(__file__))
+        r = subprocess.run([os.path.join(here, "leads"), "--json"], capture_output=True, text=True)
+        try:
+            _leads = [l for l in json.loads(r.stdout) if l.get("role") == "lead"] if r.returncode == 0 else []
+        except ValueError:
+            _leads = []
+    lead = rec.get("lead") or ""
+    if any(l["address"] == lead for l in _leads):
+        return lead
+    here = os.path.dirname(os.path.realpath(__file__))
+    p = subprocess.run([os.path.join(here, "lonca-project"), rec.get("repo") or rec.get("worktree") or "/"],
+                       capture_output=True, text=True)
+    proj = p.stdout.split("\t")[0] if p.returncode == 0 else ""
+    now = [l["address"] for l in _leads if proj and l.get("project") == proj]
+    if len(now) != 1:
+        return lead or None   # none, or several leads for one project: keep the recorded one
+    if not DRY:
+        rec["lead"] = now[0]
+    return now[0]
+
+
 def ready(rec):
     """Tell the lead once per head when the lane's PR passes merge-pr --dry-run (checkers write files, nobody else looks)."""
-    repo, branch, lead = rec.get("repo"), rec.get("branch"), rec.get("lead")
+    repo, branch, lead = rec.get("repo"), rec.get("branch"), lead_of(rec)
     fields = (repo, branch, lead, rec.get("name", ""), rec.get("result", ""))
     if not (repo and branch and lead and os.path.isdir(repo)) or any(c < " " for f in fields for c in f):
         return  # a control character would put extra lines into the lead's input
@@ -156,8 +185,9 @@ for rec_path in glob.glob(os.path.expanduser("~/.cache/ai-runs/**/*.lane.json"),
             msg = f"STALLED: {rec['name']} — {why}. Check: hc read {rec['name']} --lines 40; worktree {rec['worktree']}"
             print(msg)
             if not DRY:
-                if rec.get("lead"):
-                    hc("send", rec["lead"], msg)
+                lead = lead_of(rec)
+                if lead:
+                    hc("send", lead, msg)
                 os.makedirs(os.path.dirname(LOG), exist_ok=True)
                 with open(LOG, "a") as f:
                     f.write(time.strftime("%Y-%m-%d %H:%M ") + msg + "\n")
