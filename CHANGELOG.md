@@ -5,6 +5,7 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Agents delete with the literal path written in the command (a `$VAR` or `$(…)` path makes Claude ask even in bypass mode, so runs waited for the owner), and use only containers, databases and services they started, named after their lane: a lane removed a shared-name container while verifiers had test databases in it.
 - Installation now provides commands and memory templates. Run `lonca init` from an owner or lead session
   to register the root plugin marketplace locally and set up the project.
 - `lonca migrate --dry-run [roots...]` previews the move from global settings. Migration initializes projects
