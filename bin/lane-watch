@@ -57,7 +57,8 @@ def ready(rec):
             return {}
     pr = own_pr()
     head = pr.get("headRefOid", "")
-    if not head or rec.get("ready_head") == head:
+    told = f"{pr.get('number')}:{head}"  # PR number and head together: a replacement PR on the same commit is new
+    if not head or rec.get("ready_head") == told:
         return
     run_dir, base = os.path.split(rec["result"])
     lane = base[:-len(".result.md")] if base.endswith(".result.md") else os.path.splitext(base)[0]
@@ -72,8 +73,9 @@ def ready(rec):
     if subprocess.run([os.path.join(here, "merge-pr"), "--dry-run", repo, str(pr["number"]), run_dir, lane],
                       capture_output=True).returncode != 0:
         return
-    if own_pr().get("headRefOid") != head:
-        return  # pushed while checking: the dry run judged another head; the next run looks again
+    again = own_pr()
+    if (again.get("number"), again.get("headRefOid")) != (pr.get("number"), head):
+        return  # pushed, closed or replaced while checking: the dry run judged another PR or head; look again next run
     name = os.path.basename(repo)
     msg = (f"READY: {name}#{pr['number']} head {head[:9]} — checks complete for this head (lane {rec['name']}). "
            f"Run: {shlex.join(['merge-pr', repo, str(pr['number']), run_dir, lane])}")
@@ -84,7 +86,7 @@ def ready(rec):
         os.makedirs(os.path.dirname(LOG), exist_ok=True)
         with open(LOG, "a") as f:
             f.write(time.strftime("%Y-%m-%d %H:%M ") + msg + "\n")
-        rec["ready_head"] = head
+        rec["ready_head"] = told
 
 
 def close_if_empty(rec):
