@@ -49,7 +49,8 @@ def ready(rec):
     if not (repo and branch and lead and os.path.isdir(repo)) or any(c < " " for f in fields for c in f):
         return  # a control character would put extra lines into the lead's input
     def own_pr():
-        r = subprocess.run(["gh", "pr", "list", "--head", branch, "--state", "open",
+        target = ["--base", rec["base"]] if rec.get("base") else []  # the PR into the branch the lane started from
+        r = subprocess.run(["gh", "pr", "list", "--head", branch, *target, "--state", "open",
                             "--json", "number,headRefOid,isCrossRepository"], cwd=repo, capture_output=True, text=True)
         try:  # the lane's own PR, not a fork's PR that happens to use the same branch name
             return next((p for p in json.loads(r.stdout) if not p.get("isCrossRepository")), {})
