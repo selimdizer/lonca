@@ -3,8 +3,9 @@
 
 Reads the <result>.lane.json records `lane` writes. A lane with an empty/missing result file is STALLED when
 its hc terminal is gone or finished, or when it is not working and its worktree has not changed for IDLE_MIN.
-The lead gets one `STALLED: <lane> — <why>` per lane and reason (hc send); no lead terminal → log only.
-A lane that wrote its report 10+ min ago, is not working, and left nothing behind (no commits on its branch, no changed
+The lead gets one `STALLED: <lane> — <why>` per lane and reason (hc send): the recorded lead terminal while it runs a
+session of the lane's project, else that project's one live lead; with no such lead the line waits for one.
+A finished read lane's terminal is removed 10 min after its report. A lane that wrote its report 10+ min ago, is not working, and left nothing behind (no commits on its branch, no changed
 files: a review, council or test lane) is closed, and its worktree and never-pushed branch are removed. Lanes with
 commits stay until their PR is merged (ai-cleanup closes those).
 A lane with a report and an open PR whose checks are complete for its current head (merge-pr --dry-run passes: CI,
@@ -16,7 +17,7 @@ import glob, json, os, shlex, subprocess, sys, time
 DRY = "--dry-run" in sys.argv
 IDLE_MIN = 30
 LOG = os.path.expanduser("~/.cache/ai-runs/setup/lane-watch.log")
-for k in [k for k in os.environ if k == "CLAUDECODE" or k.startswith(("CLAUDE_", "CODEX_COMPANION_"))]:
+for k in [k for k in os.environ if k in ("CLAUDECODE", "LONCA_PROJECT") or k.startswith(("CLAUDE_", "CODEX_COMPANION_"))]:
     del os.environ[k]                      # never start the hc core with an agent's variables
 
 def hc(*a):
@@ -59,13 +60,15 @@ def lead_of(rec):
         except ValueError:
             _leads = []
     lead = rec.get("lead") or ""
-    if any(l["address"] == lead for l in _leads):
-        return lead
     here = os.path.dirname(os.path.realpath(__file__))
     p = subprocess.run([os.path.join(here, "lonca-project"), rec.get("repo") or rec.get("worktree") or "/"],
                        capture_output=True, text=True)
     proj = p.stdout.split("\t")[0] if p.returncode == 0 else ""
+    if any(l["address"] == lead and (not proj or l.get("project") == proj) for l in _leads):
+        return lead   # still a session of this project (a tab reused for another project does not count)
     now = [l["address"] for l in _leads if proj and l.get("project") == proj and l.get("role") == "lead"]
+    if not now and any(l["address"] == lead for l in _leads):
+        return lead   # the project has no lead (e.g. a lane the owner's own session started): keep that live session
     if len(now) != 1:
         return None   # no lead, or several for one project
     if not DRY:
@@ -124,7 +127,13 @@ def ready(rec):
 def close_if_empty(rec):
     """Close a finished lane that produced nothing; True when it is closed (or needs no closing)."""
     wt, name = rec.get("worktree", ""), rec["name"]
-    if rec.get("base") == "-":          # read lane: no worktree, its terminal ends by itself
+    if rec.get("base") == "-":          # read lane: no worktree; remove its finished terminal 10 min after the report
+        if time.time() - os.path.getmtime(rec["result"]) >= 600:
+            code, out = hc("get", name, "--json")
+            if code == 0 and out.strip() and json.loads(out).get("state") == "finished":
+                print(f"removed the finished terminal of read lane {name}")
+                if not DRY:
+                    hc("rm", name)
         return True
     if time.time() - os.path.getmtime(rec["result"]) < 600 or not os.path.isdir(wt):
         return not os.path.isdir(wt)
