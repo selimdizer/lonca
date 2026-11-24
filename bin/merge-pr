@@ -35,7 +35,12 @@ mkdir -p "$N" "${LOG%/*}"; i=0   # one merge at a time on this machine (the nigh
 done
 [ "$dry" = 1 ] || trap 'rmdir "$N/.merge.lock" 2>/dev/null' EXIT INT TERM
 
-info=$(cd "$repo" && "$GH" pr view "$pr" --json state,isDraft,mergeable,title,body,statusCheckRollup,headRefOid,baseRefName,headRefName 2>/dev/null) || no "cannot read the PR"
+# GitHub answers mergeable UNKNOWN for a while after a push: read again (6 x 5 s) before judging it
+i=0; while :; do
+  info=$(cd "$repo" && "$GH" pr view "$pr" --json state,isDraft,mergeable,title,body,statusCheckRollup,headRefOid,baseRefName,headRefName 2>/dev/null) || no "cannot read the PR"
+  i=$((i + 1)); [ $i -lt 6 ] && printf '%s' "$info" | python3 -I -c 'import json,sys; sys.exit(json.load(sys.stdin)["mergeable"] != "UNKNOWN")' || break
+  sleep 5
+done
 head=$(printf '%s' "$info" | python3 -I -c 'import json,sys;print(json.load(sys.stdin)["headRefOid"])')
 base=$(printf '%s' "$info" | python3 -I -c 'import json,sys;print(json.load(sys.stdin)["baseRefName"])')
 nwo=$(cd "$repo" && "$GH" repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || no "cannot read the repo name"

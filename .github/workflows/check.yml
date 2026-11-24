@@ -27,6 +27,8 @@ jobs:
         run: python3 .github/project-jobs.py
       - name: Questions ledger (ids, answer, drop, concurrent adds)
         run: python3 .github/questions.py
+      - name: Test slot, merge-pr UNKNOWN retry, closed lanes' containers
+        run: python3 .github/machine-load.py
       - name: Guard shim cases
         run: sh shims/check.sh
       - name: Merge evidence (head pairing, stale head, HIGH finding, missing file)

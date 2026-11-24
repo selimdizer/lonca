@@ -433,6 +433,19 @@ if sys.argv[1] == "run":
     run(SRC / "bin/lane", "--read", copy, "copy", "omp:example/small", brief, result)
     assert "--tools read,grep,glob" in json.loads((home / "terminal.json").read_bytes())[-1]
     assert json.loads(Path(str(result) + ".lane.json").read_bytes())["worktree"] == str(copy.resolve())
+    # lane --browser: a Claude lane gets the chrome-devtools MCP config, only when that file exists; others refuse.
+    result = home / ".cache/ai-runs/fixture/run/browser.result"
+    browser = [SRC / "bin/lane", "--browser", repo, "feat/browser", "claude:implementer", brief, result, main]
+    run(*browser, ok=False)
+    mcp_file = home / "lonca-local/mcp/chrome-devtools.json"
+    mcp_file.parent.mkdir(parents=True, exist_ok=True)
+    mcp_file.write_text("{}")
+    run(*browser)
+    argv = json.loads((home / "terminal.json").read_bytes())
+    assert '--mcp-config "$HOME/lonca-local/mcp/chrome-devtools.json"' in argv[-1]
+    lane_name = json.loads(Path(str(result) + ".lane.json").read_bytes())["name"]
+    assert "LONCA_LANE=" + lane_name in argv and lane_name != "1"   # the docker shim labels containers with it
+    run(SRC / "bin/lane", "--browser", repo, "feat/x", "omp:a/b", brief, result, main, ok=False)
     guards = repo / ".codex/rules/lonca.rules"
     guards.write_text("")
     denied = subprocess.run([script, "status", "--lane", repo], capture_output=True, text=True)

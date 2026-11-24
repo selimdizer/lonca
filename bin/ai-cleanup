@@ -6,6 +6,7 @@ import json, os, shutil, subprocess, sys, time
 from pathlib import Path
 from lonca_legacy import Legacy
 from lonca_registry import registered, records, lane_worktree, resources, identity, names, forget_resource
+from lonca_registry import remove_lane_containers
 
 DRY = "--dry-run" in sys.argv
 AGE_H = int(sys.argv[sys.argv.index("--tmp-age-hours") + 1]) if "--tmp-age-hours" in sys.argv else 48
@@ -91,6 +92,7 @@ def remove(path, why):
 lanes = list(records(projects))
 pr_cache = {}
 runs = {}
+ended = set()   # dry run: lanes this run would close
 for file, rec in lanes:
     repo, wt = Path(rec["repo"]), Path(rec["worktree"])
     folder = file.parent
@@ -134,9 +136,18 @@ for file, rec in lanes:
                 USED = in_use_paths()
     if not busy(wt) and lane_worktree(rec):
         say(f"remove finished worktree {wt} and branch {branch}")
+        if DRY:
+            ended.add(rec["name"])   # removes nothing: preview its containers too
         if not DRY and run("git", "worktree", "remove", str(wt), cwd=repo).returncode == 0:
             # Compare-and-delete: leave a branch advanced concurrently alone.
             run("git", "update-ref", "-d", "refs/heads/" + branch, head.stdout.strip(), cwd=repo)
+
+# A lane is closed once its worktree is gone (removed above, by merge-pr after its merge, or by lane-watch):
+# its containers go too. A name reused by a lane that still has its worktree is not closed.
+live = {rec["name"] for _, rec in lanes if Path(rec["worktree"]).exists()}
+gone = {rec["name"] for _, rec in lanes if rec.get("base") != "-" and not Path(rec["worktree"]).exists()}
+for msg in remove_lane_containers(ended | (gone - live), DRY):
+    say(msg)
 
 for root in projects:
     for folder in resources(root, "temp"):
