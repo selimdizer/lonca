@@ -105,7 +105,8 @@ fi
 fi
 
   # hc names are unique among live terminals: repo prefix + branch, then a short hash if it had to be cut
-name=$(printf '%s-%s' "$(basename "$(realpath "$repo")" | cut -c1-8)" "$branch" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_-' '-')
+# prefix: the project's name (lonca-project above), not the folder: a read lane may run in a temp copy named src
+name=$(printf '%s-%s' "$(printf '%s' "${project%%	*}" | cut -c1-8)" "$branch" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_-' '-')
 [ ${#name} -gt 32 ] && name="$(printf '%s' "$name" | cut -c1-25)-$(printf '%s' "$rkey/$branch" | { sha1sum 2>/dev/null || shasum; } | cut -c1-6)"
 # its own temp folder, so a cleanup inside it can't reach another lane's files (ai-cleanup removes it once idle);
 # Claude's and Codex's own settings may pin TMPDIR for their tools, so they get it through their override flags too
@@ -125,7 +126,7 @@ esac
   # Started by a lead in an hc terminal: the lane reports DONE and asks questions there; the lead answers with hc send
   if [ $ro = 1 ]; then
     # print mode: the answer streams into the tab and the report file; DONE goes to the lead from here
-    run="{ $cmd -p --no-session --tools read,grep,glob '$quoted'; echo \$? > '$result.rc'; } | tee '$result.part' && [ \"\$(cat '$result.rc')\" = 0 ] && mv '$result.part' '$result'; rm -f '$result.rc'"
+    run="echo 'lane $name: omp ${agent#omp:}, read-only, no screen while it works: the report appears here when it finishes.'; { $cmd -p --no-session --tools read,grep,glob '$quoted'; echo \$? > '$result.rc'; } | tee '$result.part' && [ \"\$(cat '$result.rc')\" = 0 ] && mv '$result.part' '$result'; rm -f '$result.rc'"
     [ -n "${HC_TERMINAL_ID:-}" ] && run="$run && hc send $HC_TERMINAL_ID \"DONE: \$(grep -m1 . '$result' | cut -c1-120) — $result\""
   elif [ -n "${HC_TERMINAL_ID:-}" ]; then
     prompt="$prompt Talk to your lead (hc terminal $HC_TERMINAL_ID; hc adds your name itself) only in two cases: a question the brief does not answer -> hc send $HC_TERMINAL_ID 'QUESTION: <question>' and wait, the answer is typed into your input; after writing the report -> hc send $HC_TERMINAL_ID 'DONE: <one plain line for the owner: the outcome, e.g. PR #N opened, tests pass / 3 findings, 1 high / blocked on X> — $result'. No progress or status messages: those go in the report."
@@ -161,11 +162,15 @@ PY
   set -- "$@" --label "lonca.run=$ltmp"
   # --outlive-parent: a lane keeps running if the lead's session ends; its exit is noted in the lead's input
   # Expand the child shell's PATH and positional argument inside hc.
+  # The lane runs in its own memory-capped scope when one can be made where it runs: when memory runs out,
+  # only this lane is killed, not every terminal in Herdr's unit (lonca#336). $c splits into its words on purpose.
   # shellcheck disable=SC2016
   hc run --bg --outlive-parent --name "$name" --cwd "$wt" "$@" \
     -- env ${OPENCODE_CONFIG_DIR:+"OPENCODE_CONFIG_DIR=$OPENCODE_CONFIG_DIR"} LONCA_LANE=1 \
        GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath "GIT_CONFIG_VALUE_0=$HOME/lonca/git-hooks" \
-       "TMPDIR=$ltmp" "DEJA_POLICY_FILE=$DEJA_POLICY_FILE" sh -c 'export PATH="$HOME/lonca/shims:$HOME/lonca-local/shims:$PATH"; exec sh -c "$1"' sh "$run" >/dev/null   # hc passes no env: set it here
+       "TMPDIR=$ltmp" "DEJA_POLICY_FILE=$DEJA_POLICY_FILE" ${XDG_RUNTIME_DIR:+"XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"} sh -c 'export PATH="$HOME/lonca/shims:$HOME/lonca-local/shims:$PATH"
+      c="systemd-run --user --scope --quiet --expand-environment=no -p MemoryMax=16G -p MemorySwapMax=4G -p OOMPolicy=continue --"; $c true 2>/dev/null || c=
+      exec $c sh -c "$1"' sh "$run" >/dev/null   # hc passes no env: set it here
   [ -n "$card" ] && { "$HOME/lonca/bin/kanzo-sync" set "$card" doing >/dev/null 2>&1 || echo "lane: could not set $card to doing" >&2; }
   [ $ro = 1 ] && { echo "lane: read-only $name in $wt (hc terminal $name) -> $result"; exit 0; }
   echo "lane: $branch in $wt from origin/$base (hc terminal $name) -> $result"

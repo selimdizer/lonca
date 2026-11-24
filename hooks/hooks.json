@@ -5,7 +5,8 @@
       "hooks": [
         {"type": "command", "command": "\"$HOME/lonca/bin/memory-context\""},
         {"type": "command", "command": "\"$HOME/lonca/bin/deja-scope\" --session"},
-        {"type": "command", "command": "\"$HOME/lonca/bin/session-tmpdir\""}
+        {"type": "command", "command": "\"$HOME/lonca/bin/session-tmpdir\""},
+        {"type": "command", "command": "\"$HOME/lonca/bin/session-scope\""}
       ]
     }],
     "PreToolUse": [{

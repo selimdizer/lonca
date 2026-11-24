@@ -3,19 +3,22 @@
 
 Reads the <result>.lane.json records `lane` writes. A lane with an empty/missing result file is STALLED when
 its hc terminal is gone or finished, or when it is not working and its worktree has not changed for IDLE_MIN.
-The lead gets one `STALLED: <lane> — <why>` per lane and reason (hc send); no lead terminal → log only.
-A lane that wrote its report 10+ min ago, is not working, and left nothing behind (no commits on its branch, no changed
+The lead gets one `STALLED: <lane> — <why>` per lane and reason (hc send): the recorded lead terminal while it runs a
+session of the lane's project, else that project's one live lead; with no such lead the line waits for one.
+A finished read lane's terminal is removed 10 min after its report. A lane that wrote its report 10+ min ago, is not working, and left nothing behind (no commits on its branch, no changed
 files: a review, council or test lane) is closed, and its worktree and never-pushed branch are removed. Lanes with
 commits stay until their PR is merged (ai-cleanup closes those).
+A lane with a report and an open PR whose checks are complete for its current head (merge-pr --dry-run passes: CI,
+evidence for the tier, attribution) gets one `READY: <repo>#<pr> head <sha> — run merge-pr` per head to its lead.
 It also refreshes every project's deja scope (deja-scope --refresh).
 """
-import json, os, subprocess, sys, time
+import json, os, shlex, subprocess, sys, time
 from lonca_registry import STATE, key, save, registered, records, lane_worktree
 
 DRY = "--dry-run" in sys.argv
 IDLE_MIN = 30
 LOG = os.path.expanduser("~/.cache/ai-runs/setup/lane-watch.log")
-for k in [k for k in os.environ if k == "CLAUDECODE" or k.startswith(("CLAUDE_", "CODEX_COMPANION_"))]:
+for k in [k for k in os.environ if k in ("CLAUDECODE", "LONCA_PROJECT") or k.startswith(("CLAUDE_", "CODEX_COMPANION_"))]:
     del os.environ[k]                      # never start the hc core with an agent's variables
 
 def hc(*a):
@@ -41,11 +44,99 @@ def git(wt, *a):
     return subprocess.run(["git", "-C", wt, *a], capture_output=True, text=True)
 
 
+_leads = None
+
+
+def lead_of(rec):
+    """The lane's lead now: the recorded terminal while it still runs an agent session (a lead, or the owner's session
+    that started the lane), else the one live lead of the lane's
+    project (a lead restarted in a new terminal); the record is updated. None when there is no single answer: the line
+    then waits for a lead instead of going to a terminal that may now run something else."""
+    global _leads
+    if _leads is None:
+        here = os.path.dirname(os.path.realpath(__file__))
+        r = subprocess.run([os.path.join(here, "leads"), "--json"], capture_output=True, text=True)
+        try:
+            _leads = json.loads(r.stdout) if r.returncode == 0 else []
+        except ValueError:
+            _leads = []
+    lead = rec.get("lead") or ""
+    here = os.path.dirname(os.path.realpath(__file__))
+    p = subprocess.run([os.path.join(here, "lonca-project"), rec.get("repo") or rec.get("worktree") or "/"],
+                       capture_output=True, text=True)
+    proj = p.stdout.split("\t")[0] if p.returncode == 0 else ""
+    if any(l["address"] == lead and (not proj or l.get("project") == proj) for l in _leads):
+        return lead   # still a session of this project (a tab reused for another project does not count)
+    now = [l["address"] for l in _leads if proj and l.get("project") == proj and l.get("role") == "lead"]
+    if not now and any(l["address"] == lead and l.get("project") == "-" for l in _leads):
+        return lead   # the project has no lead and the lane came from a session outside every project (setup work)
+    if len(now) != 1:
+        return None   # no lead, or several for one project
+    if not DRY:
+        rec["lead"] = now[0]
+    return now[0]
+
+
+def ready(rec):
+    """Tell the lead once per head when the lane's PR passes merge-pr --dry-run (checkers write files, nobody else looks)."""
+    repo, branch, lead = rec.get("repo"), rec.get("branch"), lead_of(rec)
+    fields = (repo, branch, lead, rec.get("name", ""), rec.get("result", ""))
+    if not (repo and branch and lead and os.path.isdir(repo)) or any(c < " " for f in fields for c in f):
+        return  # a control character would put extra lines into the lead's input
+    def own_pr():
+        target = ["--base", rec["base"]] if rec.get("base") else []  # the PR into the branch the lane started from
+        r = subprocess.run(["gh", "pr", "list", "--head", branch, *target, "--state", "open",
+                            "--json", "number,headRefOid,isCrossRepository"], cwd=repo, capture_output=True, text=True)
+        try:  # the lane's own PR, not a fork's PR that happens to use the same branch name
+            return next((p for p in json.loads(r.stdout) if not p.get("isCrossRepository")), {})
+        except (ValueError, TypeError, AttributeError):
+            return {}
+    pr = own_pr()
+    head = pr.get("headRefOid", "")
+    told = f"{pr.get('number')}:{head}"  # PR number and head together: a replacement PR on the same commit is new
+    if not head or rec.get("ready_head") == told:
+        return
+    run_dir, base = os.path.split(rec["result"])
+    lane = base[:-len(".result.md")] if base.endswith(".result.md") else os.path.splitext(base)[0]
+    try:  # cheap first: no verify line for this head yet means not ready (same prefix rule as merge-evidence)
+        judged = [l.split(":", 1)[1].strip() for l in map(str.strip, open(os.path.join(run_dir, lane + ".verify.md")))
+                  if l.startswith("HEAD:")]
+    except OSError:
+        return
+    if not any(len(j) >= 7 and head.startswith(j) for j in judged):
+        return
+    here = os.path.dirname(os.path.realpath(__file__))
+    if subprocess.run([os.path.join(here, "merge-pr"), "--dry-run", repo, str(pr["number"]), run_dir, lane],
+                      capture_output=True).returncode != 0:
+        return
+    again = own_pr()
+    if (again.get("number"), again.get("headRefOid")) != (pr.get("number"), head):
+        return  # pushed, closed or replaced while checking: the dry run judged another PR or head; look again next run
+    name = os.path.basename(repo)
+    msg = (f"READY: {name}#{pr['number']} head {head[:9]} — checks complete for this head (lane {rec['name']}). "
+           f"Run: {shlex.join(['merge-pr', repo, str(pr['number']), run_dir, lane])}")
+    print(msg)
+    if not DRY:
+        if hc("send", lead, msg)[0] != 0:
+            return  # not delivered: try again next run
+        os.makedirs(os.path.dirname(LOG), exist_ok=True)
+        with open(LOG, "a") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M ") + msg + "\n")
+        rec["ready_head"] = told
+
+
 def close_if_empty(rec):
     """Close a finished lane that produced nothing; True when it is closed (or needs no closing)."""
     wt, name = rec.get("worktree", ""), rec["name"]
-    if rec.get("base") == "-":          # read lane: no worktree, its terminal ends by itself
-        return True
+    if rec.get("base") == "-":          # read lane: no worktree; remove its finished terminal 10 min after the report
+        code, out = hc("get", name, "--json")
+        term = json.loads(out) if code == 0 and out.strip() else {}
+        if not term:
+            return True                  # already gone: closed
+        if term.get("state") != "finished" or time.time() - os.path.getmtime(rec["result"]) < 600:
+            return False                 # look again next run
+        print(f"removed the finished terminal of read lane {name}")
+        return DRY or hc("rm", name)[0] == 0   # not removed: look again next run
     if time.time() - os.path.getmtime(rec["result"]) < 600 or not os.path.isdir(wt):
         return not os.path.isdir(wt)
     code, out = hc("get", name, "--json")
@@ -89,8 +180,11 @@ for _, rec in records(projects):
         continue
     if os.path.exists(rec["result"]) and os.path.getsize(rec["result"]) > 0:
         rec["done"] = True
-        if close_if_empty(rec) and not DRY:
-            rec["closed"] = True
+        if close_if_empty(rec):
+            if not DRY:
+                rec["closed"] = True
+        else:
+            ready(rec)
     elif rec.get("done"):
         continue
     else:
@@ -105,17 +199,16 @@ for _, rec in records(projects):
             idle = (now - newest_change(rec["worktree"])) / 60
             if idle >= IDLE_MIN and (now - rec.get("started", now)) / 60 >= IDLE_MIN:
                 why = f"{status or 'no status'}, nothing changed in its worktree for {int(idle)} min, no report"
-        if why and rec.get("notified") != why:
+        lead = lead_of(rec) if why and rec.get("notified") != why else None
+        if lead:
             msg = f"STALLED: {rec['name']} — {why}. Check: hc read {rec['name']} --lines 40; worktree {rec['worktree']}"
             print(msg)
-            if not DRY:
-                if rec.get("lead"):
-                    hc("send", rec["lead"], msg)
+            if not DRY and hc("send", lead, msg)[0] == 0:   # not delivered: try again next run
                 os.makedirs(os.path.dirname(LOG), exist_ok=True)
                 with open(LOG, "a") as f:
                     f.write(time.strftime("%Y-%m-%d %H:%M ") + msg + "\n")
                 rec["notified"] = why
-    state = {k: rec[k] for k in ("done", "closed", "notified") if k in rec}
+    state = {k: rec[k] for k in ("done", "closed", "notified", "ready_head", "lead") if k in rec}
     if not DRY and state != previous:
         save(state_path, state)
 

@@ -5,6 +5,7 @@ Live hc terminals running an agent (claude-code, codex, omp, ...), lanes (~/.her
 folder's project (`lonca-project`), or "-" for a session outside every project (machine-wide work: setup, cleanup). ROLE is the `lonca.role` label, else "lead" when it was started with `--agent lead`; DOING is the `lonca.does` label
 (`hc label $HC_TERMINAL_ID lonca.does="<one line>"`), else what the agent last said it is doing. Ask one with
 `hc send <address> "QUESTION from the <project> lead: ..."`; see the orchestrate skill for the rules.
+`leads --json` prints the same rows as a JSON list (lane-watch uses it to find a project's current lead).
 """
 import json, os, subprocess, sys
 
@@ -39,6 +40,10 @@ for t in terms:
     doing = (labels.get("lonca.does") or msg or "-")[:60]
     rows.append((proj, t["address"] + (" (you)" if t["address"] == me else ""),
                  agent, role, st or "-", doing, t.get("where") or "-", cwd))
+if "--json" in sys.argv[1:]:
+    keys = ("project", "address", "agent", "role", "status", "doing", "where", "folder")
+    print(json.dumps([dict(zip(keys, (r[0], r[1].removesuffix(" (you)")) + r[2:])) for r in sorted(rows)]))
+    sys.exit(0)
 if not rows:
     print("No open agent sessions.")
     sys.exit(0)
