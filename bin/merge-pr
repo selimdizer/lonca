@@ -10,14 +10,15 @@
 #   - night mode: the project's night is on (night-on) and not past its end time: everything that passes the checks
 #     merges, up to the night's cap if one was set (a night past its end or cap counts as off);
 #   - the owner's code: otherwise merge-pr prints a code bound to this head and base (valid 1 h) and exits 3. The
-#     project's PRs asked within 5 minutes share one code, and merge-pr names them all. The lead shows the owner the
-#     PRs, tiers and its opinion; the owner answers with the code once ("evet <code>", "yes <code>": any language, the
-#     code is what binds); the lead reruns each with --code.
+#     project's PRs asked within 5 minutes share one code, and merge-pr names them all; the code approves only those.
+#     The lead shows the owner the PRs, tiers and its opinion; the owner answers with the code once ("evet <code>",
+#     "yes <code>": any language, the code is what binds); the lead reruns each with --code. The first --code run
+#     closes the batch: PRs asked after it get a new code.
 # The lead runs it; a lane (LONCA_LANE set) is refused.
 # The merge method follows the repo (merge commit, else squash, else rebase; `git config lonca.mergeMethod` overrides)
 # and merges exactly the checked head (--match-head-commit). One merge at a time (a lock). Log: ~/.local/state/lonca/merge.log
 set -eu
-for v in $(env | cut -d= -f1 | grep -E '^(CLAUDECODE|CLAUDE_[A-Z_]*|CODEX_COMPANION_[A-Z_]*)$'); do unset "$v"; done
+for v in $(env | cut -d= -f1 | grep -E '^(CLAUDECODE|CLAUDE_[A-Z_]*|CODEX_COMPANION_[A-Z_]*|LONCA_PROJECT)$'); do unset "$v"; done   # the project comes from the repo's marker
 dry=0 code=
 while [ $# -gt 0 ]; do case $1 in --dry-run) dry=1; shift ;; --code) code=${2:-}; shift 2 ;; -h|--help) sed -n '2,/^set -eu/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;; *) break ;; esac; done
 me=merge-pr
@@ -70,6 +71,8 @@ if [ -n "$code" ]; then
   [ "$1" = "$code" ] || no "code '$code' does not match the one asked for $nwo#$pr"
   [ "$2" = "$head" ] || no "the PR changed since the owner approved it (${2%"${2#???????}"} -> $short): ask again"
   [ "${4:-}" = "$base" ] || no "the PR's base is now $base, not the ${4:-unknown} the owner approved: ask again"
+  grep -qx "$key" "$A/batch_${proj}_$code" 2>/dev/null || no "$nwo#$pr is not in the batch the owner saw for code '$code': ask again"
+  [ "$(cat "$A/.batch_$proj" 2>/dev/null)" = "$code" ] && rm -f "$A/.batch_$proj"   # close the batch: later asks get a new code
   [ $(( $(date +%s) - $3 )) -lt 3600 ] || no "the code is older than 1 h: ask again"
   how=code
 elif LEVEL=$level TIER=$tier python3 -I -c 'import os,sys; r={"low":0,"medium":1,"high":2,"all":2}; sys.exit(0 if r.get(os.environ["LEVEL"],-1) >= r[os.environ["TIER"]] else 1)'; then
@@ -109,10 +112,11 @@ if [ "$how" = ask ]; then
   mkdir -p "$A"
   b=$A/.batch_$proj   # one batch per project: another project's lead never shares this code
   if [ -f "$b" ] && [ $(( $(date +%s) - $(date -r "$b" +%s) )) -lt 300 ]; then c=$(cat "$b")
-  else c=$(python3 -I -c 'import secrets; print("".join(secrets.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(3)))'); echo "$c" > "$b"; fi
+  else c=$(python3 -I -c 'import secrets; print("".join(secrets.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(3)))'); echo "$c" > "$b"; : > "$A/batch_${proj}_$c"; fi
+  grep -qx "$key" "$A/batch_${proj}_$c" || echo "$key" >> "$A/batch_${proj}_$c"   # the PRs this code may approve
   echo "$c $head $(date +%s) $base" > "$A/$key"
   echo "$me: checks passed; ask the owner. Show: $nwo#$pr -> $base, head $short, tier $tier ($why), your opinion$( [ "$tier" = high ] && echo ' and the risks')."
-  echo "This code covers: $(grep -l "^$c " "$A"/* 2>/dev/null | sed 's|.*/||' | sort | paste -sd' ' -)   (show the owner every one)"
+  echo "This code covers: $(paste -sd' ' "$A/batch_${proj}_$c")   (show the owner every one)"
   echo "They approve by writing the code, e.g.:  evet $c  (any language)     then run:  $me --code $c $repo $pr $run $lane   (this head and base only, 1 h)"
   exit 3
 fi
@@ -132,11 +136,13 @@ git -C "$repo" worktree list --porcelain | awk -v b="refs/heads/$branch" '/^work
 while read -r wt; do
   case $wt in "$HOME"/.herdr/worktrees/*) ;; *) continue ;; esac   # only Lonca's lane worktrees
   [ "$(git -C "$wt" rev-parse HEAD 2>/dev/null)" = "$head" ] || { echo "$me: left $wt (its HEAD is not the merged head $short: unpushed commits?)"; continue; }
-  env -u CLAUDECODE hc ls --json 2>/dev/null | python3 -I -c 'import json,sys
+  if git -C "$repo" worktree remove "$wt" 2>/dev/null; then git -C "$repo" update-ref -d "refs/heads/$branch" "$head" 2>/dev/null
+    # only now close its terminals: those in the worktree or below it, not in a sibling whose name starts the same
+    env -u CLAUDECODE hc ls --json 2>/dev/null | python3 -I -c 'import json,sys
 for t in json.load(sys.stdin).get("terminals", []):
-    if t.get("cwd", "").startswith(sys.argv[1]): print(t["address"])' "$wt" | while read -r t; do env -u CLAUDECODE hc kill "$t" >/dev/null 2>&1; done
-  sleep 2
-  if git -C "$repo" worktree remove "$wt" 2>/dev/null; then git -C "$repo" update-ref -d "refs/heads/$branch" "$head" 2>/dev/null; echo "$me: closed the lane and removed $wt"
+    c = t.get("cwd", "")
+    if c == sys.argv[1] or c.startswith(sys.argv[1] + "/"): print(t["address"])' "$wt" | while read -r t; do env -u CLAUDECODE hc kill "$t" >/dev/null 2>&1; done
+    echo "$me: closed the lane and removed $wt"
     echo "$(date -Iseconds) removed worktree $wt + branch $branch after merging $repo #$pr" >> "$LOG"
   else echo "$me: left $wt (uncommitted changes); ai-cleanup takes it once clean"; fi
 done

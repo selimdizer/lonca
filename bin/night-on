@@ -6,8 +6,9 @@
 #       "start <code>": any language, the code is what binds)
 #   night-on --code <code> <project>          the lead passes the owner's code: night mode starts
 #   night-on --off <project>                  ends it early
-# <project> is the name `lonca-project` prints for the project's repos.
+# <project> is the name `lonca-project` prints for the project's repos. The lead runs it; a lane is refused.
 set -eu
+[ -z "${LONCA_LANE:-}" ] || { echo "night-on: refused in lane $LONCA_LANE: the lead runs night mode" >&2; exit 1; }
 N=$HOME/.cache/ai-runs/night A=$HOME/.local/state/lonca/approvals
 usage() { echo "usage: night-on --request <project> <HH:MM> [<max>]  |  night-on --code <code> <project>  |  night-on --off <project>" >&2; exit 2; }
 case ${1:-} in

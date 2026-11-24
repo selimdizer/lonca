@@ -59,6 +59,9 @@ jobs:
           if ev $B; then echo "review template accepted"; exit 1; fi
           rm $T/x.security.md
           if ev $B; then echo "missing file accepted"; exit 1; fi
+      - name: Checker docs name each verdict alone (no "PASS | NEEDS_WORK" line to copy)
+        run: |
+          if grep -rnE '(VERDICT|PERF|SECURITY|highest): ?[A-Z_]+ ?\|' agents skills bin; then exit 1; fi
       - name: Risk tiers
         run: |
           python3 - <<'PY'
@@ -74,12 +77,17 @@ jobs:
                    ([F("bin/merge-pr")], "high"), ([F("shims/guard")], "high"), ([F("git-hooks/pre-push")], "high"),
                    ([F("install.sh")], "high"), ([F(".mcp.json")], "high"), ([F("app/.claude/settings.json")], "high"),
                    ([F("Makefile")], "high"), ([F("agents/lead.md")], "high"), ([F("routing.md")], "high"),
-                   ([F("tests/conftest.py")], "medium"), ([F("src/hooks/useCart.ts")], "medium")]
+                   ([F("tests/conftest.py")], "medium"), ([F("src/hooks/useCart.ts")], "medium"),
+                   ([F("config/codex-rules/default.rules")], "high"), ([F("config/omp-guard/guard.ts")], "high"),
+                   ([F("config/omp-lane/x.json")], "high"), ([F("config/opencode/agents/lane.md")], "high"),
+                   ([F("bin/lane")], "high"), ([F(".claude-plugin/plugin.json")], "high"),
+                   ([F("AGENTS.override.md")], "high"), ([F("CLAUDE.local.md")], "high"), ([F("docs/agents.md")], "high"),
+                   ([F("pkg/Claude.md")], "high"), ([F("sub/dir/AGENTS.MD")], "high"), ([F("docs/agents-guide.md")], "low")]
           bad = [(f, w, m.tier_of(f, {})) for f, w in cases if m.tier_of(f, {})[0] != w]
           assert not bad, bad
           assert m.tier_of([F("src/app.py")], {"high_paths": ["src/app.py"]})[0] == "high"
           PY
-      - name: merge-pr gate (lane refused, code per project batch and base, fetched settings, crash-safe lock, night, worktree at the merged head, paginated files)
+      - name: merge-pr gate (lane refused, code per project batch and base, fetched settings, crash-safe lock, night, worktree at the merged head, file list)
         run: python3 .github/merge-gate.py
       - name: deja scope (this project's sessions only, checked with deja's own match rule)
         run: |
@@ -99,6 +107,7 @@ jobs:
           out=$(HOME=$H sh bin/night-on --request demo 23:59)
           c=$(printf '%s' "$out" | sed -n 's/.*başla \([a-z0-9]\{3\}\) .*/\1/p')
           if HOME=$H sh bin/night-on --code zzz demo; then echo "wrong code accepted"; exit 1; fi
+          if HOME=$H LONCA_LANE=x sh bin/night-on --code "$c" demo; then echo "a lane started night mode"; exit 1; fi
           HOME=$H sh bin/night-on --code "$c" demo
           grep -q '"max_merges": "unlimited"' "$H/.cache/ai-runs/night/demo.json"
           HOME=$H sh bin/night-on --off demo && test ! -e "$H/.cache/ai-runs/night/demo.json"

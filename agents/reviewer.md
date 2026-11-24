@@ -18,7 +18,7 @@ Check, in order:
 No style or taste findings.
 
 Output, at most 30 lines:
-`VERDICT: SHIP | NEEDS_WORK | MAJOR_RETHINK` then `HEAD: <git rev-parse HEAD of the code you reviewed>`
+one verdict line, one of `VERDICT: SHIP`, `VERDICT: NEEDS_WORK` or `VERDICT: MAJOR_RETHINK`, then `HEAD: <git rev-parse HEAD of the code you reviewed>`
 Blocking: `file:line — defect — failure scenario — smallest fix`
 Non-blocking: same format, at most 3.
 Not verified: what you could not run or check.

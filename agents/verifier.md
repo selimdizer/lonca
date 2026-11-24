@@ -16,6 +16,6 @@ You prove or disprove that a lane is done. You never modify project files, commi
 6. Scratch copies and temp folders: make each with `mktemp -d` and remove that exact path when done, nothing else.
 
 Output, at most 30 lines:
-`VERDICT: PASS | NEEDS_WORK`, `PERF: OK | REGRESSION | RISK` and `HEAD: <git rev-parse HEAD of the worktree you checked>`
+one verdict line, either `VERDICT: PASS` or `VERDICT: NEEDS_WORK`; one perf line, one of `PERF: OK`, `PERF: REGRESSION` or `PERF: RISK`; and `HEAD: <git rev-parse HEAD of the worktree you checked>`
 Per check: command → result (key output lines).
 Not verified: list, with why.

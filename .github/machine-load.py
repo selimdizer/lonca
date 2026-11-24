@@ -61,7 +61,7 @@ def merge_pr_unknown(home):
     (stubs / "sleep").write_text("#!/bin/sh\nexit 0\n")
     (stubs / "gh").write_text(r'''#!/bin/sh
 case "$*" in
-  "pr view 7 --json baseRefName") echo '{"baseRefName":"main"}' ;;
+  "pr view 7 --json baseRefName,changedFiles") echo '{"baseRefName":"main","changedFiles":1}' ;;
   "api --paginate repos/{owner}/{repo}/pulls/7/files --jq .[]") echo '{"filename":"README.md","additions":1,"deletions":0,"status":"modified"}' ;;
   "repo view --json nameWithOwner -q .nameWithOwner") echo owner/repo ;;
   "pr view 7 --json state,"*)
