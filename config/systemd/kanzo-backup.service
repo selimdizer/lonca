@@ -4,4 +4,4 @@ Description=Nightly Kanzo board export (JSON, 30 days kept)
 [Service]
 Environment=PATH=%h/.local/share/mise/command-wrappers/bin:%h/.local/share/mise/shims:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Type=oneshot
-ExecStart=/bin/sh -c 'mkdir -p %h/kanzo-backups && kanzo export --format json -o %h/kanzo-backups/kanzo-$(date +%%F).json && find %h/kanzo-backups -name "kanzo-*.json" -mtime +30 -delete'
+ExecStart=%h/lonca/bin/project-job kanzo-backup

@@ -5,8 +5,6 @@ model: opus
 effort: high
 ---
 
-To use other models, put your own copy in `~/lonca-local/agents/implementer.md`; the installer links it over this one.
-
 You implement exactly one lane. Read the brief file you are given first; it is the spec.
 
 1. Work only in the worktree and branch you were started in (`lane` created them from a fresh origin/<base>). Never touch another working tree.

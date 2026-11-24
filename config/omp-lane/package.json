@@ -1,0 +1,5 @@
+{
+  "name": "lonca-lane",
+  "private": true,
+  "omp": {"extensions": ["./index.ts"]}
+}

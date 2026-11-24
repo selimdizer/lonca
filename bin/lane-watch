@@ -12,7 +12,8 @@ A lane with a report and an open PR whose checks are complete for its current he
 evidence for the tier, attribution) gets one `READY: <repo>#<pr> head <sha> — run merge-pr` per head to its lead.
 It also refreshes every project's deja scope (deja-scope --refresh).
 """
-import glob, json, os, shlex, subprocess, sys, time
+import json, os, shlex, subprocess, sys, time
+from lonca_registry import STATE, key, save, registered, records, lane_worktree
 
 DRY = "--dry-run" in sys.argv
 IDLE_MIN = 30
@@ -141,13 +142,13 @@ def close_if_empty(rec):
     code, out = hc("get", name, "--json")
     term = json.loads(out) if code == 0 and out.strip() else {}
     st = term.get("status"); st = st.get("state") if isinstance(st, dict) else st
-    if st == "working":
+    if not lane_worktree(rec) or (term and (term.get("cwd") != wt or term.get("labels", {}).get("lonca.run") != rec["temp"])) or st == "working":
         return False
     base, branch = rec.get("base") or "main", rec.get("branch") or git(wt, "branch", "--show-current").stdout.strip()
     ahead = git(wt, "rev-list", "--count", f"origin/{base}..HEAD").stdout.strip()
-    dirty = git(wt, "status", "--porcelain").stdout.strip()
-    pushed = git(wt, "ls-remote", "--heads", "origin", branch).stdout.strip() if branch else ""
-    if ahead != "0" or dirty or pushed:
+    dirty = git(wt, "status", "--porcelain")
+    pushed = git(wt, "ls-remote", "--heads", "origin", branch)
+    if ahead != "0" or dirty.returncode or dirty.stdout or pushed.returncode or pushed.stdout:
         return False                     # it made something: stays until its PR is merged
     msg = f"closed {name}: report written, no commits or changes (worktree {wt} removed)"
     print(msg)
@@ -155,7 +156,8 @@ def close_if_empty(rec):
         if term and term.get("state") != "finished":
             hc("kill", name)
         main = os.path.dirname(git(wt, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip())
-        git(main, "worktree", "remove", "--force", wt)
+        if git(main, "worktree", "remove", wt).returncode:
+            return False
         if branch:
             git(main, "branch", "-D", branch)   # never pushed and empty
         os.makedirs(os.path.dirname(LOG), exist_ok=True)
@@ -165,11 +167,15 @@ def close_if_empty(rec):
 
 
 now = time.time()
-for rec_path in glob.glob(os.path.expanduser("~/.cache/ai-runs/**/*.lane.json"), recursive=True):
-    try:
-        rec = json.load(open(rec_path))
-    except (OSError, ValueError):
-        continue
+projects = registered()
+if not projects:
+    sys.exit(0)
+for _, rec in records(projects):
+    # The receipt identifies an immutable launch record. Persist watch state
+    # separately so a timer interruption cannot corrupt that launch record.
+    state_path = STATE / "activity" / key(rec["project"]) / "watch" / (key(rec["temp"]) + ".json")
+    previous = json.loads(state_path.read_bytes()) if state_path.exists() else {}
+    rec.update(previous)
     if rec.get("closed"):
         continue
     if os.path.exists(rec["result"]) and os.path.getsize(rec["result"]) > 0:
@@ -189,7 +195,7 @@ for rec_path in glob.glob(os.path.expanduser("~/.cache/ai-runs/**/*.lane.json"),
         why = None
         if not term or state == "finished":
             why = f"its terminal {'is gone' if not term else 'finished'} and there is no report"
-        elif status != "working" and os.path.isdir(rec["worktree"]):
+        elif status != "working" and lane_worktree(rec):
             idle = (now - newest_change(rec["worktree"])) / 60
             if idle >= IDLE_MIN and (now - rec.get("started", now)) / 60 >= IDLE_MIN:
                 why = f"{status or 'no status'}, nothing changed in its worktree for {int(idle)} min, no report"
@@ -202,8 +208,9 @@ for rec_path in glob.glob(os.path.expanduser("~/.cache/ai-runs/**/*.lane.json"),
                 with open(LOG, "a") as f:
                     f.write(time.strftime("%Y-%m-%d %H:%M ") + msg + "\n")
                 rec["notified"] = why
-    if not DRY:
-        json.dump(rec, open(rec_path, "w"))
+    state = {k: rec[k] for k in ("done", "closed", "notified", "ready_head", "lead") if k in rec}
+    if not DRY and state != previous:
+        save(state_path, state)
 
 # keep every project's deja scope current (a project that appeared since the last run is left out of the others)
 if not DRY:

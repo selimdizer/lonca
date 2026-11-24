@@ -3,7 +3,9 @@
 the subagents it starts, so a cleanup inside it can't reach another session's or lane's files. Lanes already run in
 their own (lane-<name>, from `lane`) and keep it. ai-cleanup removes the folder once it has been idle.
 """
-import json, os, shlex, subprocess, sys
+import json, os, shlex, subprocess, sys, tempfile
+from pathlib import Path
+from lonca_registry import registered, remember
 
 from claude_session import duplicate
 
@@ -21,11 +23,19 @@ env_file = os.environ.get("CLAUDE_ENV_FILE")
 if not sid or not env_file or os.path.basename(os.environ.get("TMPDIR", "")).startswith("lane-"):
     sys.exit(0)
 here = os.path.dirname(os.path.realpath(__file__))
+project = subprocess.run([os.path.join(here, "lonca-project"), event.get("cwd") or os.getcwd()],
+                         capture_output=True, text=True)
+if project.returncode:
+    sys.exit(0)
+root = Path(project.stdout.rstrip("\n").split("\t")[1])
+if root not in registered():
+    sys.exit(0)
 base = subprocess.run([os.path.join(here, "lonca-config"), "tmpdir", os.path.expanduser("~/.cache/lonca/tmp")],
                       capture_output=True, text=True).stdout.strip()
 if not base:
     sys.exit(0)
-d = os.path.join(base, "session-" + "".join(c for c in sid if c.isalnum() or c == "-")[:36])
-os.makedirs(d, exist_ok=True)
+os.makedirs(base, exist_ok=True)
+d = tempfile.mkdtemp(prefix="session-" + "".join(c for c in sid if c.isalnum())[:36] + "-", dir=base)
+remember(root, "temp", Path(d).resolve())
 with open(env_file, "a") as out:
     out.write(f"export TMPDIR={shlex.quote(d)}\n")

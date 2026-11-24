@@ -10,17 +10,49 @@ deny() { echo "lonca guard: blocked '$name$args'— $1. Stop and report to the o
 case $name in
   pkill|killall) deny "stop only processes you started, by PID" ;;
   lonca)
-    case ${1:-} in remove) deny "remove project protections from the owner's shell" ;; esac ;;
+    case ${1:-} in init|remove|migrate) deny "manage project protections from the lead or owner shell" ;; esac
+    exec "$L/bin/lonca" "$@" ;;
   gh)
     case $args in
       " pr merge "*|*" api "*merge*) deny "merge only with merge-pr (checks first)" ;;
     esac
     "$L/bin/ai-trace-gh" "$@" || exit 126 ;;
   git)
+    if [ -n "${LONCA_LANE:-}" ] && { [ "${GIT_CONFIG_COUNT:-}" != 1 ] ||
+        [ "${GIT_CONFIG_KEY_0:-}" != core.hooksPath ] || [ "${GIT_CONFIG_VALUE_0:-}" != "$HOME/lonca/git-hooks" ]; }; then
+      deny "lane Git hook environment changed or missing; restart the lane"
+    fi
+    # GIT_CONFIG_PARAMETERS (git -c) wins over the lane triple and the repo's hooksPath.
+    case $(printf '%s' "${GIT_CONFIG_PARAMETERS:-}" | tr '[:upper:]' '[:lower:]') in
+      *hookspath*|*include*|*alias.*) deny "don't bypass git hooks" ;;   # an alias can hide a hook skip
+    esac
+    # Hook skips anywhere after the subcommand: --no-verify (a unique prefix on commit and push; exact on
+    # merge and pull, which also have --no-verify-signatures), and -n alone or in a cluster (-an) on commit.
+    sub= skip=
+    for a do
+      if [ -n "$skip" ]; then skip=; continue; fi
+      if [ -z "$sub" ]; then
+        case $a in -C|-c|--git-dir|--work-tree|--namespace|--config-env|--attr-source) skip=1 ;; -*) ;; *) sub=$a ;; esac
+        continue
+      fi
+      case $sub:$a in
+        *:--) break ;;
+        commit:--no-veri*|push:--no-veri*|merge:--no-verify|pull:--no-verify) deny "don't skip git hooks" ;;
+        commit:-[!-]*)
+          o=${a#-}
+          while [ -n "$o" ]; do
+            c=${o%"${o#?}"}; o=${o#?}
+            case $c in
+              n) deny "don't skip git hooks" ;;
+              [mCcFt]) [ -z "$o" ] && skip=1; break ;;   # takes a value: the rest, or the next argument
+              [Su]) break ;;                              # optional value, only inline
+            esac
+          done ;;
+      esac
+    done
     case $(printf '%s' "$args" | tr '[:upper:]' '[:lower:]') in
-      *" config "*"core.hookspath "*) case $args in
-        *" --unset "*|*" --unset-all "*|*" unset "*) deny "don't remove git hooks" ;;
-      esac ;;
+      *hookspath*|*include*".path"*|*alias.*|*" config "*)
+        python3 -I "$L/shims/hooks-config.py" "$@" || deny "don't change git hooks" ;;
     esac
     case $args in
       *" push "*" --force"*|*" push "*" -f "*|*" push --force"*|*" push -f "*|*" push "*" +"*) deny "no force-push" ;;
@@ -31,7 +63,6 @@ case $name in
       *" reset --hard"*|*" reset "*" --hard"*) deny "no reset --hard" ;;
       *" clean "*) deny "no git clean" ;;
       *" branch -D "*|*" branch "*" -D "*) deny "no branch deletion" ;;
-      *" core.hooksPath "?*) case $args in *"config"*) deny "don't change git hooks" ;; esac ;;
     esac ;;
 esac
 

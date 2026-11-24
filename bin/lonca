@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import stat
 import subprocess
 import sys
@@ -242,7 +243,7 @@ class Project:
 
     def save(self):
         for name, entry in self.data["files"].items():
-            if "before" in entry:
+            if "before" in entry and not name.endswith("/.codex/config.toml"):
                 entry["original"] = self.backup(self.original(entry))
                 entry.pop("before")
                 current = read(Path(name))
@@ -271,6 +272,16 @@ class Project:
         return base64.b64decode(entry["before"]) if entry["before"] is not None else None
 
     def restored(self, path, entry, current):
+        if "appended" in entry:
+            if current is None:
+                return None
+            for addition in reversed(entry["appended"]):
+                block = addition.encode()
+                if current.endswith(block):
+                    current = current[:-len(block)]
+                else:
+                    current = undo_file(path, b"", block, current) or b""
+            return current if current or entry["existed"] else None
         before = self.original(entry)
         if digest(current) == entry["after"]:
             return before
@@ -281,6 +292,13 @@ class Project:
             raise ValueError(f"installed snapshot unavailable for {path}; keep your edited copy before restoring")
         return undo_file(path, before, applied, current)
 
+    def remember_dirs(self, path):
+        parent = path.parent
+        while not parent.exists():
+            if str(parent) not in self.data["dirs"]:
+                self.data["dirs"].append(str(parent))
+            parent = parent.parent
+
     def remember(self, path):
         data = read(path)
         files = self.data["files"]
@@ -288,11 +306,7 @@ class Project:
             files[str(path)] = {"original": self.backup(data),
                                 "mode": stat.S_IMODE(path.stat().st_mode) if data is not None else 0o600,
                                 "after": digest(data)}
-            parent = path.parent
-            while not parent.exists():
-                if str(parent) not in self.data["dirs"]:
-                    self.data["dirs"].append(str(parent))
-                parent = parent.parent
+            self.remember_dirs(path)
         entry = files[str(path)]
         # Fold later user edits into the baseline before applying a repair.
         entry["original"] = self.backup(self.restored(path, entry, data))
@@ -308,8 +322,39 @@ class Project:
             self.save()
             atomic(path, data, entry["mode"])
 
-    def install_plugin(self, repo, rec):
-        path = personal(repo, SETTINGS)
+    def write_mcp(self, path, policy):
+        # codex_mcp only appends tables. The receipt never needs other servers' credentials.
+        old = read(path)
+        contents = old or b""
+        data = codex_mcp(contents, policy)
+        files = self.data["files"]
+        entry = files.get(str(path))
+        if entry and "appended" not in entry:
+            # First-phase receipts stored whole files. Convert their known append operation.
+            original = self.original(entry)
+            old_keys = {entry.get("original"), entry.get("after")} - {None}
+            baseline = original or b""
+            addition = codex_mcp(baseline, policy)[len(baseline):].decode()
+            entry = {"mode": entry["mode"], "existed": original is not None,
+                     "appended": [addition] if addition else []}
+            files[str(path)] = entry
+            self.save()
+            used = {v.get(field) for v in files.values() for field in ("original", "after")}
+            for key in old_keys - used:
+                plain(self.backups / key).unlink(missing_ok=True)
+        if data == contents:
+            return
+        if entry is None:
+            entry = files[str(path)] = {"mode": stat.S_IMODE(path.stat().st_mode) if old is not None else 0o600,
+                                        "existed": old is not None, "appended": []}
+            self.remember_dirs(path)
+        addition = data[len(contents):].decode()
+        if addition not in entry["appended"]:
+            entry["appended"].append(addition)
+        self.save()
+        atomic(path, data, entry["mode"])
+
+    def install_plugin(self, repo, rec, path):
         values = json.loads(read(path) or b"{}")
         if values.get("enabledPlugins", {}).get(PLUGIN) is False:
             raise ValueError(f"{PLUGIN} disabled in {path}")
@@ -337,6 +382,23 @@ class Project:
             if git(repo, "check-ignore", "--", name, optional=True) is None:
                 raise ValueError(f"{repo / name} is exposed by a higher-priority Git ignore rule")
 
+    def init_claude(self, repo, rec, paths, policy):
+        self.install_plugin(repo, rec, paths[SETTINGS])
+        path = paths[SETTINGS]
+        values = json.loads(read(path) or b"{}")
+        deny = values.setdefault("permissions", {}).setdefault("deny", [])
+        for rule in json.loads((SRC / "config/claude-permissions.json").read_bytes())["deny"]:
+            if rule not in deny:
+                deny.append(rule)
+        values.setdefault("env", {})["DEJA_POLICY_FILE"] = str(policy)
+        # No co-author or "Generated with" lines in this project's commits and PRs.
+        values.update(attribution={"commit": "", "pr": ""}, includeCoAuthoredBy=False)
+        self.write(path, formatted(values))
+        path = paths["CLAUDE.local.md"]
+        old = read(path) or b""
+        if IMPORT.encode() not in old.splitlines():
+            self.write(path, append(old, IMPORT))
+
     def init_repo(self, repo, common, agents, policy):
         identity = [common.stat().st_dev, common.stat().st_ino]
         rec = self.data["repos"].setdefault(str(repo), {"common": str(common), "identity": identity})
@@ -361,22 +423,10 @@ class Project:
             self.save()
             git(repo, "config", "--local", "core.hooksPath", HOOKS)
         if "claude" in agents:
-            self.install_plugin(repo, rec)
-            path = paths[SETTINGS]
-            values = json.loads(read(path) or b"{}")
-            deny = values.setdefault("permissions", {}).setdefault("deny", [])
-            for rule in json.loads((SRC / "config/claude-permissions.json").read_bytes())["deny"]:
-                if rule not in deny:
-                    deny.append(rule)
-            values.setdefault("env", {})["DEJA_POLICY_FILE"] = str(policy)
-            self.write(path, formatted(values))
-            path = paths["CLAUDE.local.md"]
-            old = read(path) or b""
-            if IMPORT.encode() not in old.splitlines():
-                self.write(path, append(old, IMPORT))
+            self.init_claude(repo, rec, paths, policy)
         if "codex" in agents:
             path = paths[".codex/config.toml"]
-            self.write(path, codex_mcp(read(path) or b"", policy))
+            self.write_mcp(path, policy)
             path = paths[".codex/hooks.json"]
             hooks = json.loads(read(path) or b"{}")
             for event, groups in codex_hooks()["hooks"].items():
@@ -407,8 +457,9 @@ class Project:
         if agents:
             self.data["agents"] = sorted(set(self.data["agents"] + agents)) if self.file.exists() else agents
         found = list(repos(self.root))
+        folder_lead = self.root not in dict(found) and "claude" in self.data["agents"]
         if "claude" in self.data["agents"]:
-            check_marketplaces([repo for repo, _ in found])
+            check_marketplaces([repo for repo, _ in found] + ([self.root] if folder_lead else []))
         for file in REGISTRY.glob("*.json"):
             if file != self.file:
                 other = json.loads(file.read_bytes())
@@ -424,6 +475,13 @@ class Project:
         self.data["policy"] = str(policy)
         self.write(policy, policy_data)
         self.write(policy.with_suffix(".root"), os.fsencode(self.root))
+        if folder_lead:
+            identity = [self.root.stat().st_dev, self.root.stat().st_ino]
+            rec = self.data.setdefault("root_claude", {"identity": identity})
+            if rec["identity"] != identity:
+                raise ValueError(f"project folder was replaced: {self.root}")
+            paths = {name: plain(self.root / name) for name in (SETTINGS, "CLAUDE.local.md")}
+            self.init_claude(self.root, rec, paths, policy)
         for repo, common in found:
             self.init_repo(repo, common, self.data["agents"], policy)
         self.save()
@@ -445,6 +503,14 @@ class Project:
                     continue
             print(f"warning: {repo} moved, was deleted or replaced; skipping its checkout")
             skipped.extend([repo, Path(rec["common"])])
+        plugins = [(repo, rec) for repo, _, rec in present]
+        if root_rec := self.data.get("root_claude"):
+            if (self.root.is_dir() and self.root.resolve() == self.root
+                    and root_rec["identity"] == [self.root.stat().st_dev, self.root.stat().st_ino]):
+                plugins.append((self.root, root_rec))
+            else:
+                skipped.append(self.root)
+                print(f"warning: {self.root} moved, was deleted or replaced; skipping its settings")
         restore = {}
         for name, entry in files.items():
             path = Path(name)
@@ -454,8 +520,8 @@ class Project:
             plain(common / "config")
             if rec.get("hooks") and git(repo, "config", "--local", "--get", "core.hooksPath", optional=True) == rec["hooks"]:
                 git(repo, "config", "--local", "--unset", "core.hooksPath")
-        for repo, common, rec in present:
-            if rec.get("plugin") and plugin_installed(repo):
+        for repo, rec in plugins:
+            if rec.get("plugin") and not any(repo.is_relative_to(folder) for folder in skipped) and plugin_installed(repo):
                 path = repo / SETTINGS
                 try:
                     plugin_cmd(repo, "uninstall", PLUGIN, "--scope", "local", "--keep-data")
@@ -479,7 +545,10 @@ class Project:
         recovery = {}
         for name, entry in files.items():
             if any(Path(name).is_relative_to(folder) for folder in skipped):
-                recovery[name] = self.backup(self.original(entry))
+                if "appended" in entry:
+                    print(f"skipped {name}: its original MCP settings remain in the checkout")
+                else:
+                    recovery[name] = self.backup(self.original(entry))
         if recovery:
             directory = Path(tempfile.mkdtemp(prefix=self.file.stem + ".recovery-", dir=REGISTRY))
             for key in set(recovery.values()) - {None}:
@@ -492,6 +561,8 @@ class Project:
                     plain(blob).unlink()
             if not any(self.backups.iterdir()):
                 self.backups.rmdir()
+        from lonca_registry import forget_activity
+        forget_activity(self.root)
         self.file.unlink()
 
 
@@ -568,24 +639,43 @@ def codex_mcp(old, policy):
     return text.encode()
 
 
-def status(root):
+def claude_status(repo, project):
+    settings = json.loads(read(repo / SETTINGS) or b"{}")
+    enabled = settings.get("enabledPlugins", {}).get(PLUGIN)
+    deny = json.loads((SRC / "config/claude-permissions.json").read_bytes())["deny"]
+    configured = (set(deny) <= set(settings.get("permissions", {}).get("deny", []))
+                  and project.data.get("policy")
+                  and project.data["policy"] == settings.get("env", {}).get("DEJA_POLICY_FILE")
+                  and IMPORT.encode() in (read(repo / "CLAUDE.local.md") or b"").splitlines())
+    return enabled, configured
+
+
+def status(root, target=None):
     project = Project(root)
     print(f"{root} ({'registered' if project.file.exists() else 'unregistered'})")
     worktrees = {}
-    for repo, common in repos(root, worktrees):
+    if target:
+        candidates = [(target, target / ".git")]
+    else:
+        candidates = repos(root, worktrees)
+    folder_root = not target and project.file.exists() and not (root / ".git").exists()
+    if folder_root and "codex" in project.data["agents"]:
+        print(f"  warning: Codex lead guards are unavailable at {root}; start Codex in an initialized repository")
+    if folder_root and "claude" in project.data["agents"]:
+        enabled, configured = claude_status(root, project)
+        if enabled and configured:
+            print(f"  {root}: Claude lead guards on")
+        else:
+            print(f"  warning: Claude lead guards missing at {root}; run lonca init {shlex.quote(str(root))}")
+    ready = False
+    for repo, common in candidates:
         local = git(repo, "config", "--local", "--get", "core.hooksPath", optional=True)
         effective = git(repo, "config", "--get", "core.hooksPath", optional=True)
         hooks = "on" if local == effective == HOOKS else "off"
         if effective is not None and effective != HOOKS:
             hooks += f" (own hooksPath: {effective})"
-        settings = json.loads(read(repo / SETTINGS) or b"{}")
-        enabled = settings.get("enabledPlugins", {}).get(PLUGIN)
+        enabled, configured = claude_status(repo, project)
         claude = "enabled" if enabled else "off"
-        deny = json.loads((SRC / "config/claude-permissions.json").read_bytes())["deny"]
-        configured = (set(deny) <= set(settings.get("permissions", {}).get("deny", []))
-                      and project.data.get("policy")
-                      and project.data["policy"] == settings.get("env", {}).get("DEJA_POLICY_FILE")
-                      and IMPORT.encode() in (read(repo / "CLAUDE.local.md") or b"").splitlines())
         config = read(repo / ".codex/config.toml")
         rules = read(repo / ".codex/rules/lonca.rules") or b""
         hooks_file = json.loads(read(repo / ".codex/hooks.json") or b"{}").get("hooks", {})
@@ -600,6 +690,12 @@ def status(root):
             except ValueError as error:
                 print(f"    warning: {repo}/.codex/config.toml: {error}")
         print(f"  {repo}: git hooks {hooks}, Claude plugin {claude}, settings {'on' if configured else 'off'}, Codex {'on' if codex else 'off'}")
+        entry = project.data["repos"].get(str(repo), {})
+        if target and entry.get("ready") and marked(root) and common.is_dir():
+            ready = (entry.get("identity") == [common.stat().st_dev, common.stat().st_ino]
+                     and hooks == "on" and all(os.access(Path(HOOKS) / h, os.X_OK) for h in ("commit-msg", "pre-push"))
+                     and ("claude" not in project.data["agents"] or enabled and configured)
+                     and ("codex" not in project.data["agents"] or codex))
         if local == HOOKS:
             for hook in ("commit-msg", "pre-push"):
                 if not os.access(Path(HOOKS) / hook, os.X_OK):
@@ -611,28 +707,56 @@ def status(root):
         if not project.data["repos"].get(str(repo), {}).get("ready"):
             print("    warning: repo not initialised")
         else:
-            if "claude" in project.data["agents"] and not set(deny) <= set(settings.get("permissions", {}).get("deny", [])):
+            if "claude" in project.data["agents"] and not configured:
                 print(f"    warning: guard rules missing from {repo / SETTINGS}")
             if "codex" in project.data["agents"] and (SRC / "config/codex-rules/default.rules").read_bytes() not in rules:
                 print(f"    warning: guard rules missing from {repo / '.codex/rules/lonca.rules'}")
     for folder, owner in worktrees.items():
         print(f"  {folder}: linked worktree of {owner} (shared Git configuration)")
 
+    return ready
 
-def global_status(folder):
+
+def legacy_settings(folder):
+    from lonca_legacy import CONF, OLD_MARKET, deny_rules, has_installed_hooks, installed_claude_values
     legacy = []
     if git(folder, "config", "--global", "--get", "core.hooksPath", optional=True) == HOOKS:
         legacy.append("git hooksPath")
-    for name in (".claude/settings.json", ".claude/CLAUDE.md", ".codex/hooks.json", ".codex/config.toml"):
+    for name in (".claude/settings.json", ".codex/hooks.json"):
         path = HOME / name
-        if path.is_file() and any(word in path.read_bytes() for word in (b"/lonca/", b"mcp_servers.kanzo", b"mcp_servers.deja")):
+        if not path.is_file():
+            continue
+        data = json.loads(path.read_bytes())
+        if has_installed_hooks(data) or path.is_symlink() and path.resolve().is_relative_to(SRC):
             legacy.append(name)
+        elif path == CONF:
+            source = data.get("extraKnownMarketplaces", {}).get("lonca", {}).get("source", {})
+            old_market = (source.get("source") == "directory"
+                          and Path(source.get("path", "")).expanduser().resolve() == OLD_MARKET.resolve())
+            if old_market or installed_claude_values(data) or deny_rules().intersection(data.get("permissions", {}).get("deny", [])):
+                legacy.append(name)
+    doc = HOME / ".claude/CLAUDE.md"
+    if doc.is_file() and IMPORT in doc.read_text().splitlines():
+        legacy.append(".claude/CLAUDE.md")
+    config = HOME / ".codex/config.toml"
+    if config.is_file():
+        contents = config.read_bytes()
+        if any(key in contents for key in (b"mcp_servers.kanzo", b"mcp_servers.deja")):
+            legacy.append(".codex/config.toml")
     for name in (".claude/agents/lead.md", ".codex/AGENTS.md", ".codex/rules/default.rules"):
         path = HOME / name
         if path.is_symlink() and path.resolve().is_relative_to(SRC):
             legacy.append(name)
+    return legacy
+
+
+def global_status(folder):
+    from lonca_legacy import deferred_mcp
+    for harness, server in deferred_mcp():
+        print(f"  still global: {harness} MCP {server}")
+    legacy = legacy_settings(folder)
     if legacy:
-        print("  warning: global install still present: remove in phase 2 (" + ", ".join(legacy) + ")")
+        print("  warning: global install still present: run lonca migrate --dry-run (" + ", ".join(legacy) + ")")
 
 
 def report_former_projects():
@@ -652,22 +776,131 @@ def report_former_projects():
                 print(f"  {root} lost Git-only project status; run lonca init to opt in")
 
 
+def migration_roots(explicit):
+    result = {path.resolve() for path in explicit}
+    result.update(Path(json.loads(path.read_bytes())["root"]) for path in REGISTRY.glob("*.json"))
+    # The old scope hook kept the roots it encountered. Also inspect the installed
+    # checkout and marked directories under ~/Work (prune repositories and symlinks).
+    candidates = [HOME / "lonca"]
+    directory = HOME / ".local/state/lonca/deja"
+    candidates.extend(Path(file.read_text().strip()) for file in directory.glob("*.root"))
+    seen = directory / "settings-written"
+    if seen.is_file():
+        candidates.extend(Path(line).parent.parent for line in seen.read_text().splitlines() if line)
+    for dirname, dirs, files in os.walk(HOME / "Work"):
+        folder = Path(dirname)
+        if marked(folder):
+            candidates.append(folder)
+        if ".git" in dirs or ".git" in files:
+            dirs.clear()
+        else:
+            dirs[:] = [name for name in dirs if not name.startswith(".") and name not in
+                       ("node_modules", "target", "vendor", "venv") and not (folder / name).is_symlink()]
+    result.update(p.resolve() for p in candidates if p.is_dir() and marked(p))
+    return sorted(result)
+
+
+def migrate(args):
+    from lonca_legacy import Legacy
+    roots = migration_roots(args.roots)
+    if not roots:
+        raise ValueError("no project roots found; pass a project directory to lonca migrate")
+    found = {}
+    for root in roots:
+        if not root.is_dir():
+            raise ValueError(f"registered root unavailable: {root}")
+        top = subprocess.run(["git", "-C", root, "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+        if top.returncode == 0 and Path(top.stdout.strip()).resolve() != root:
+            raise ValueError(f"choose the repository root or its parent project directory: {root}")
+        found[root] = list(repos(root))
+    legacy = Legacy(args.dry_run)
+    legacy.prune()
+    legacy.marketplace()
+    managed_claude = []
+    for root in roots:
+        project = Project(root)
+        if "claude" in project.data["agents"]:
+            managed_claude.extend([root, *(repo for repo, _ in found[root])])
+        print(f"init {root}")
+        if args.dry_run:
+            if not marked(root):
+                print(f"  create {root / MARKERS[0]}")
+            if marked(root):
+                spec = json.loads(subprocess.check_output([SRC / "bin/deja-scope", "--policy", root]))
+                policy, data = Path(spec["file"]), json.dumps(spec["policy"], indent=0).encode()
+            else:
+                # init writes an empty marker and uses the folder name as the default project name.
+                import runpy
+                scope = runpy.run_path(str(SRC / "bin/deja-scope"))
+                policy = Path(scope["path_for"](os.environ.get("LONCA_PROJECT") or root.name.lower(), str(root)))
+                data = json.dumps(scope["policy"](str(root)), indent=0).encode()
+            for path, expected in ((policy, data), (policy.with_suffix(".root"), os.fsencode(root))):
+                if read(path) != expected:
+                    print(f"  write {path}")
+            print(f"  reconcile registration {project.file} and backups {project.backups}")
+            if not (root / ".git").exists() and "claude" in project.data["agents"]:
+                print(f"  install {PLUGIN} locally; merge {root / SETTINGS} and {root / 'CLAUDE.local.md'}")
+            for repo, common in found[root]:
+                local = git(repo, "config", "--local", "--get", "core.hooksPath", optional=True)
+                effective = git(repo, "config", "--get", "core.hooksPath", optional=True)
+                if local is None and effective in (None, HOOKS):
+                    print(f"  set core.hooksPath to {HOOKS} in {common / 'config'}")
+                print(f"  reconcile exclusions in {common / 'info/exclude'}")
+                if "claude" in project.data["agents"]:
+                    print(f"  install {PLUGIN} locally; merge {repo / SETTINGS} and {repo / 'CLAUDE.local.md'}")
+                if "codex" in project.data["agents"]:
+                    for name in ("config.toml", "hooks.json", "rules/lonca.rules"):
+                        print(f"  reconcile {repo / '.codex' / name}")
+        else:
+            project.init(None)
+    legacy.cleanup(upcoming=managed_claude)
+    legacy.timers()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+    migration = commands.add_parser("migrate")
+    migration.add_argument("--dry-run", action="store_true")
+    migration.add_argument("roots", nargs="*", type=Path)
     init = commands.add_parser("init")
     init.add_argument("--agents", help="comma-separated agents (default: claude,codex)")
     init.add_argument("dir", type=Path)
     commands.add_parser("remove").add_argument("dir", type=Path)
-    commands.add_parser("status").add_argument("dir", type=Path, nargs="?")
+    status_cmd = commands.add_parser("status")
+    status_cmd.add_argument("--agent", help=argparse.SUPPRESS)
+    status_cmd.add_argument("--lane", action="store_true", help=argparse.SUPPRESS)
+    status_cmd.add_argument("dir", type=Path, nargs="?")
+    commands.add_parser("outside-session", help=argparse.SUPPRESS)
     args = parser.parse_args()
-    root = args.dir.resolve() if args.dir else None
+    if args.command == "outside-session":
+        if not legacy_settings(Path.cwd()) and subprocess.run(
+                [SRC / "bin/lonca-project", Path.cwd()], stdout=subprocess.DEVNULL).returncode:
+            print("outside a Lonca project: no Lonca rules here; say 'set this up for Lonca' to add it")
+        return
+    if args.command in ("init", "remove", "migrate"):
+        from lonca_registry import in_lane
+        if in_lane():
+            parser.error("ask your lead to set up the project; removal is owner-only")
+    if args.command == "migrate" and args.dry_run:
+        migrate(args)
+        return
+    root = args.dir.resolve() if getattr(args, "dir", None) else None
     if root and not root.is_dir() and args.command != "remove":
         parser.error(f"not a directory: {root}")
     if args.command == "status":
         if root:
             p = subprocess.run([SRC / "bin/lonca-project", root], capture_output=True, text=True)
-            status(Path(p.stdout.strip().split("\t")[1]) if p.returncode == 0 else root)
+            project_root = Path(p.stdout.rstrip("\n").split("\t")[1]) if p.returncode == 0 else root
+            if args.lane:
+                agents = Project(project_root).data["agents"]
+                if args.agent in ("claude", "codex") and args.agent not in agents:
+                    sys.exit(f"lane: ask your lead to run lonca init --agents {args.agent} {shlex.quote(str(project_root))}")
+                if not status(project_root, root):
+                    sys.exit(f"lane: project setup incomplete. Ask your lead to run lonca init {shlex.quote(str(project_root))} "
+                             "and resolve any reported hooksPath conflict.")
+                return
+            status(project_root)
         else:
             records = sorted(REGISTRY.glob("*.json"))
             if not records:
@@ -685,6 +918,9 @@ def main():
     fd = os.open(REGISTRY, os.O_RDONLY)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
+        if args.command == "migrate":
+            migrate(args)
+            return
         project = Project(root)
         if args.command == "remove":
             project.remove()

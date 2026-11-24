@@ -32,10 +32,22 @@ def calendar(v):
 
 for t in sorted(glob.glob(f"{L}/config/systemd/*.timer")):
     name = os.path.basename(t)[:-6]; label = f"dev.lonca.{name}"; dst = f"{A}/{label}.plist"
-    subprocess.run(["launchctl", "bootout", f"gui/{UID}/{label}"], capture_output=True)
-    if os.path.exists(dst):
-        os.remove(dst)
-    if sys.argv[1] == "uninstall" or name in skip:
+    action = sys.argv[1]
+    old = None
+    if os.path.lexists(dst):
+        if os.path.islink(dst):
+            continue
+        with open(dst, "rb") as source:
+            old = plistlib.load(source)
+        if old.get("Label") != label or old.get("StandardOutPath") != f"{LOGS}/{name}.log":
+            print(f"  kept other launch agent: {dst}")
+            continue
+    if action in ("migrate", "preview") and (not old or name not in ("deja-index", "ai-memory-commit", "kanzo-backup")):
+        continue
+    if action == "uninstall" or name in skip:
+        if old:
+            subprocess.run(["launchctl", "bootout", f"gui/{UID}/{label}"], capture_output=True)
+            os.remove(dst)
         continue
     tk, sk = keys(t), keys(t[:-6] + ".service")
     cmd = sk["ExecStart"].replace("%h", H).replace("%%", "%")
@@ -46,6 +58,20 @@ for t in sorted(glob.glob(f"{L}/config/systemd/*.timer")):
         p["StartInterval"] = seconds(tk["OnUnitActiveSec"])
     else:
         p["StartCalendarInterval"] = calendar(tk["OnCalendar"])
+    if action in ("migrate", "preview"):
+        # Migration changes the job command alone. Keep local schedules and environment.
+        p = dict(old, ProgramArguments=args)
+    if old == p:
+        continue
+    if action == "preview":
+        print(f"  update project-scoped launch agent: {dst}")
+        continue
+    if old:
+        from lonca_legacy import Legacy
+        from pathlib import Path
+        if action == "migrate":
+            Legacy().backup(Path(dst), {"ProgramArguments": old.get("ProgramArguments", [])})
+        subprocess.run(["launchctl", "bootout", f"gui/{UID}/{label}"], capture_output=True)
     os.makedirs(A, exist_ok=True); os.makedirs(LOGS, exist_ok=True)
     with open(dst, "wb") as f:
         plistlib.dump(p, f)

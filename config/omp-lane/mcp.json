@@ -1,0 +1,6 @@
+{
+  "mcpServers": {
+    "kanzo": {"type": "stdio", "command": "kanzo", "args": ["mcp"]},
+    "deja": {"type": "stdio", "command": "deja", "args": ["mcp"], "env": {"DEJA_POLICY_FILE": "DEJA_POLICY_FILE"}}
+  }
+}
