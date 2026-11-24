@@ -177,6 +177,54 @@ esac
     out = run(BIN / "kanzo-sync", "--dry-run")
     assert "own/repo#1" in out and "other/no" not in logs.read_text()
 
+    # Read lanes on temp copies: watched when the copy's marker names a registered project, else not.
+    (stubs / "hc").write_text("""#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+home = Path(os.environ["HOME"])
+terms = json.loads((home / "terms.json").read_text())
+with open(home / "hc.calls", "a") as log:
+    log.write(" ".join(sys.argv[1:]) + "\\n")
+if sys.argv[1:3] == ["ls", "--json"]:
+    print(json.dumps({"terminals": [{"address": "lead-1", "agent": "claude", "state": "live", "cwd": terms["lead-cwd"]}]}))
+elif sys.argv[1] == "get" and sys.argv[2] == "lead-1":
+    print(json.dumps({"labels": {"lonca.role": "lead"}, "foreground": {"cwd": terms["lead-cwd"]}}))
+elif sys.argv[1] == "get":
+    if sys.argv[2] not in terms:
+        sys.exit(1)
+    print(json.dumps(terms[sys.argv[2]]))
+""")
+    terms = home / "terms.json"
+    terms.write_text(json.dumps({"lead-cwd": str(root)}))
+    lanes = {}
+    for lane, name in (("copy-ours", "test"), ("copy-stranger", "stranger")):
+        copy = home / "copies" / lane / "src"
+        copy.mkdir(parents=True)
+        (copy / ".lonca.toml").write_text(f'name = "{name}"')
+        result = home / ".cache/ai-runs" / name / lane / "read.result.md"
+        result.parent.mkdir(parents=True)
+        ltemp = temp / ("lane-" + lane)
+        ltemp.mkdir()
+        run(BIN / "lane-record", lane, copy, "lead-1", "omp:fixture", "-", result, "", "", copy, copy, ltemp)
+        lanes[lane] = result
+    calls = home / "hc.calls"
+    gh_before = logs.read_text()
+    out = run(BIN / "lane-watch")
+    assert "STALLED: copy-ours" in out and "STALLED: copy-stranger" not in out
+    assert any(line.startswith("send lead-1 STALLED: copy-ours") for line in calls.read_text().splitlines())
+    assert "copy-stranger" not in calls.read_text()
+    for result in lanes.values():
+        result.write_text("report")
+        os.utime(result, (time.time() - 700, time.time() - 700))
+    terms.write_text(json.dumps({"lead-cwd": str(root), "copy-ours": {"state": "finished"},
+                                 "copy-stranger": {"state": "finished"}}))
+    out = run(BIN / "lane-watch")
+    assert "removed the finished terminal of read lane copy-ours" in out and "READY" not in out
+    assert "rm copy-ours" in calls.read_text().splitlines() and "copy-stranger" not in calls.read_text()
+    assert "pr list --head" not in logs.read_text()[len(gh_before):]   # a read lane has no PR to check
+    run(BIN / "ai-cleanup", "--dry-run")   # the other record readers accept the mapped record
+    run(BIN / "kanzo-sync", "--dry-run")
+
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as folder:

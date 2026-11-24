@@ -80,7 +80,7 @@ Outside a project, a plain terminal session starts without Lonca. Run `lonca ini
 open the folder from Herdr to see the setup hint when the session starts.
 
 - `--timers` enables cleanup and lane monitoring for registered projects and board sync and backups
-  for their Kanzo slugs. The monthly maintenance card requires its configured project to be registered.
+  for their Kanzo slugs. A read lane on a temp copy counts as the registered project its marker names. The monthly maintenance card requires its configured project to be registered.
 - `--timers --memory-review` also reviews recent owner messages from registered projects. It uses your Claude plan.
 - `--sui` installs the Sui version selector and Move LSP launcher. In an initialized project, run
   `claude plugin install move-lsp@lonca --scope local` to use the language server from the same marketplace.

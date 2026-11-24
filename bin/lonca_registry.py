@@ -110,11 +110,19 @@ def resources(root, kind):
 
 def records(projects):
     for root, project in projects.items():
+        name = None
         for file in resources(root, "lane"):
             try:
                 rec = json.loads(file.read_bytes())
                 repo = Path(rec["repo"])
             except (OSError, ValueError, KeyError):
+                continue
+            if rec.get("project") not in (None, str(root)) and rec.get("base") == "-" and file == Path(rec["result"] + ".lane.json"):
+                # A read lane on a temp copy whose marker carries this project's name counts as this project's.
+                name = names([root]) if name is None else name
+                copy = Path(rec["project"])
+                if copy.resolve() == copy and repo.resolve() == repo and repo.is_relative_to(copy) and names([copy]) == name:
+                    yield file, {**rec, "project": str(root)}
                 continue
             entry = project["repos"].get(str(repo), {})
             if not (rec.get("project") == str(root) and entry.get("ready") and
