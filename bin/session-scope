@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""SessionStart hook (Claude, Codex): move this agent session into its own memory-capped systemd scope, the way
+terminal apps give every tab its own scope. When memory runs out, the kernel then stops the runaway inside this
+session (its tests, its subagents' commands) instead of systemd-oomd killing every terminal in Herdr's one unit.
+Programs the session already started (MCP servers) stay where they are; everything it starts from now on is capped.
+Lanes already run in their own scope (`lane`) and are left alone. No-op off Linux or without a user systemd.
+"""
+import json, os, subprocess, sys, time
+
+from claude_session import duplicate
+
+MEMORY_MAX, SWAP_MAX = 24 << 30, 4 << 30
+AGENTS = ("claude", "codex")
+
+if os.environ.get("LONCA") == "0" or not os.path.exists("/proc/self/cgroup"):
+    sys.exit(0)
+try:
+    event = json.load(sys.stdin)
+except ValueError:
+    event = {}
+if duplicate("session-scope", event):
+    sys.exit(0)
+
+
+def parent(pid):
+    with open(f"/proc/{pid}/stat") as f:
+        return int(f.read().rsplit(")", 1)[1].split()[1])
+
+
+def comm(pid):
+    with open(f"/proc/{pid}/comm") as f:
+        return f.read().strip()
+
+
+try:
+    pid = os.getppid()
+    for _ in range(4):  # the hook runs under the agent, sometimes through a shell
+        if comm(pid) in AGENTS or pid <= 1:
+            break
+        pid = parent(pid)
+    if comm(pid) not in AGENTS:
+        sys.exit(0)
+    with open(f"/proc/{pid}/cgroup") as f:
+        cgroup = f.read().strip().split(":", 2)[2]
+    with open(f"/sys/fs/cgroup{cgroup}/memory.max") as f:
+        capped = f.read().strip() != "max"
+except (OSError, ValueError, IndexError):
+    sys.exit(0)
+if capped:
+    sys.exit(0)  # already capped: a lane's scope, or moved before (resume, clear, compact)
+unit = f"lonca-session-{pid}.scope"
+try:
+    moved = subprocess.run(["busctl", "--user", "call", "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+                            "org.freedesktop.systemd1.Manager", "StartTransientUnit", "ssa(sv)a(sa(sv))",
+                            unit, "fail", "4", "PIDs", "au", "1", str(pid), "OOMPolicy", "s", "continue",
+                            "MemoryMax", "t", str(MEMORY_MAX), "MemorySwapMax", "t", str(SWAP_MAX), "0"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=5)
+except (OSError, subprocess.TimeoutExpired):  # no busctl, or a stuck user bus: start uncapped
+    sys.exit(0)
+if moved.returncode != 0:
+    sys.exit(0)  # refused: nothing queued, nothing to wait for
+# The move is a queued job: wait for it, so the session's next command does not start in the old cgroup
+for _ in range(30):
+    try:
+        with open(f"/proc/{pid}/cgroup") as f:
+            if f.read().strip().endswith("/" + unit):
+                break
+    except OSError:
+        break
+    time.sleep(0.1)

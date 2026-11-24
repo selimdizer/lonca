@@ -531,7 +531,7 @@ def plugin_installed(repo):
 def codex_hooks():
     start = []
     for cmd in ('if [ "${LONCA:-}" != 0 ] && [ -f "$HOME/ai-memory/MEMORY.md" ]; then cat "$HOME/ai-memory/MEMORY.md"; fi',
-                '"$HOME/lonca/bin/memory-context"'):
+                '"$HOME/lonca/bin/memory-context"', '"$HOME/lonca/bin/session-scope"'):
         start.append({"matcher": "startup|resume|clear|compact", "hooks": [{"type": "command", "command": cmd}]})
     return {"hooks": {"SessionStart": start, "Stop": [
         {"hooks": [{"type": "command", "command": 'python3 "$HOME/lonca/config/memory-nudge.py"'}]}]}}
