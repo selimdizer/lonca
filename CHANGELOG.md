@@ -5,6 +5,7 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- `lane-watch` sends STALLED and READY to the project's current lead when the terminal recorded for a lane no longer runs an agent session (a lead restarted in a new terminal), and updates the lane record; with no single current lead the line waits instead of going to a terminal that may run something else; `leads --json` lists the sessions for it.
 - `lane-watch` sends the lead one `READY: <repo>#<pr> head <sha>` per head when a lane's PR passes `merge-pr --dry-run`, so PRs whose checks finished in files no longer wait unnoticed; the lead's orchestrate skill says to run merge-pr on it. `merge-pr --dry-run` no longer takes the merge lock or writes refusals to the audit log.
 - Every Claude and Codex session (leads, the owner's sessions) moves itself into its own systemd scope capped at 24 GB memory and 4 GB swap at start (`bin/session-scope`, Linux), so a runaway test inside a lead, or one of its subagents, is killed there while the session stays up, instead of systemd-oomd killing every terminal. Programs the session started before the move (MCP servers) stay outside the cap.
 - Each lane runs in its own systemd scope capped at 16 GB memory and 4 GB swap (Linux with systemd 254 or later), so running out of memory kills the runaway process inside that lane (the lane's agent stays up and can report it) instead of every terminal in Herdr's unit. Where no such scope can be made (macOS, older systemd, no user manager) the lane starts uncapped, as before.
