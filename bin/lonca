@@ -14,6 +14,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parent.parent
@@ -518,6 +519,12 @@ class Project:
             path = Path(name)
             if not any(path.is_relative_to(folder) for folder in skipped):
                 restore[path] = self.restored(path, entry, read(path))
+        exclude = next((common / "info/exclude" for repo, common, _ in present if repo == self.root), None)
+        if exclude in restore and (self.root / LEDGER).exists():
+            # The ledger stays, so its exclusion stays: git add -A must not pick it up.
+            kept = restore[exclude] or b""
+            if b"/.lonca" not in kept.splitlines():
+                restore[exclude] = append(kept, "/.lonca")
         for repo, common, rec in present:
             plain(common / "config")
             if rec.get("hooks") and git(repo, "config", "--local", "--get", "core.hooksPath", optional=True) == rec["hooks"]:
@@ -861,24 +868,40 @@ def migrate(args):
 
 LEDGER = ".lonca/questions.md"
 HEADING = re.compile(r"## Q-(\d+)\. ")
+STATUS = " · Status: "
+LOCK_TIMEOUT = 30
+
+
+def clean(text):
+    # Ledger text comes from agents and lanes: printable only, so nothing hides or fakes a line.
+    return "".join(c if c.isprintable() or c == "\n" else " " for c in text)
 
 
 def flat(text):
-    return " ".join(text.split())
+    return " ".join(clean(text).split())
 
 
 def indented(text):
-    # Continuation lines are indented so free text never starts a line the parser reads.
-    return "\n  ".join(line.strip() for line in text.strip().splitlines())
+    # Lines after the first are indented, so free text never starts a line the parser reads.
+    return "\n  ".join(line.strip() for line in clean(text).strip().splitlines())
 
 
 def blocks(text):
-    """(start line, id, lines) per question; a heading counts only when an Asked: line follows it."""
+    """(start line, id, lines) for every '## Q-n.' heading; its block runs to the next heading."""
     lines = text.splitlines()
-    starts = [(i, int(m.group(1))) for i, line in enumerate(lines)
-              if (m := HEADING.match(line)) and i + 1 < len(lines) and lines[i + 1].startswith("Asked: ")]
+    starts = [(i, int(m.group(1))) for i, line in enumerate(lines) if (m := HEADING.match(line))]
     ends = [i for i, _ in starts[1:]] + [len(lines)]
     return [(i, n, lines[i:end]) for (i, n), end in zip(starts, ends)]
+
+
+def asked(block):
+    return next((i for i, line in enumerate(block) if line.startswith("Asked: ")), None)
+
+
+def status(block):
+    # A block missing its Asked line or status still shows as open rather than vanishing.
+    i = asked(block)
+    return block[i].rsplit(STATUS, 1)[1].strip() if i is not None and STATUS in block[i] else "open"
 
 
 def questions(argv):
@@ -889,21 +912,29 @@ def questions(argv):
                                      description="The project's ledger of questions for the owner.")
     if action == "list":
         parser.add_argument("--all", action="store_true", help="also answered and dropped questions")
-    parser.add_argument("dir", type=Path, nargs="?" if action in ("list", "add") else None, default=Path.cwd(),
-                        metavar="dir" if action in ("list", "add") else "[dir]")
+    if action in ("list", "add"):
+        parser.add_argument("dir", type=Path, nargs="?", default=Path.cwd())
+    else:
+        # The id is found explicitly: an unquoted multi-word answer must not shift it into dir.
+        at = next((i for i, a in enumerate(argv) if re.fullmatch(r"Q-\d+", a)), None)
+        if at == 0:
+            argv.insert(0, ".")
+        parser.add_argument("dir", type=Path, metavar="[dir]")
+        parser.add_argument("id", metavar="Q-n")
+        parser.add_argument("words", nargs="+")
     if action == "add":
         parser.add_argument("--by", required=True)
         parser.add_argument("--title", required=True)
         parser.add_argument("--context", default="")
         parser.add_argument("--option", action="append", default=[])
         parser.add_argument("--recommend")
-    else:
-        if action != "list":
-            parser.add_argument("id")
-            parser.add_argument("words")
-    if action in ("answer", "drop") and len(argv) == 2:
-        argv.insert(0, ".")  # dir is optional before the id
     args = parser.parse_args(argv)
+    if action in ("answer", "drop"):
+        from lonca_registry import in_lane
+        if in_lane():
+            parser.error("only the lead records the owner's answers")
+        if not re.fullmatch(r"Q-\d+", args.id):
+            parser.error(f"expected an id like Q-3, got {args.id!r}")
     p = subprocess.run([SRC / "bin/lonca-project", args.dir], capture_output=True, text=True)
     if p.returncode:
         parser.error(f"not in a Lonca project: {args.dir.resolve()}")
@@ -912,7 +943,7 @@ def questions(argv):
     ledger = plain(root / LEDGER)
     if action == "list":
         text = (read(ledger) or b"").decode()
-        shown = [b for b in blocks(text) if args.all or b[2][1].endswith("· Status: open")]
+        shown = [b for b in blocks(text) if args.all or status(b[2]) == "open"]
         print("\n\n".join("\n".join(lines).strip() for _, _, lines in shown) or "No open questions.")
         return
     if action == "add":
@@ -928,7 +959,15 @@ def questions(argv):
     ledger.parent.mkdir(mode=0o700, exist_ok=True)
     fd = os.open(ledger.parent, os.O_RDONLY)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        deadline = time.monotonic() + LOCK_TIMEOUT
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() > deadline:
+                    raise ValueError(f"{ledger} stayed locked for {LOCK_TIMEOUT} s by another lonca questions; try again")
+                time.sleep(0.1)
         text = (read(ledger) or f"# Questions for the owner: {name}\n\nKept by `lonca questions`; nothing is deleted.\n".encode()).decode()
         found = blocks(text)
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -937,37 +976,42 @@ def questions(argv):
             n = max((b[1] for b in found), default=0) + 1
             options = [f"{l}. {indented(o)}{' (recommended)' if l == args.recommend else ''}"
                        for l, o in zip(letters, args.option)] + ["X. Other (please specify)"]
-            block = [f"## Q-{n}. {flat(args.title)}", f"Asked: {now} by {flat(args.by)} · Status: open", ""]
+            block = [f"## Q-{n}. {flat(args.title)}", f"Asked: {now} by {flat(args.by)}{STATUS}open", ""]
             if args.context.strip():
-                block += [indented(args.context), ""]
+                block += ["  " + indented(args.context), ""]
             block += options + ["", "[Answer]:"]
             lines += [""] * (bool(lines) and lines[-1] != "") + block
         else:
-            match = re.fullmatch(r"Q-(\d+)", args.id)
-            hit = [b for b in found if match and b[1] == int(match.group(1))]
-            if not hit:
-                parser.error(f"no question {args.id} in {ledger}")
+            hit = [b for b in found if b[1] == int(args.id[2:])]
+            if len(hit) != 1:
+                parser.error(f"{args.id} appears {len(hit)} times in {ledger}")
             start, n, block = hit[0]
-            if not block[1].endswith("· Status: open"):
-                parser.error(f"Q-{n} is not open: {block[1]}")
-            status = "answered" if action == "answer" else "dropped"
+            if status(block) != "open":
+                parser.error(f"Q-{n} is not open: {status(block)}")
+            end = start + len(block)
             block = list(block)
-            block[1] = block[1].replace("· Status: open", f"· Status: {status}")
-            at = max(i for i, line in enumerate(block) if line.startswith("[Answer]:"))
-            while len(block) > at + 1 and not block[-1].strip():
+            new = "answered" if action == "answer" else "dropped"
+            i = asked(block)
+            if i is None:
+                block.insert(1, f"Asked: unknown{STATUS}{new}")
+            else:
+                block[i] = f"{block[i].rsplit(STATUS, 1)[0]}{STATUS}{new}"
+            while not block[-1].strip():
                 block.pop()
+            if not any(line.startswith("[Answer]:") for line in block):
+                block += ["", "[Answer]:"]
+            at = max(i for i, line in enumerate(block) if line.startswith("[Answer]:"))
+            words = " ".join(args.words)
             if action == "answer":
-                block[at] = f"[Answer]: {indented(args.words)}"
+                block[at] = f"[Answer]: {indented(words)}"
                 block.insert(at + 1, f"Answered: {now}")
             else:
-                block.insert(at + 1, f"Dropped: {now} · {indented(args.words)}")
-            end = start + len(hit[0][2])
+                block.insert(at + 1, f"Dropped: {now} · {indented(words)}")
             lines[start:end] = block + ([""] if end < len(lines) else [])
         atomic(ledger, ("\n".join(lines) + "\n").encode())
     finally:
         os.close(fd)
     print(f"Q-{n}")
-
 
 def main():
     if sys.argv[1:2] == ["questions"]:

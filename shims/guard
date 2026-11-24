@@ -11,6 +11,7 @@ case $name in
   pkill|killall) deny "stop only processes you started, by PID" ;;
   lonca)
     case ${1:-} in init|remove|migrate) deny "manage project protections from the lead or owner shell" ;; esac
+    case ${1:-}:${2:-} in questions:answer|questions:drop) deny "only the lead records the owner's answers" ;; esac
     exec "$L/bin/lonca" "$@" ;;
   gh)
     case $args in

@@ -217,8 +217,12 @@ p.write_text(json.dumps(data))
     assert lonca("questions", "add", other, "--by", "lead", "--title", "Kept?") == "Q-1"
     assert not (other / ".codex").exists() and not git(other, "status", "--porcelain")
     lonca("remove", other)
-    assert snapshot(other, files) == baseline[other]
-    assert "Kept?" in (other / ".lonca/questions.md").read_text()   # the owner's ledger survives remove
+    # The owner's ledger survives remove, and so does its exclusion: git add -A must not commit it.
+    kept, before = snapshot(other, files), dict(baseline[other])
+    exclude = before.pop(".git/info/exclude") or b""
+    assert kept.pop(".git/info/exclude") == exclude + b"\n" * (exclude[-1:] not in (b"", b"\n")) + b"/.lonca\n"
+    assert kept == before and "Kept?" in (other / ".lonca/questions.md").read_text()
+    assert not git(other, "status", "--porcelain")
     # Later edits in each personal format survive repair and uninstall.
     lonca("init", "--agents", "claude,codex", a)
     settings_path = a / AGENTS[1]

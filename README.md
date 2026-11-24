@@ -174,7 +174,7 @@ check steps that export `GIT_CONFIG_GLOBAL`. Run those in a plain shell or on CI
 
 Every decision a lead asks the owner stays in `<project root>/.lonca/questions.md` until it is answered, so
 "what is still open?" is read from the file, not from a session's memory. Init hides `.lonca/` from Git at a
-repository root (`.git/info/exclude`); `remove` keeps the file.
+repository root (`.git/info/exclude`); `remove` keeps the file and, while it exists, that exclusion.
 
 ```sh
 lonca questions                           # open questions of this project, oldest first (--all: every one)
@@ -183,7 +183,9 @@ lonca questions add --by lead --title "Who gets the leftover cent?" --context "1
 lonca questions answer Q-4 "A"            # the owner's words; drop Q-4 "<why>" retires it
 ```
 
-Ids count up per project and are never reused; answered and dropped questions keep their block.
+Ids count up per project and are never reused; answered and dropped questions keep their block. Only the lead
+records answers: lanes may add but not answer or drop. The file is the only copy: never `git clean -x` a project
+root without keeping `.lonca/`.
 
 - Claude Code installs `lonca@lonca` with local scope. Its agents, skills, hooks and MCP servers come
   from the local marketplace. Init also installs these protections at a non-Git project root for leads. Personal settings hold the deny rules and deja policy, and
