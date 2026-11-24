@@ -46,14 +46,16 @@ _leads = None
 
 
 def lead_of(rec):
-    """The lane's lead now: the recorded terminal while it is still a live lead, else the one live lead of the lane's
-    project (a lead restarted in a new terminal); the record is updated. None when there is no single answer."""
+    """The lane's lead now: the recorded terminal while it still runs an agent session (a lead, or the owner's session
+    that started the lane), else the one live lead of the lane's
+    project (a lead restarted in a new terminal); the record is updated. None when there is no single answer: the line
+    then waits for a lead instead of going to a terminal that may now run something else."""
     global _leads
     if _leads is None:
         here = os.path.dirname(os.path.realpath(__file__))
         r = subprocess.run([os.path.join(here, "leads"), "--json"], capture_output=True, text=True)
         try:
-            _leads = [l for l in json.loads(r.stdout) if l.get("role") == "lead"] if r.returncode == 0 else []
+            _leads = json.loads(r.stdout) if r.returncode == 0 else []
         except ValueError:
             _leads = []
     lead = rec.get("lead") or ""
@@ -63,9 +65,9 @@ def lead_of(rec):
     p = subprocess.run([os.path.join(here, "lonca-project"), rec.get("repo") or rec.get("worktree") or "/"],
                        capture_output=True, text=True)
     proj = p.stdout.split("\t")[0] if p.returncode == 0 else ""
-    now = [l["address"] for l in _leads if proj and l.get("project") == proj]
+    now = [l["address"] for l in _leads if proj and l.get("project") == proj and l.get("role") == "lead"]
     if len(now) != 1:
-        return lead or None   # none, or several leads for one project: keep the recorded one
+        return None   # no lead, or several for one project
     if not DRY:
         rec["lead"] = now[0]
     return now[0]
@@ -181,13 +183,12 @@ for rec_path in glob.glob(os.path.expanduser("~/.cache/ai-runs/**/*.lane.json"),
             idle = (now - newest_change(rec["worktree"])) / 60
             if idle >= IDLE_MIN and (now - rec.get("started", now)) / 60 >= IDLE_MIN:
                 why = f"{status or 'no status'}, nothing changed in its worktree for {int(idle)} min, no report"
-        if why and rec.get("notified") != why:
+        lead = lead_of(rec) if why and rec.get("notified") != why else None
+        if lead:
             msg = f"STALLED: {rec['name']} — {why}. Check: hc read {rec['name']} --lines 40; worktree {rec['worktree']}"
             print(msg)
             if not DRY:
-                lead = lead_of(rec)
-                if lead:
-                    hc("send", lead, msg)
+                hc("send", lead, msg)
                 os.makedirs(os.path.dirname(LOG), exist_ok=True)
                 with open(LOG, "a") as f:
                     f.write(time.strftime("%Y-%m-%d %H:%M ") + msg + "\n")
