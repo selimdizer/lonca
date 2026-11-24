@@ -90,10 +90,8 @@ fi
 fi
 
   # hc names are unique among live terminals: repo prefix + branch, then a short hash if it had to be cut
-# prefix: the project's name (from the repo, else from the lead's folder: a read lane may run in a temp copy)
-proj=$("$(dirname "$(realpath "$0")")/lonca-project" "$repo" 2>/dev/null || "$(dirname "$(realpath "$0")")/lonca-project" "$PWD" 2>/dev/null) || proj=
-proj=$(printf '%s' "$proj" | cut -f1)
-name=$(printf '%s-%s' "$(printf '%s' "${proj:-$(basename "$(realpath "$repo")")}" | cut -c1-8)" "$branch" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_-' '-')
+# prefix: the project's name (lonca-project above), not the folder: a read lane may run in a temp copy named src
+name=$(printf '%s-%s' "$(printf '%s' "${project%%	*}" | cut -c1-8)" "$branch" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_-' '-')
 [ ${#name} -gt 32 ] && name="$(printf '%s' "$name" | cut -c1-25)-$(printf '%s' "$rkey/$branch" | { sha1sum 2>/dev/null || shasum; } | cut -c1-6)"
 # its own temp folder, so a cleanup inside it can't reach another lane's files (ai-cleanup removes it once idle);
 # Claude's and Codex's own settings may pin TMPDIR for their tools, so they get it through their override flags too

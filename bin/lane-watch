@@ -67,8 +67,8 @@ def lead_of(rec):
     if any(l["address"] == lead and (not proj or l.get("project") == proj) for l in _leads):
         return lead   # still a session of this project (a tab reused for another project does not count)
     now = [l["address"] for l in _leads if proj and l.get("project") == proj and l.get("role") == "lead"]
-    if not now and any(l["address"] == lead for l in _leads):
-        return lead   # the project has no lead (e.g. a lane the owner's own session started): keep that live session
+    if not now and any(l["address"] == lead and l.get("project") == "-" for l in _leads):
+        return lead   # the project has no lead and the lane came from a session outside every project (setup work)
     if len(now) != 1:
         return None   # no lead, or several for one project
     if not DRY:
@@ -128,12 +128,15 @@ def close_if_empty(rec):
     """Close a finished lane that produced nothing; True when it is closed (or needs no closing)."""
     wt, name = rec.get("worktree", ""), rec["name"]
     if rec.get("base") == "-":          # read lane: no worktree; remove its finished terminal 10 min after the report
-        if time.time() - os.path.getmtime(rec["result"]) >= 600:
-            code, out = hc("get", name, "--json")
-            if code == 0 and out.strip() and json.loads(out).get("state") == "finished":
-                print(f"removed the finished terminal of read lane {name}")
-                if not DRY:
-                    hc("rm", name)
+        code, out = hc("get", name, "--json")
+        term = json.loads(out) if code == 0 and out.strip() else {}
+        if not term:
+            return True                  # already gone: closed
+        if term.get("state") != "finished" or time.time() - os.path.getmtime(rec["result"]) < 600:
+            return False                 # look again next run
+        print(f"removed the finished terminal of read lane {name}")
+        if not DRY:
+            hc("rm", name)
         return True
     if time.time() - os.path.getmtime(rec["result"]) < 600 or not os.path.isdir(wt):
         return not os.path.isdir(wt)
