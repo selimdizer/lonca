@@ -61,7 +61,8 @@ def merge_pr_unknown(home):
     (stubs / "sleep").write_text("#!/bin/sh\nexit 0\n")
     (stubs / "gh").write_text(r'''#!/bin/sh
 case "$*" in
-  "pr view 7 --json files,baseRefName") echo '{"files":[{"path":"README.md","additions":1,"deletions":0,"changeType":"MODIFIED"}],"baseRefName":"main"}' ;;
+  "pr view 7 --json baseRefName") echo '{"baseRefName":"main"}' ;;
+  "api --paginate repos/{owner}/{repo}/pulls/7/files --jq .[]") echo '{"filename":"README.md","additions":1,"deletions":0,"status":"modified"}' ;;
   "repo view --json nameWithOwner -q .nameWithOwner") echo owner/repo ;;
   "pr view 7 --json state,"*)
     n=$(( $(cat "$HOME/reads" 2>/dev/null || echo 0) + 1 )); echo $n > "$HOME/reads"
@@ -73,7 +74,11 @@ esac
     for f in stubs.iterdir():
         f.chmod(0o755)
     repo = home / "repo"
-    repo.mkdir()
+    git = lambda *a: subprocess.run(["git", *a], env=env, check=True, capture_output=True)
+    git("init", "-q", "-b", "main", repo)
+    git("-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "base")
+    git("clone", "-q", "--bare", repo, home / "origin.git")   # merge-tier reads the settings from a fetched origin/main
+    git("-C", repo, "remote", "add", "origin", home / "origin.git")
     (repo / ".lonca.toml").write_text('name = "fixture"\n')
     env["PATH"] = f"{stubs}:{env['PATH']}"
     for unknown, reads, why in ((2, 3, "checks not green"), (99, 6, "not mergeable: UNKNOWN")):

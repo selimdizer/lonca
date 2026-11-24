@@ -36,12 +36,13 @@ def need(ok, msg):
     if not ok:
         sys.exit(msg)
 
-v = last("verify", r"VERDICT: ");  need(v.startswith("VERDICT: PASS"), f"verify: {v}")
+# whole lines only: a copied template line ("VERDICT: PASS | NEEDS_WORK") is not a verdict
+v = last("verify", r"VERDICT: ");  need(v == "VERDICT: PASS", f"verify: {v}")
 has_perf = any(l.strip().startswith("PERF: ") for l in open(os.path.join(run, f"{lane}.verify.md")))
 if tier == "high" or (tier == "medium" and has_perf):
-    p = last("verify", r"PERF: ");  need(p.startswith("PERF: OK"), f"perf: {p}")
-r = last("review", r"VERDICT: ");  need(r.startswith("VERDICT: SHIP"), f"review: {r}")
+    p = last("verify", r"PERF: ");  need(p == "PERF: OK", f"perf: {p}")
+r = last("review", r"VERDICT: ");  need(r == "VERDICT: SHIP", f"review: {r}")
 s = last("security", r"SECURITY: ")
-need(s.startswith("SECURITY: CLEAN") or (s.startswith("SECURITY: FINDINGS") and not re.search(r"highest:\s*HIGH", s, re.I)),
+need(s == "SECURITY: CLEAN" or re.fullmatch(r"SECURITY: FINDINGS \(\d+\), highest: (LOW|MEDIUM)", s),
      f"security: {s}")
 print(f"evidence OK for {head[:12]} ({tier})")

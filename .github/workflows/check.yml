@@ -31,7 +31,7 @@ jobs:
         run: python3 .github/machine-load.py
       - name: Guard shim cases
         run: sh shims/check.sh
-      - name: Merge evidence (head pairing, stale head, HIGH finding, missing file)
+      - name: Merge evidence (head pairing, stale head, HIGH finding, template lines, missing file)
         run: |
           T=$(mktemp -d); A=aaaaaaa1111; B=bbbbbbb2222
           ev() { python3 bin/merge-evidence "$T" x "$1" >/dev/null 2>&1; }
@@ -44,6 +44,19 @@ jobs:
           if ev $A; then echo "stale head accepted"; exit 1; fi
           printf 'SECURITY: FINDINGS (1), highest: HIGH\nHEAD: %s\n' $B > $T/x.security.md
           if ev $B; then echo "HIGH finding accepted"; exit 1; fi
+          for bad in 'SECURITY: CLEAN or FINDINGS' 'SECURITY: FINDINGS (n), highest: LOW|MEDIUM|HIGH'; do
+            printf '%s\nHEAD: %s\n' "$bad" $B > $T/x.security.md
+            if ev $B; then echo "template accepted: $bad"; exit 1; fi
+          done
+          printf 'SECURITY: FINDINGS (2), highest: MEDIUM\nHEAD: %s\n' $B > $T/x.security.md
+          ev $B || { echo "MEDIUM finding refused"; exit 1; }
+          printf 'VERDICT: PASS | NEEDS_WORK\nHEAD: %s\nPERF: OK\nHEAD: %s\n' $B $B > $T/x.verify.md
+          if ev $B; then echo "verify template accepted"; exit 1; fi
+          printf 'VERDICT: PASS\nHEAD: %s\nPERF: OK | REGRESSION | RISK\nHEAD: %s\n' $B $B > $T/x.verify.md
+          if ev $B; then echo "perf template accepted"; exit 1; fi
+          printf 'VERDICT: PASS\nHEAD: %s\nPERF: OK\nHEAD: %s\n' $B $B > $T/x.verify.md
+          printf 'VERDICT: SHIP | NEEDS_WORK | MAJOR_RETHINK\nHEAD: %s\n' $B > $T/x.review.md
+          if ev $B; then echo "review template accepted"; exit 1; fi
           rm $T/x.security.md
           if ev $B; then echo "missing file accepted"; exit 1; fi
       - name: Risk tiers
@@ -57,11 +70,17 @@ jobs:
                    ([F("SECURITY.md")], "medium"), ([F("src/ui/Button.tsx")], "medium"), ([F("README.md", 150)], "medium"),
                    ([F("src/ui/Block.tsx")], "medium"), ([F("src/auth/login.ts")], "high"), ([F("package.json")], "high"),
                    ([F("yarn.lock")], "high"), ([F(".github/workflows/ci.yml")], "high"), ([F("db/migrations/1.sql")], "high"),
-                   ([F("docs/a.md", 1, "RENAMED")], "high"), ([F("AGENTS.md")], "high"), ([], "medium")]
+                   ([F("docs/a.md", 1, "RENAMED")], "high"), ([F("AGENTS.md")], "high"), ([], "medium"),
+                   ([F("bin/merge-pr")], "high"), ([F("shims/guard")], "high"), ([F("git-hooks/pre-push")], "high"),
+                   ([F("install.sh")], "high"), ([F(".mcp.json")], "high"), ([F("app/.claude/settings.json")], "high"),
+                   ([F("Makefile")], "high"), ([F("agents/lead.md")], "high"), ([F("routing.md")], "high"),
+                   ([F("tests/conftest.py")], "medium"), ([F("src/hooks/useCart.ts")], "medium")]
           bad = [(f, w, m.tier_of(f, {})) for f, w in cases if m.tier_of(f, {})[0] != w]
           assert not bad, bad
           assert m.tier_of([F("src/app.py")], {"high_paths": ["src/app.py"]})[0] == "high"
           PY
+      - name: merge-pr gate (lane refused, code per project batch and base, fetched settings, crash-safe lock, night, worktree at the merged head, paginated files)
+        run: python3 .github/merge-gate.py
       - name: deja scope (this project's sessions only, checked with deja's own match rule)
         run: |
           H=$(mktemp -d)
