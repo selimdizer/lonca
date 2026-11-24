@@ -5,6 +5,7 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Agents write to the owner in the language memory `owner/language` names, else that of the owner's own last message, also after task notifications and lane messages (they are not the owner), and don't repeat an unchanged message.
 - Containers carry their lane: lanes get `LONCA_LANE=<lane name>`, and the `docker` shim adds `--label lonca.lane=<lane>` to `docker run`/`create` and sets `COMPOSE_PROJECT_NAME=lonca-lane-<lane>` for `docker compose` when the caller set none. When a lane closes (`ai-cleanup` once its worktree is gone after a merged or closed PR, `lane-watch` when it closes an empty lane) its containers (label `lonca.lane=<lane>` or compose project `lonca-lane-<lane>`, nothing else) and that compose project's networks are removed and logged; named volumes stay and are named in the log.
 - `~/lonca/bin/test-slot [-n N] -- <command>`: heavy test suites wait for one of N machine-wide slots (`test_slots` in `~/.config/lonca/config.toml`, default 2) instead of running all at once (a nested call inside a held slot runs at once); it says once who holds the slots and passes the exit code through. The orchestrate skill, implementer and verifier send live/integration tests, `-race`, perf runs and full gates through it.
 - `merge-pr` reads the PR again (up to 6 times, 5 s apart) while GitHub still reports `mergeable: UNKNOWN` after a push, instead of refusing it at once.
