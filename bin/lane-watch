@@ -48,21 +48,23 @@ def ready(rec):
     fields = (repo, branch, lead, rec.get("name", ""), rec.get("result", ""))
     if not (repo and branch and lead and os.path.isdir(repo)) or any(c < " " for f in fields for c in f):
         return  # a control character would put extra lines into the lead's input
-    r = subprocess.run(["gh", "pr", "list", "--head", branch, "--state", "open", "--json", "number,headRefOid"],
-                       cwd=repo, capture_output=True, text=True)
-    try:
-        pr = (json.loads(r.stdout) or [{}])[0]
-    except (ValueError, IndexError):
+    r = subprocess.run(["gh", "pr", "list", "--head", branch, "--state", "open",
+                        "--json", "number,headRefOid,isCrossRepository"], cwd=repo, capture_output=True, text=True)
+    try:  # the lane's own PR, not a fork's PR that happens to use the same branch name
+        pr = next((p for p in json.loads(r.stdout) if not p.get("isCrossRepository")), {})
+    except (ValueError, TypeError, AttributeError):
         return
     head = pr.get("headRefOid", "")
     if not head or rec.get("ready_head") == head:
         return
     run_dir, base = os.path.split(rec["result"])
     lane = base[:-len(".result.md")] if base.endswith(".result.md") else os.path.splitext(base)[0]
-    try:  # cheap first: no verify line for this head yet means not ready (keeps merge-pr's refusal log quiet)
-        if f"HEAD: {head}" not in open(os.path.join(run_dir, lane + ".verify.md")).read():
-            return
+    try:  # cheap first: no verify line for this head yet means not ready (same prefix rule as merge-evidence)
+        judged = [l.split(":", 1)[1].strip() for l in map(str.strip, open(os.path.join(run_dir, lane + ".verify.md")))
+                  if l.startswith("HEAD:")]
     except OSError:
+        return
+    if not any(len(j) >= 7 and head.startswith(j) for j in judged):
         return
     here = os.path.dirname(os.path.realpath(__file__))
     if subprocess.run([os.path.join(here, "merge-pr"), "--dry-run", repo, str(pr["number"]), run_dir, lane],
@@ -73,7 +75,8 @@ def ready(rec):
            f"Run: {shlex.join(['merge-pr', repo, str(pr['number']), run_dir, lane])}")
     print(msg)
     if not DRY:
-        hc("send", lead, msg)
+        if hc("send", lead, msg)[0] != 0:
+            return  # not delivered: try again next run
         os.makedirs(os.path.dirname(LOG), exist_ok=True)
         with open(LOG, "a") as f:
             f.write(time.strftime("%Y-%m-%d %H:%M ") + msg + "\n")
