@@ -5,6 +5,7 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- `lane-watch` sends the lead one `READY: <repo>#<pr> head <sha>` per head when a lane's PR passes `merge-pr --dry-run`, so PRs whose checks finished in files no longer wait unnoticed; the lead's orchestrate skill says to run merge-pr on it.
 - Each lane runs in its own systemd scope capped at 16 GB memory and 4 GB swap (Linux with systemd 254 or later), so running out of memory kills that lane instead of every terminal in Herdr's unit. Where no such scope can be made (macOS, older systemd, no user manager) the lane starts uncapped, as before.
 - `lonca init [--agents claude,codex] <dir>` registers a marked project and installs personal repo
   settings and local Git hooks. `lonca status` reports coverage and conflicts. `lonca remove <dir>`

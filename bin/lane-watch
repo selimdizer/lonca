@@ -7,6 +7,8 @@ The lead gets one `STALLED: <lane> — <why>` per lane and reason (hc send); no 
 A lane that wrote its report 10+ min ago, is not working, and left nothing behind (no commits on its branch, no changed
 files: a review, council or test lane) is closed, and its worktree and never-pushed branch are removed. Lanes with
 commits stay until their PR is merged (ai-cleanup closes those).
+A lane with a report and an open PR whose checks are complete for its current head (merge-pr --dry-run passes: CI,
+evidence for the tier, attribution) gets one `READY: <repo>#<pr> head <sha> — run merge-pr` per head to its lead.
 It also refreshes every project's deja scope (deja-scope --refresh).
 """
 import glob, json, os, subprocess, sys, time
@@ -38,6 +40,43 @@ def newest_change(path):
 
 def git(wt, *a):
     return subprocess.run(["git", "-C", wt, *a], capture_output=True, text=True)
+
+
+def ready(rec):
+    """Tell the lead once per head when the lane's PR passes merge-pr --dry-run (checkers write files, nobody else looks)."""
+    repo, branch, lead = rec.get("repo"), rec.get("branch"), rec.get("lead")
+    if not (repo and branch and lead and os.path.isdir(repo)):
+        return
+    r = subprocess.run(["gh", "pr", "view", branch, "--json", "number,state,headRefOid"], cwd=repo,
+                       capture_output=True, text=True)
+    try:
+        pr = json.loads(r.stdout)
+    except ValueError:
+        return
+    head = pr.get("headRefOid", "")
+    if pr.get("state") != "OPEN" or not head or rec.get("ready_head") == head:
+        return
+    run_dir, base = os.path.split(rec["result"])
+    lane = base[:-len(".result.md")] if base.endswith(".result.md") else os.path.splitext(base)[0]
+    try:  # cheap first: no verify line for this head yet means not ready (keeps merge-pr's refusal log quiet)
+        if f"HEAD: {head}" not in open(os.path.join(run_dir, lane + ".verify.md")).read():
+            return
+    except OSError:
+        return
+    here = os.path.dirname(os.path.realpath(__file__))
+    if subprocess.run([os.path.join(here, "merge-pr"), "--dry-run", repo, str(pr["number"]), run_dir, lane],
+                      capture_output=True).returncode != 0:
+        return
+    name = os.path.basename(repo)
+    msg = (f"READY: {name}#{pr['number']} head {head[:9]} — checks complete for this head (lane {rec['name']}). "
+           f"Run: merge-pr {repo} {pr['number']} {run_dir} {lane}")
+    print(msg)
+    if not DRY:
+        hc("send", lead, msg)
+        os.makedirs(os.path.dirname(LOG), exist_ok=True)
+        with open(LOG, "a") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M ") + msg + "\n")
+        rec["ready_head"] = head
 
 
 def close_if_empty(rec):
@@ -83,8 +122,11 @@ for rec_path in glob.glob(os.path.expanduser("~/.cache/ai-runs/**/*.lane.json"),
         continue
     if os.path.exists(rec["result"]) and os.path.getsize(rec["result"]) > 0:
         rec["done"] = True
-        if close_if_empty(rec) and not DRY:
-            rec["closed"] = True
+        if close_if_empty(rec):
+            if not DRY:
+                rec["closed"] = True
+        else:
+            ready(rec)
     elif rec.get("done"):
         continue
     else:
