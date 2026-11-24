@@ -898,7 +898,7 @@ def asked(block):
     return next((i for i, line in enumerate(block) if line.startswith("Asked: ")), None)
 
 
-def status(block):
+def state(block):
     # A block missing its Asked line or status still shows as open rather than vanishing.
     i = asked(block)
     return block[i].rsplit(STATUS, 1)[1].strip() if i is not None and STATUS in block[i] else "open"
@@ -943,7 +943,7 @@ def questions(argv):
     ledger = plain(root / LEDGER)
     if action == "list":
         text = (read(ledger) or b"").decode()
-        shown = [b for b in blocks(text) if args.all or status(b[2]) == "open"]
+        shown = [b for b in blocks(text) if args.all or state(b[2]) == "open"]
         print("\n\n".join("\n".join(lines).strip() for _, _, lines in shown) or "No open questions.")
         return
     if action == "add":
@@ -986,8 +986,8 @@ def questions(argv):
             if len(hit) != 1:
                 parser.error(f"{args.id} appears {len(hit)} times in {ledger}")
             start, n, block = hit[0]
-            if status(block) != "open":
-                parser.error(f"Q-{n} is not open: {status(block)}")
+            if state(block) != "open":
+                parser.error(f"Q-{n} is not open: {state(block)}")
             end = start + len(block)
             block = list(block)
             new = "answered" if action == "answer" else "dropped"
