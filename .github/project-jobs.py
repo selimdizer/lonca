@@ -157,12 +157,13 @@ with patch("shutil.rmtree", remove):
     gh.write_text("#!/bin/sh\necho '" + json.dumps(prs) + "'\n")
     # docker ps rows: ID, name, lonca.lane label, compose project label
     (stubs / "docker").write_text("#!/bin/sh\n" + 'case "$1" in ps) printf "1\\tc-lane\\tlane-demo\\t\\n'
-                                  '2\\tc-other\\tlane-other\\t\\n3\\tc-compose\\t\\tlane-demo\\n4\\tc-mine\\t\\t\\n" ;; esac\n')
+                                  '2\\tc-other\\tlane-other\\t\\n3\\tc-compose\\t\\tlonca-lane-lane-demo\\n4\\tc-mine\\t\\t\\n'
+                                  '5\\tc-owners\\t\\tlane-demo\\n" ;; esac\n')
     (stubs / "docker").chmod(0o755)
     dry = run(BIN / "ai-cleanup", "--dry-run")
     assert str(wt) in dry and str(personal) not in dry
     gone = [line.split()[3] for line in dry.splitlines() if line.startswith("would remove container")]
-    assert gone == ["c-lane", "c-compose"], dry   # only the closing lane's, by either label
+    assert gone == ["c-lane", "c-compose"], dry   # only the closing lane's: its label or its reserved compose project
 
     run("git", "-C", root, "remote", "add", "origin", "https://example.invalid/own/repo.git")
     tasks = [{"key": "test#" + str(i), "title": name, "status": "doing",

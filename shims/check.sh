@@ -83,7 +83,7 @@ d "- run --label lonca.lane=ml-x --rm -e A=1 busybox true" env LONCA_LANE=ml-x d
 d "- --context c container create --label lonca.lane=ml-x busybox" env LONCA_LANE=ml-x docker --context c container create busybox
 d "- -H unix:///x run --label lonca.lane=ml-x busybox run" env LONCA_LANE=ml-x docker -H unix:///x run busybox run
 d "- ps -a --filter name=run" env LONCA_LANE=ml-x docker ps -a --filter name=run
-d "ml-x compose up -d" env LONCA_LANE=ml-x docker compose up -d
+d "lonca-lane-ml-x compose up -d" env LONCA_LANE=ml-x docker compose up -d
 d "mine compose up -d" env LONCA_LANE=ml-x COMPOSE_PROJECT_NAME=mine docker compose up -d
 d "- run busybox" env LONCA_LANE=1 docker run busybox
 d "- run busybox" env -u LONCA_LANE docker run busybox

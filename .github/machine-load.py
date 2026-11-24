@@ -33,6 +33,23 @@ def test_slot(home):
             for _ in range(2)]
     assert all(p.wait(30) == 0 and not p.stderr.read() for p in both)
     assert subprocess.run([SRC / "bin/test-slot", "-n", "0", "--", "true"], env=env, capture_output=True).returncode
+    # a test-slot inside a held slot runs at once (N=1 would wait for itself forever)
+    nested = subprocess.run([SRC / "bin/test-slot", "--", SRC / "bin/test-slot", "--", "sh", "-c", "exit 5"],
+                            env=env, capture_output=True, text=True, timeout=10)
+    assert nested.returncode == 5 and not nested.stderr, nested.stderr
+    # a slot file that is a symlink is refused, its target untouched
+    slots = home / ".local/state/lonca/test-slots"
+    (slots / "slot-0").unlink()
+    victim = home / "victim"
+    victim.write_text("keep")
+    (slots / "slot-0").symlink_to(victim)
+    r = subprocess.run([SRC / "bin/test-slot", "--", "true"], env=env, capture_output=True, text=True, timeout=10)
+    assert r.returncode and "symlinks are refused" in r.stderr and victim.read_text() == "keep", r.stderr
+    # every instruction names the path that exists in a lane (~/lonca/bin is not on a lane's PATH)
+    for doc in ("agents/implementer.md", "agents/verifier.md", "skills/orchestrate/SKILL.md"):
+        text = (SRC / doc).read_text()
+        assert "test-slot" in text and text.count("test-slot") == text.count("~/lonca/bin/test-slot"), doc
+    assert os.access(SRC / "bin/test-slot", os.X_OK)
 
 
 def merge_pr_unknown(home):
@@ -83,7 +100,10 @@ def lane_containers(home):
     env = fixture_env(home)
     run = lambda lane, *a: subprocess.run([shim, *a], env=dict(env, LONCA_LANE=lane), capture_output=True, text=True, cwd=home)
     names = [closed + "-c", other + "-c", tag + "-free"]
-    volume = closed + "_data"
+    project = "lonca-lane-" + closed   # the reserved compose project the shim gives a lane
+    volume = project + "_data"
+    owners = home / "owners"   # someone's own stack whose project name equals the lane's name: never touched
+    owners.mkdir()
     try:
         assert not run(closed, "run", "-d", "--name", names[0], "busybox", "sleep", "300").returncode
         assert not run(other, "run", "-d", "--name", names[1], "busybox", "sleep", "300").returncode
@@ -92,6 +112,8 @@ def lane_containers(home):
                                            "    volumes: [data:/data]\nvolumes:\n  data: {}\n")
         up = run(closed, "compose", "up", "-d")
         assert not up.returncode, up.stderr
+        (owners / "compose.yaml").write_text("services:\n  s:\n    image: busybox\n    command: sleep 300\n")
+        assert not docker("compose", "-p", closed, "up", "-d", cwd=owners).returncode
         sys.path.insert(0, str(SRC / "bin"))
         from lonca_registry import remove_lane_containers
         assert remove_lane_containers({closed}, dry=True) and docker("inspect", names[0]).returncode == 0
@@ -99,14 +121,15 @@ def lane_containers(home):
         assert len(log) == 3 and all("closed lane " + closed in line for line in log), log
         assert any("kept volumes: " + volume in line for line in log), log
         left = docker("ps", "-a", "--format", "{{.Names}}").stdout.split()
-        assert names[0] not in left and not any(n.startswith(closed + "-s-") for n in left), left
-        assert names[1] in left and names[2] in left
+        assert names[0] not in left and project + "-s-1" not in left, left
+        assert names[1] in left and names[2] in left and closed + "-s-1" in left, left
         assert docker("volume", "inspect", volume).returncode == 0, "named volumes stay"
-        assert docker("network", "inspect", closed + "_default").returncode, "compose network removed"
+        assert docker("network", "inspect", project + "_default").returncode, "the lane's compose network removed"
+        assert docker("network", "inspect", closed + "_default").returncode == 0, "the owner's network stays"
     finally:
-        docker("rm", "-f", *names, closed + "-s-1")
+        docker("rm", "-f", *names, project + "-s-1", closed + "-s-1")
         docker("volume", "rm", volume)
-        docker("network", "rm", closed + "_default")
+        docker("network", "rm", project + "_default", closed + "_default")
 
 
 base = Path(tempfile.mkdtemp())

@@ -43,7 +43,7 @@ Why:             the user-visible reason, Closes #N if there is an issue
 Done looks like: checkable bullet points
 Paths:           files/dirs this lane may touch
 Never:           what must not happen (scope, APIs, data)
-Quality bar:     tests required, standards, the `verify` skill if present; heavy suites (live/integration, `-race`, perf, full gates) via `test-slot -- <cmd>`
+Quality bar:     tests required, standards, the `verify` skill if present; heavy suites (live/integration, `-race`, perf, full gates) via `~/lonca/bin/test-slot -- <command>`
 Assumptions:     the open choices you settled yourself (step 1), one line each
 Worktree/branch: <path> / <branch>
 Base:            <branch the PR targets> (omit for the remote's default branch)

@@ -22,7 +22,7 @@ case $name in
           :-*) ;;
           :container) sub=container ;;
           :run|:create|container:run|container:create) set -- "$@" --label "lonca.lane=$LONCA_LANE"; done=1 ;;
-          :compose) export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$LONCA_LANE}"; done=1 ;;
+          :compose) export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-lonca-lane-$LONCA_LANE}"; done=1 ;;   # reserved: cleanup takes only these
           *) done=1 ;;
         esac
       done ;;

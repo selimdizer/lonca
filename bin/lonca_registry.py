@@ -149,8 +149,8 @@ def lane_worktree(rec):
 
 
 def remove_lane_containers(closed, dry=False):
-    """Remove the containers (and compose networks) of closed lanes: label lonca.lane=<lane> (the docker shim) or
-    compose project <lane>. Nothing without such a label is touched; volumes stay. Returns the lines to log."""
+    """Remove the containers (and compose networks) of closed lanes: label lonca.lane=<lane> or the reserved compose
+    project lonca-lane-<lane> (both set by the docker shim). Nothing else is touched; volumes stay. Returns log lines."""
     closed = {n for n in closed if n}
     if not closed:
         return []
@@ -164,8 +164,8 @@ def remove_lane_containers(closed, dry=False):
     out = []
     for row in ps.stdout.splitlines():
         cid, cname, label, project = (row.split("\t") + ["", "", ""])[:4]
-        lane = label if label in closed else project if project in closed else None
-        if not lane:
+        lane = label if label in closed else project[len("lonca-lane-"):] if project.startswith("lonca-lane-") else None
+        if lane not in closed:
             continue
         inspect = subprocess.run(["docker", "inspect", "-f",
                                   '{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}} {{end}}{{end}}', cid],
@@ -181,7 +181,7 @@ def remove_lane_containers(closed, dry=False):
     # compose networks hold no data, but each takes one of docker's few address pools
     for lane in sorted(closed):
         ls = subprocess.run(["docker", "network", "ls", "--format", "{{.Name}}",
-                             "--filter", "label=com.docker.compose.project=" + lane], capture_output=True, text=True)
+                             "--filter", "label=com.docker.compose.project=lonca-lane-" + lane], capture_output=True, text=True)
         for net in ls.stdout.split():
             if dry:
                 out.append(f"would remove network {net} of closed lane {lane}")
