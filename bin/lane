@@ -3,6 +3,8 @@
 #   lane <repo-dir> <branch> <agent> <brief-file> <result-file> [base-branch]
 #   lane --read <repo-dir> <name> omp:<provider/model> <brief-file> <result-file>
 #     read-only lane: no worktree, runs in <repo-dir> with read/grep/glob (omp still loads its MCP servers); its answer is the report
+#   lane --browser <repo-dir> <branch> claude:<role> <brief-file> <result-file> [base-branch]
+#     a Claude lane with a browser: chrome-devtools MCP from ~/lonca-local/mcp/chrome-devtools.json (Codex/omp: not needed now)
 #   agent: claude:<role> (implementer|reviewer|verifier|security-auditor) | codex:<model>[:<effort>] (default xhigh) | omp:<provider/model>
 #          | opencode:<provider/model> | copilot:<model> | agy:<model> (Antigravity) | pi:<provider/model> | grok:<model>
 #          (Crush and Amp take no starting prompt: not lane agents)
@@ -13,12 +15,16 @@ set -eu
 # Drop the calling agent's session variables: a lane is its own session (else Claude skips its transcript),
 # and an hc core started from here must not carry them (they include the caller's messaging token).
 for v in $(env | cut -d= -f1 | grep -E '^(CLAUDECODE|CLAUDE_[A-Z_]*|CODEX_COMPANION_[A-Z_]*)$'); do unset "$v"; done
-# Agents run with full permissions; ~/lonca/shims (gh, git, pkill, killall guards) go first in PATH.
+# Agents run with full permissions; ~/lonca/shims (gh, git, docker, pkill, killall guards) go first in PATH.
 export PATH="$HOME/lonca/shims:$HOME/lonca-local/shims:$PATH"   # Lonca's guards, then your own shims
-ro=0; [ "${1:-}" = --read ] && { ro=1; shift; }
+ro=0 browser=0; case ${1:-} in --read) ro=1; shift ;; --browser) browser=1; shift ;; esac
 case ${1:-} in -h|--help|"") sed -n '2,/^set -eu/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;; esac
-[ $# -eq 5 ] || [ $# -eq 6 ] || { echo "usage: lane [--read] <repo-dir> <branch|name> <agent> <brief-file> <result-file> [base-branch]   (lane --help)" >&2; exit 2; }
+[ $# -eq 5 ] || [ $# -eq 6 ] || { echo "usage: lane [--read|--browser] <repo-dir> <branch|name> <agent> <brief-file> <result-file> [base-branch]   (lane --help)" >&2; exit 2; }
 repo=$1 branch=$2 agent=$3 brief=$(realpath "$4") result=$5 base=${6:-}
+if [ $browser = 1 ]; then
+  case $agent in claude:*) ;; *) echo "lane --browser: Claude lanes only (Codex/omp: not needed now)" >&2; exit 2 ;; esac
+  [ -f "$HOME/lonca-local/mcp/chrome-devtools.json" ] || { echo "lane --browser: no $HOME/lonca-local/mcp/chrome-devtools.json" >&2; exit 1; }
+fi
 repo=$(realpath "$repo")
 # Read lanes only read files (also temp copies outside Git): no Git guards to check.
 if [ $ro = 0 ] && ! "$HOME/lonca/bin/lonca" status --lane --agent "${agent%%:*}" "$repo" >/dev/null; then
@@ -50,7 +56,8 @@ override() {
 }
 case $agent in
   claude:*) role=$("$HOME/lonca/bin/lonca-project" --claude-agent "${agent#claude:}" "$repo")
-            cmd="claude --agent $role --permission-mode bypassPermissions" ;;
+            cmd="claude --agent $role --permission-mode bypassPermissions"
+            [ $browser = 1 ] && cmd="$cmd"' --mcp-config "$HOME/lonca-local/mcp/chrome-devtools.json"' ;;
   # codex: full permissions; its own rules don't apply in that mode, the shims below do
   # interactive (not exec) so the Herdr app shows its status; --no-daemon is required under hc
   # --disable apps: the ChatGPT GitHub connector may act as a different GitHub account; lanes use gh
@@ -167,7 +174,7 @@ PY
   # only this lane is killed, not every terminal in Herdr's unit (lonca#336). $c splits into its words on purpose.
   # shellcheck disable=SC2016
   hc run --bg --outlive-parent --name "$name" --cwd "$wt" "$@" \
-    -- env ${OPENCODE_CONFIG_DIR:+"OPENCODE_CONFIG_DIR=$OPENCODE_CONFIG_DIR"} LONCA_LANE=1 \
+    -- env ${OPENCODE_CONFIG_DIR:+"OPENCODE_CONFIG_DIR=$OPENCODE_CONFIG_DIR"} "LONCA_LANE=$name" \
        GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath "GIT_CONFIG_VALUE_0=$HOME/lonca/git-hooks" \
        "TMPDIR=$ltmp" "DEJA_POLICY_FILE=$DEJA_POLICY_FILE" ${XDG_RUNTIME_DIR:+"XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"} sh -c 'export PATH="$HOME/lonca/shims:$HOME/lonca-local/shims:$PATH"
       c="systemd-run --user --scope --quiet --expand-environment=no -p MemoryMax=16G -p MemorySwapMax=4G -p OOMPolicy=continue --"; $c true 2>/dev/null || c=

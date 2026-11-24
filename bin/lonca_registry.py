@@ -146,3 +146,45 @@ def lane_worktree(rec):
     git = subprocess.run(["git", "-C", wt, "rev-parse", "--path-format=absolute", "--git-common-dir",
                           "--symbolic-full-name", "HEAD"], capture_output=True, text=True)
     return git.returncode == 0 and git.stdout.splitlines() == [str(repo / ".git"), "refs/heads/" + branch]
+
+
+def remove_lane_containers(closed, dry=False):
+    """Remove the containers (and compose networks) of closed lanes: label lonca.lane=<lane> or the reserved compose
+    project lonca-lane-<lane> (both set by the docker shim). Nothing else is touched; volumes stay. Returns log lines."""
+    closed = {n for n in closed if n}
+    if not closed:
+        return []
+    fmt = '{{.ID}}\t{{.Names}}\t{{.Label "lonca.lane"}}\t{{.Label "com.docker.compose.project"}}'
+    try:
+        ps = subprocess.run(["docker", "ps", "-a", "--no-trunc", "--format", fmt], capture_output=True, text=True)
+    except FileNotFoundError:
+        return []
+    if ps.returncode:
+        return []
+    out = []
+    for row in ps.stdout.splitlines():
+        cid, cname, label, project = (row.split("\t") + ["", "", ""])[:4]
+        lane = label if label in closed else project[len("lonca-lane-"):] if project.startswith("lonca-lane-") else None
+        if lane not in closed:
+            continue
+        inspect = subprocess.run(["docker", "inspect", "-f",
+                                  '{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}} {{end}}{{end}}', cid],
+                                 capture_output=True, text=True)
+        volumes = inspect.stdout.split()
+        kept = f"; kept volumes: {' '.join(volumes)}" if volumes else ""
+        if dry:
+            out.append(f"would remove container {cname} of closed lane {lane}{kept}")
+        elif subprocess.run(["docker", "rm", "-f", cid], capture_output=True).returncode == 0:
+            out.append(f"removed container {cname} of closed lane {lane}{kept}")
+        else:
+            out.append(f"could not remove container {cname} of closed lane {lane}")
+    # compose networks hold no data, but each takes one of docker's few address pools
+    for lane in sorted(closed):
+        ls = subprocess.run(["docker", "network", "ls", "--format", "{{.Name}}",
+                             "--filter", "label=com.docker.compose.project=lonca-lane-" + lane], capture_output=True, text=True)
+        for net in ls.stdout.split():
+            if dry:
+                out.append(f"would remove network {net} of closed lane {lane}")
+            elif subprocess.run(["docker", "network", "rm", net], capture_output=True).returncode == 0:
+                out.append(f"removed network {net} of closed lane {lane}")
+    return out

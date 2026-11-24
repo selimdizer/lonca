@@ -3,12 +3,13 @@
 S=$(dirname "$(readlink -f "$0")"); fail=0
 # A regression should fail the test without forwarding a mutating test case to a real CLI.
 stubs=$(mktemp -d)
-trap 'rm -f "$stubs/git" "$stubs/gh" "$stubs/pkill" && rmdir "$stubs"' EXIT
+trap 'rm -f "$stubs/git" "$stubs/gh" "$stubs/pkill" "$stubs/docker" && rmdir "$stubs"' EXIT
 for n in git gh pkill; do
   echo '#!/bin/sh' > "$stubs/$n"
   echo 'exit 0' >> "$stubs/$n"
   chmod +x "$stubs/$n"
 done
+printf '#!/bin/sh\necho "${COMPOSE_PROJECT_NAME:--}" "$@"\n' > "$stubs/docker"; chmod +x "$stubs/docker"
 t() { want=$1; shift; PATH="$S:$stubs:$PATH" "$@" >/dev/null 2>&1; rc=$?; got=ok; [ $rc -eq 126 ] && got=blocked; [ "$got" = "$want" ] || { echo "FAIL: $* -> $got (want $want)"; fail=1; }; }
 export LONCA_LANE=1 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="$HOME/lonca/git-hooks"
 t blocked env GIT_CONFIG_COUNT=0 git status
@@ -76,4 +77,15 @@ t blocked lonca remove fixture
 t blocked lonca questions answer Q-1 fixture
 t blocked lonca questions drop Q-1 fixture
 t blocked pkill -f nothing-xyz
+# docker in a lane: run/create get the lane's label, compose gets the lane as its project; outside lanes nothing changes
+d() { want=$1; shift; got=$(PATH="$S:$stubs:$PATH" "$@" 2>&1); [ "$got" = "$want" ] || { echo "FAIL: $* -> '$got' (want '$want')"; fail=1; }; }
+d "- run --label lonca.lane=ml-x --rm -e A=1 busybox true" env LONCA_LANE=ml-x docker run --rm -e A=1 busybox true
+d "- --context c container create --label lonca.lane=ml-x busybox" env LONCA_LANE=ml-x docker --context c container create busybox
+d "- -H unix:///x run --label lonca.lane=ml-x busybox run" env LONCA_LANE=ml-x docker -H unix:///x run busybox run
+d "- ps -a --filter name=run" env LONCA_LANE=ml-x docker ps -a --filter name=run
+d "lonca-lane-ml-x compose up -d" env LONCA_LANE=ml-x docker compose up -d
+d "mine compose up -d" env LONCA_LANE=ml-x COMPOSE_PROJECT_NAME=mine docker compose up -d
+d "- run busybox" env LONCA_LANE=1 docker run busybox
+d "- run busybox" env -u LONCA_LANE docker run busybox
+d "- compose up" env -u LONCA_LANE docker compose up
 [ $fail -eq 0 ] && echo "all shim cases pass"; exit $fail
