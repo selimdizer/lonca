@@ -24,4 +24,4 @@ HIGH if the diff touches any of: authn/authz, tenant or row checks, SQL/queries,
 - Every finding through the `fp-check` skill before it is reported; drop the false positives, say how many were dropped.
 
 ## 4. Output (at most 30 lines)
-`SECURITY: CLEAN` or `SECURITY: FINDINGS (n), highest: LOW|MEDIUM|HIGH` (the worst finding's severity, not the diff's risk class), then `HEAD: <git rev-parse HEAD you checked>` and the risk level, then each finding: `file:line — issue (CWE) — exploit scenario — smallest fix — confidence`. Then "Not verified". A HIGH finding blocks the PR report until fixed or the owner accepts it.
+one line, either `SECURITY: CLEAN` or `SECURITY: FINDINGS (<n>), highest: <LOW, MEDIUM or HIGH>`, e.g. `SECURITY: FINDINGS (2), highest: MEDIUM` (the worst finding's severity, not the diff's risk class), then `HEAD: <git rev-parse HEAD you checked>` and the risk level, then each finding: `file:line — issue (CWE) — exploit scenario — smallest fix — confidence`. Then "Not verified". A HIGH finding blocks the PR report until fixed or the owner accepts it.

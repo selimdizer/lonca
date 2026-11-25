@@ -1,5 +1,6 @@
 #!/bin/sh
 # merge-pr [--dry-run] [--code <c>] <repo-dir> <pr-number> <run-dir> <lane>: the only way an agent merges a PR.
+# merge-pr --ask <repo-dir> <run-dir> <pr>:<lane> [<pr>:<lane> ...]: one owner's code for several PRs at once.
 #
 # Checks, always: the PR is open, not a draft, mergeable; CI is green (with `wait_for_ci = false` in the project's
 #   .lonca.toml, checks still running don't block; a failed one always does); the lane's evidence files fit the PR's
@@ -8,19 +9,26 @@
 #   - auto: the tier is at or under the project's `auto_merge` (.lonca.toml: off | low | medium | all; default from
 #     ~/.config/lonca/config.toml, else off);
 #   - night mode: the project's night is on (night-on) and not past its end time: everything that passes the checks
-#     merges, up to the night's cap if one was set;
-#   - the owner's code: otherwise merge-pr prints a code bound to this head (valid 1 h) and exits 3. PRs asked within
-#     5 minutes share one code. The lead shows the owner the PRs, tiers and its opinion; the owner answers
-#     "evet <code>" once; the lead reruns each with --code.
+#     merges, up to the night's cap if one was set (a night past its end or cap counts as off);
+#   - the owner's code: otherwise merge-pr prints a new code bound to this PR's head and base (valid 1 h) and exits 3.
+#     --ask runs every check for each listed PR and, when all pass, prints one new code sealed to exactly those PRs
+#     (each at its head and base); a refused PR seals nothing. A code is never one already on file, and approves only
+#     the PRs it was printed for. The lead shows the owner the PRs, tiers and its opinion; the owner answers with the
+#     code once ("evet <code>", "yes <code>": any language, the code is what binds); the lead reruns each with --code.
+#     The code ends when its last PR merges, or after 1 h.
+# The lead runs it; a lane (LONCA_LANE set) is refused.
 # The merge method follows the repo (merge commit, else squash, else rebase; `git config lonca.mergeMethod` overrides)
 # and merges exactly the checked head (--match-head-commit). One merge at a time (a lock). Log: ~/.local/state/lonca/merge.log
 set -eu
-for v in $(env | cut -d= -f1 | grep -E '^(CLAUDECODE|CLAUDE_[A-Z_]*|CODEX_COMPANION_[A-Z_]*)$'); do unset "$v"; done
-dry=0 code=
-while [ $# -gt 0 ]; do case $1 in --dry-run) dry=1; shift ;; --code) code=${2:-}; shift 2 ;; -h|--help) sed -n '2,/^set -eu/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;; *) break ;; esac; done
+for v in $(env | cut -d= -f1 | grep -E '^(CLAUDECODE|CLAUDE_[A-Z_]*|CODEX_COMPANION_[A-Z_]*|LONCA_PROJECT)$'); do unset "$v"; done   # the project comes from the repo's marker
+dry=0 code= ask=0
+while [ $# -gt 0 ]; do case $1 in --dry-run) dry=1; shift ;; --code) code=${2:-}; shift 2 ;; --ask) ask=1; shift ;; -h|--help) sed -n '2,/^set -eu/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;; *) break ;; esac; done
 me=merge-pr
-[ $# -eq 4 ] || { echo "usage: $me [--dry-run] [--code <c>] <repo-dir> <pr-number> <run-dir> <lane>   ($me --help)" >&2; exit 2; }
-repo=$(realpath "$1") pr=$2 run=$3 lane=$4
+[ "$dry" = 1 ] || [ -z "${LONCA_LANE:-}" ] || { echo "$me: refused in lane $LONCA_LANE: the lead merges" >&2; exit 1; }
+usage() { echo "usage: $me [--dry-run] [--code <c>] <repo-dir> <pr-number> <run-dir> <lane>
+       $me --ask <repo-dir> <run-dir> <pr>:<lane> [<pr>:<lane> ...]   ($me --help)" >&2; exit 2; }
+if [ "$ask" = 1 ]; then [ $# -ge 3 ] && [ "$dry$code" = 0 ] || usage; repo=$(realpath "$1") run=$2 pr=; shift 2
+else [ $# -eq 4 ] || usage; repo=$(realpath "$1") pr=$2 run=$3 lane=$4; fi
 N=$HOME/.cache/ai-runs/night A=$HOME/.local/state/lonca/approvals L=$HOME/lonca/bin
 LOG=$HOME/.local/state/lonca/merge.log   # the audit trail: kept, unlike the run folders in ~/.cache
 no() { echo "$me: refused PR #$pr: $*" >&2; [ "$dry" = 1 ] || echo "$(date -Iseconds) refused $repo #$pr: $*" >> "$LOG" 2>/dev/null || true; exit 1; }   # a dry run (lane-watch, every 10 min) leaves the audit log alone
@@ -28,12 +36,39 @@ GH=$(PATH=$(printf '%s' "$PATH" | tr ':' '\n' | grep -v "lonca/shims" | paste -s
 
 project=$("$L/lonca-project" "$repo") || { echo "$me: no Lonca project marker for $repo" >&2; exit 1; }
 proj=${project%%	*}
-mkdir -p "$N" "${LOG%/*}"; i=0   # one merge at a time on this machine (the night cap is counted inside the lock); a dry run takes no lock
-[ "$dry" = 1 ] || until mkdir "$N/.merge.lock" 2>/dev/null; do
-  i=$((i + 1)); [ $i -gt 300 ] && { echo "$me: another merge has held $N/.merge.lock for 5 min (remove it if stale)" >&2; exit 1; }
-  sleep 1
-done
-[ "$dry" = 1 ] || trap 'rmdir "$N/.merge.lock" 2>/dev/null' EXIT INT TERM
+mkdir -p "$N" "${LOG%/*}"
+
+seal() {   # stdin: "<key> <head> <base> <repo#pr>" lines that passed every check; prints one new code for exactly them
+  mkdir -p "$A"; [ -w "$A" ] || no "cannot write $A"
+  # a random code whose batch file did not exist yet (created exclusively): a later ask never shares an earlier batch
+  c=$(python3 -I - "$A/batch_${proj}_" <<'PY'
+import itertools, os, secrets, sys
+codes = ["".join(t) for t in itertools.product("abcdefghjkmnpqrstuvwxyz23456789", repeat=3)]
+secrets.SystemRandom().shuffle(codes)
+for c in codes:
+    try: os.close(os.open(sys.argv[1] + c, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)); sys.exit(print(c))
+    except FileExistsError: pass
+sys.exit("every code is on file")
+PY
+) || no "no free approval code"
+  now=$(date +%s) names=
+  while read -r k h b n; do
+    echo "$c $h $now $b" > "$A/$k"
+    grep -qxF "$k" "$A/batch_${proj}_$c" || { echo "$k" >> "$A/batch_${proj}_$c"; names="$names $n"; }   # the PRs this code may approve
+  done
+  echo "This code covers exactly:$names   (show the owner every one)"
+  echo "They approve by writing the code, e.g.:  evet $c  (any language)     then run for each:  $me --code $c $repo <pr> $run <lane>   (these heads and bases only, 1 h)"
+}
+if [ "$ask" = 1 ]; then   # each PR runs the whole gate in a child that only records it; any refusal seals nothing
+  list=$(mktemp); trap 'rm -f "$list"' EXIT; ok=1
+  for a; do
+    p=${a%%:*} l=${a#*:}
+    case $p in ''|*[!0-9]*) usage ;; esac; [ -n "$l" ] && [ "$l" != "$a" ] || usage
+    MERGE_PR_SEAL=$list "$0" "$repo" "$p" "$run" "$l" || ok=0
+  done
+  [ "$ok" = 1 ] || { echo "$me: nothing asked: leave out or fix the refused PRs and ask again" >&2; exit 1; }
+  seal < "$list"; exit 3
+fi
 
 # GitHub answers mergeable UNKNOWN for a while after a push: read again (6 x 5 s) before judging it
 i=0; while :; do
@@ -49,24 +84,37 @@ key=$(printf '%s' "$nwo" | tr '/' '_')_$pr short=${head%"${head#???????}"}
 # Risk tier (from the PR's diff; the lead may only raise it) and the project's settings
 t=$("$L/merge-tier" "$repo" "$pr" "$run" "$lane" 2>&1) || no "$t"
 tier=${t%%	*} why=${t#*	}
-cfg=$("$L/merge-tier" --config "$repo" "$base" 2>/dev/null) || cfg='{}'
+cfg=$("$L/merge-tier" --config "$repo" "$base" 2>&1) || no "$cfg"
 setting() { printf '%s' "$cfg" | python3 -I -c 'import json,sys; v=json.load(sys.stdin).get(sys.argv[1]); print("" if v is None else str(v).lower())' "$1"; }
 level=$(setting auto_merge); [ -n "$level" ] || level=$("$L/lonca-config" auto_merge off)
 wait_ci=$(setting wait_for_ci)
 
+# One merge at a time on this machine (the night cap is counted inside the lock); a dry run takes no lock. fd 9 holds
+# it; the kernel drops it when merge-pr dies, so a crash leaves no stale lock. Taken late and released right after the
+# merge so no long-lived child (hc's server, a credential daemon) inherits fd 9 and keeps it.
+[ "$dry" = 1 ] || [ -n "${MERGE_PR_SEAL:-}" ] || { exec 9>>"$N/.merge.flock"; python3 -I -c '
+import fcntl, sys, time
+for _ in range(300):
+    try: fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB); sys.exit(0)
+    except BlockingIOError: time.sleep(1)
+sys.exit("merge-pr: another merge has held the merge lock for 5 min")' || exit 1; }
+
 # Approval
 how=ask
-if [ -n "$code" ]; then
+if [ -n "${MERGE_PR_SEAL:-}" ]; then :   # a --ask child: the owner's code, whatever else would approve it
+elif [ -n "$code" ]; then
   [ -f "$A/$key" ] || no "no approval request for $nwo#$pr: run $me without --code first"
-  set -- $(cat "$A/$key")   # <code> <head> <epoch>
+  set -- $(cat "$A/$key")   # <code> <head> <epoch> <base>
   [ "$1" = "$code" ] || no "code '$code' does not match the one asked for $nwo#$pr"
   [ "$2" = "$head" ] || no "the PR changed since the owner approved it (${2%"${2#???????}"} -> $short): ask again"
+  [ "${4:-}" = "$base" ] || no "the PR's base is now $base, not the ${4:-unknown} the owner approved: ask again"
+  grep -qxF "$key" "$A/batch_${proj}_$code" 2>/dev/null || no "$nwo#$pr is not in the batch the owner saw for code '$code': ask again"
   [ $(( $(date +%s) - $3 )) -lt 3600 ] || no "the code is older than 1 h: ask again"
   how=code
 elif LEVEL=$level TIER=$tier python3 -I -c 'import os,sys; r={"low":0,"medium":1,"high":2,"all":2}; sys.exit(0 if r.get(os.environ["LEVEL"],-1) >= r[os.environ["TIER"]] else 1)'; then
   how=auto
 elif [ -n "$proj" ] && [ -f "$N/$proj.json" ]; then
-  python3 -I - "$N/$proj.json" "$LOG" "$proj" <<'PY' && how=night || no "night mode for $proj is past its end time or its cap"
+  python3 -I - "$N/$proj.json" "$LOG" "$proj" 2>/dev/null <<'PY' && how=night || echo "$me: night mode for $proj is past its end time or its cap: asking the owner" >&2
 import datetime, json, os, sys
 f, log, p = sys.argv[1:]
 n = json.load(open(f))
@@ -74,9 +122,10 @@ assert datetime.datetime.now().astimezone() < datetime.datetime.fromisoformat(n[
 mx = n.get("max_merges", "unlimited")
 if mx != "unlimited":
     since = os.path.getmtime(f)
-    done = sum(1 for l in open(log) if f" merged [night:{p}] " in l
-               and datetime.datetime.fromisoformat(l.split()[0]).timestamp() >= since) if os.path.exists(log) else 0
-    assert done < int(mx)
+    def count(word):   # a merge is reserved before it starts, so a crash after the remote merge still counts
+        return sum(1 for l in open(log) if f" {word} [night:{p}] " in l
+                   and datetime.datetime.fromisoformat(l.split()[0]).timestamp() >= since) if os.path.exists(log) else 0
+    assert count("merging") - count("merge-failed") < int(mx)
 PY
 fi
 
@@ -96,32 +145,36 @@ printf '%s' "$info" | python3 -I -c 'import json,sys;p=json.load(sys.stdin);prin
 
 if [ $dry = 1 ]; then echo "$me: dry run OK for $nwo#$pr -> $base, tier $tier ($why), approval: $how"; exit 0; fi
 if [ "$how" = ask ]; then
-  mkdir -p "$A"
-  if [ -f "$A/.batch" ] && [ $(( $(date +%s) - $(date -r "$A/.batch" +%s) )) -lt 300 ]; then c=$(cat "$A/.batch")
-  else c=$(python3 -I -c 'import secrets; print("".join(secrets.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(3)))'); echo "$c" > "$A/.batch"; fi
-  echo "$c $head $(date +%s)" > "$A/$key"
   echo "$me: checks passed; ask the owner. Show: $nwo#$pr -> $base, head $short, tier $tier ($why), your opinion$( [ "$tier" = high ] && echo ' and the risks')."
-  echo "They approve by writing:  evet $c     then run:  $me --code $c $repo $pr $run $lane   (this head only, 1 h)"
-  exit 3
+  if [ -n "${MERGE_PR_SEAL:-}" ]; then echo "$key $head $base $nwo#$pr" >> "$MERGE_PR_SEAL"; exit 0; fi
+  echo "$key $head $base $nwo#$pr" | seal; exit 3   # a PR asked alone gets its own code
 fi
 method=$(git -C "$repo" config lonca.mergeMethod || true)
 [ -n "$method" ] || method=$(cd "$repo" && "$GH" repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed \
   -q 'if .mergeCommitAllowed then "merge" elif .squashMergeAllowed then "squash" else "rebase" end' 2>/dev/null) || method=merge
-(cd "$repo" && "$GH" pr merge "$pr" "--$method" --match-head-commit "$head") || no "gh merge ($method) failed"
-[ "$how" = code ] && rm -f "$A/$key"
 tag=$how; [ "$how" = night ] && tag="night:$proj"
+echo "$(date -Iseconds) merging [$tag] $repo #$pr" >> "$LOG"
+(cd "$repo" && "$GH" pr merge "$pr" "--$method" --match-head-commit "$head") || { echo "$(date -Iseconds) merge-failed [$tag] $repo #$pr" >> "$LOG"; no "gh merge ($method) failed"; }
+if [ "$how" = code ]; then rm -f "$A/$key"; b=$A/batch_${proj}_$code
+  grep -vxF "$key" "$b" > "$b.left" || true   # the code ends with its batch's last merge
+  if [ -s "$b.left" ]; then mv "$b.left" "$b"; else rm -f "$b" "$b.left"; fi
+fi
 echo "$(date -Iseconds) merged [$tag] $repo #$pr -> $base (lane $lane, tier $tier)" >> "$LOG"
+exec 9>&-   # release the merge lock
 "$L/kanzo-sync" >/dev/null 2>&1 || true   # its card -> done now, not at the next timer run
 # the lane that built it is done: close its terminal, remove its worktree and local branch now (not at night)
 branch=$(printf '%s' "$info" | python3 -I -c 'import json,sys;print(json.load(sys.stdin)["headRefName"])')
 git -C "$repo" worktree list --porcelain | awk -v b="refs/heads/$branch" '/^worktree /{w=substr($0,10)} $0=="branch "b{print w}' |
 while read -r wt; do
   case $wt in "$HOME"/.herdr/worktrees/*) ;; *) continue ;; esac   # only Lonca's lane worktrees
-  env -u CLAUDECODE hc ls --json 2>/dev/null | python3 -I -c 'import json,sys
+  [ "$(git -C "$wt" rev-parse HEAD 2>/dev/null)" = "$head" ] || { echo "$me: left $wt (its HEAD is not the merged head $short: unpushed commits?)"; continue; }
+  if git -C "$repo" worktree remove "$wt" 2>/dev/null; then git -C "$repo" update-ref -d "refs/heads/$branch" "$head" 2>/dev/null
+    # only now close its terminals: those in the worktree or below it, not in a sibling whose name starts the same
+    env -u CLAUDECODE hc ls --json 2>/dev/null | python3 -I -c 'import json,sys
 for t in json.load(sys.stdin).get("terminals", []):
-    if t.get("cwd", "").startswith(sys.argv[1]): print(t["address"])' "$wt" | while read -r t; do env -u CLAUDECODE hc kill "$t" >/dev/null 2>&1; done
-  sleep 2
-  if git -C "$repo" worktree remove "$wt" 2>/dev/null; then git -C "$repo" branch -D "$branch" >/dev/null 2>&1; echo "$me: closed the lane and removed $wt"
+    c = t.get("cwd", "")
+    if c == sys.argv[1] or c.startswith(sys.argv[1] + "/"): print(t["address"])' "$wt" | while read -r t; do env -u CLAUDECODE hc kill "$t" >/dev/null 2>&1; done
+    echo "$me: closed the lane and removed $wt"
     echo "$(date -Iseconds) removed worktree $wt + branch $branch after merging $repo #$pr" >> "$LOG"
   else echo "$me: left $wt (uncommitted changes); ai-cleanup takes it once clean"; fi
 done

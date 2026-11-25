@@ -4,10 +4,10 @@ head, as the tier asks (default medium): verify PASS, review SHIP and a security
 (for low the security result may come from the scanners alone); PERF: OK required for high, and for medium whenever a
 PERF line exists (perf runs on hot paths); low ignores PERF.
 
-Files (written by the lead from each checker's own result):
-  <lane>.verify.md    VERDICT: PASS|NEEDS_WORK   PERF: OK|REGRESSION|RISK   HEAD: <sha>
-  <lane>.review.md    VERDICT: SHIP|NEEDS_WORK|MAJOR_RETHINK                 HEAD: <sha>
-  <lane>.security.md  SECURITY: CLEAN | SECURITY: FINDINGS (n), highest: LOW|MEDIUM|HIGH   HEAD: <sha>
+Files (written by the lead from each checker's own result; each verdict is a whole line, exactly one of the values):
+  <lane>.verify.md    a VERDICT: line (PASS or NEEDS_WORK), a PERF: line (OK, REGRESSION or RISK), each with HEAD: <sha>
+  <lane>.review.md    a VERDICT: line (SHIP, NEEDS_WORK or MAJOR_RETHINK), then HEAD: <sha>
+  <lane>.security.md  "SECURITY: CLEAN" or "SECURITY: FINDINGS (<n>), highest: <LOW, MEDIUM or HIGH>", then HEAD: <sha>
 The last line of each kind counts (a re-check appends), and it counts only for the commit in the first HEAD: line
 after it, which must be the PR head (at least 7 characters of it). So a PASS judged on commit A never passes for B,
 even when a later check appends HEAD: B to the same file.
@@ -36,12 +36,13 @@ def need(ok, msg):
     if not ok:
         sys.exit(msg)
 
-v = last("verify", r"VERDICT: ");  need(v.startswith("VERDICT: PASS"), f"verify: {v}")
+# whole lines only: a copied template line listing the alternatives is not a verdict
+v = last("verify", r"VERDICT: ");  need(v == "VERDICT: PASS", f"verify: {v}")
 has_perf = any(l.strip().startswith("PERF: ") for l in open(os.path.join(run, f"{lane}.verify.md")))
 if tier == "high" or (tier == "medium" and has_perf):
-    p = last("verify", r"PERF: ");  need(p.startswith("PERF: OK"), f"perf: {p}")
-r = last("review", r"VERDICT: ");  need(r.startswith("VERDICT: SHIP"), f"review: {r}")
+    p = last("verify", r"PERF: ");  need(p == "PERF: OK", f"perf: {p}")
+r = last("review", r"VERDICT: ");  need(r == "VERDICT: SHIP", f"review: {r}")
 s = last("security", r"SECURITY: ")
-need(s.startswith("SECURITY: CLEAN") or (s.startswith("SECURITY: FINDINGS") and not re.search(r"highest:\s*HIGH", s, re.I)),
+need(s == "SECURITY: CLEAN" or re.fullmatch(r"SECURITY: FINDINGS \(\d+\), highest: (LOW|MEDIUM)", s),
      f"security: {s}")
 print(f"evidence OK for {head[:12]} ({tier})")

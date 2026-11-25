@@ -22,4 +22,4 @@ Evidence over opinion: a perf finding needs a measurement or a concrete count ("
 - On a shared machine: mind the CPU budget (e.g. cap temp containers with `--cpus 2`).
 
 ## 3. Output (at most 30 lines, appended to `$RUN/<lane>.verify.md`)
-`PERF: OK | REGRESSION | RISK` and `HEAD: <git rev-parse HEAD you checked>`, then each item: `file:line — pattern — measured numbers or count — smallest fix`. Then "Not verified" (what was not measured and why). A measured regression on a hot path blocks the PR report until fixed or the owner accepts it.
+one perf line, one of `PERF: OK`, `PERF: REGRESSION` or `PERF: RISK`, and `HEAD: <git rev-parse HEAD you checked>`, then each item: `file:line — pattern — measured numbers or count — smallest fix`. Then "Not verified" (what was not measured and why). A measured regression on a hot path blocks the PR report until fixed or the owner accepts it.

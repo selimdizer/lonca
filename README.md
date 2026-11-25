@@ -140,8 +140,11 @@ verify PASS · review SHIP · security CLEAN · CI green. My opinion: safe to me
 To merge, write: evet 4f2
 ```
 
-You answer `evet 4f2`, and the lead merges exactly that commit. The code is good for that PR's current head for one
-hour: if someone pushes after the checks, the evidence no longer matches, the checks run again and you get a new code.
+You answer `evet 4f2` (or `yes 4f2`, `ok 4f2`: any language, the code is what binds), and the lead merges exactly that
+commit. The code is good for that PR's current head and base branch for one hour: if someone pushes after the checks,
+the evidence no longer matches, the checks run again and you get a new code. With several PRs ready, the lead asks
+once (`merge-pr --ask`): one code for exactly the PRs it shows you, never one an earlier question used. Only a lead
+merges; `merge-pr` refuses to run inside a lane.
 
 ## Configuration
 

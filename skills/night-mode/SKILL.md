@@ -13,7 +13,7 @@ When the owner asks for night mode, without waiting to be asked:
 2. Ask in one message: which of these to finish tonight; until when (default 08:00); and whether to cap the merges (no cap unless the owner gives a number). Night mode covers all of the project's repos: every PR that passes its checks merges.
 3. Read the chosen cards now and ask every question they will raise tonight, each with your recommendation. A card whose question stays open is not taken.
 4. Tag exactly the cards the owner chose with `night` on Kanzo (only those; remove the tag from any other card).
-5. Run `night-on --request <project> <HH:MM> [<max>]` (`<project>` = the name `lonca-project` prints) and say back in at most 8 lines: cards, end time, cap if any, answers you will apply, and the code it printed: "to start, write `başla <code>`". Only the owner's own message with that exact code is the go; then `night-on --code <code> <project>`. Never write the night file yourself.
+5. Run `night-on --request <project> <HH:MM> [<max>]` (`<project>` = the name `lonca-project` prints) and say back in at most 8 lines: cards, end time, cap if any, answers you will apply, and the code it printed: "to start, write `başla <code>`" (any language works: the code is what binds). Only the owner's own message with that exact code is the go; then `night-on --code <code> <project>`. Never write the night file yourself.
 
 ## 2. The work
 Only cards tagged `night` (status todo, not `human`, nothing open in `waits_on`). Apply the answers from step 1; if something new needs a choice, skip that card and comment why.
