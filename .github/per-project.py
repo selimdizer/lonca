@@ -264,7 +264,8 @@ def other_clis(base):
     repo.mkdir(parents=True)
     git(repo, "init", "-q")
     (repo / ".pi").mkdir()
-    (repo / ".pi/mcp.json").write_text('{"mcpServers":{"mine":{"command":"mine"}}}')
+    # An identical Kanzo entry is fine and stays after remove.
+    (repo / ".pi/mcp.json").write_text('{"mcpServers":{"mine":{"command":"mine"},"kanzo":{"command":"kanzo","args":["mcp"]}}}')
     (root / "AGENTS.md").write_text("Folder notes\n")
     files = (*names, ".git/info/exclude")
     baseline = snapshot(repo, files)
@@ -282,6 +283,7 @@ def other_clis(base):
         servers = json.loads((repo / name).read_bytes())["mcpServers"]
         assert servers["kanzo"]["args"] == ["mcp"] and servers["deja"]["env"] == {"DEJA_POLICY_FILE": policy}, name
     assert json.loads((repo / ".pi/mcp.json").read_bytes())["mcpServers"]["mine"] == {"command": "mine"}
+    assert json.loads((repo / ".pi/mcp.json").read_bytes())["mcpServers"]["kanzo"] == {"command": "kanzo", "args": ["mcp"]}
     assert tomllib.loads((repo / ".grok/config.toml").read_text())["mcp_servers"]["deja"]["env"] == {"DEJA_POLICY_FILE": policy}
     for name in (".github/instructions/lonca.instructions.md", ".pi/APPEND_SYSTEM.md", ".grok/rules/lonca.md", ".agents/rules/lonca.md"):
         assert lonca["RULES"] in (repo / name).read_text().splitlines(), name
@@ -301,11 +303,51 @@ def other_clis(base):
     run(script, "status", "--lane", "--agent", "grok", repo, ok=False)
     run(script, "init", root)
     assert "grok on" in run(script, "status", root)
+    # A different entry under Lonca's server name is refused, like Codex's, and the file is left alone.
+    agy = repo / ".agents/mcp_config.json"
+    installed_agy = agy.read_bytes()
+    agy.write_text('{"mcpServers":{"kanzo":{"command":"other-kanzo"}}}')
+    conflict = subprocess.run([script, "init", root], capture_output=True, text=True)
+    assert conflict.returncode and "existing mcpServers.kanzo in .agents/mcp_config.json conflicts" in conflict.stderr, conflict.stderr
+    assert agy.read_text() == '{"mcpServers":{"kanzo":{"command":"other-kanzo"}}}'
+    agy.write_bytes(installed_agy)
+    # JSON with comments (OpenCode, Copilot and others accept it) is never rewritten: init and remove stop.
+    copilot = repo / ".github/mcp.json"
+    installed_copilot = copilot.read_bytes()
+    commented = b"// my servers\n" + installed_copilot
+    copilot.write_bytes(commented)
+    for command in ("init", "remove"):
+        stopped = subprocess.run([script, command, root], capture_output=True, text=True)
+        assert stopped.returncode and f"{copilot} has comments or is not plain JSON" in stopped.stderr, stopped.stderr
+        assert copilot.read_bytes() == commented and (root / ".lonca.toml").exists()
+    copilot.write_bytes(installed_copilot)
+    user = Path.home() / ".config/opencode/opencode.json"
+    user.parent.mkdir(parents=True)
+    user.write_text('{"mcp": {"servers": {"kanzo": {"type": "local", "command": ["kanzo", "mcp"]},}}}')
+    state = Path.home() / ".local/state/lonca/mcp-added"
+    state.write_text("opencode kanzo\n")
+    helper = subprocess.run(["sh", SRC / "bin/lonca-mcp", "remove", "opencode", "kanzo"], capture_output=True, text=True)
+    assert f"{user} has comments or is not plain JSON" in helper.stderr, helper.stderr
+    entry = subprocess.run(["python3", "-c", "import sys; sys.path.insert(0, sys.argv[1]); from lonca_legacy import Legacy; "
+                            "Legacy.mcp_entry('opencode', 'kanzo')", SRC / "bin"], capture_output=True, text=True)
+    assert entry.returncode and f"{user} has comments or is not plain JSON" in entry.stderr, entry.stderr
+    assert user.read_text() == '{"mcp": {"servers": {"kanzo": {"type": "local", "command": ["kanzo", "mcp"]},}}}'
+    user.unlink()
+    user.parent.rmdir()
+    state.unlink()
+    # The owner's own Copilot lines keep the header that applies them.
+    with (repo / ".github/instructions/lonca.instructions.md").open("a") as f:
+        f.write("My Copilot note\n")
     with (repo / ".pi/APPEND_SYSTEM.md").open("a") as f:
         f.write("My own pi note\n")
     run(script, "remove", root)
     assert (repo / ".pi/APPEND_SYSTEM.md").read_text() == "My own pi note\n"
     (repo / ".pi/APPEND_SYSTEM.md").unlink()
+    instructions = repo / ".github/instructions/lonca.instructions.md"
+    assert instructions.read_text() == '---\napplyTo: "**"\n---\nMy Copilot note\n'
+    instructions.unlink()
+    instructions.parent.rmdir()
+    (repo / ".github").rmdir()
     assert snapshot(repo, files) == baseline and (root / "AGENTS.md").read_text() == "Folder notes\n"
     assert not any((repo / folder).exists() for folder in (".opencode", ".github", ".grok", ".agents"))
     # A folder inside a repository is refused, so init never edits an AGENTS.md that repository tracks.

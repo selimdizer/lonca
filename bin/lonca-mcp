@@ -5,6 +5,7 @@
 # another installer made.
 #   harnesses: claude codex omp opencode copilot agy grok pi
 set -u
+exec 3>&2   # json() reports a file it cannot parse here: the CLI calls below are silenced
 op=$1 h=$2 n=$3; shift 3
 R=$HOME/.local/state/lonca/mcp-added
 has() { grep -qs "$1" "$2"; }
@@ -15,6 +16,9 @@ import json, os, sys, tempfile, stat
 f, key, op, name, *cmd = sys.argv[1:]
 try: d = json.load(open(f))
 except FileNotFoundError: d = {}
+except ValueError:  # JSONC (comments) parses differently: never rewrite it
+    os.write(3, f"  {f} has comments or is not plain JSON; edit it by hand or remove the comments\n".encode())
+    sys.exit(1)
 servers = d
 for part in key.split("."):  # opencode: mcp, or mcp.servers since OpenCode 2
     servers = servers.setdefault(part, {})

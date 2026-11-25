@@ -357,8 +357,11 @@ class Legacy:
                 raise ValueError(f"Python 3.11+ is needed to inspect the recorded MCP entry in {path}")
             servers = tomllib.loads(path.read_text()).get("mcp_servers", {})
         else:
-            data = json.loads("".join(line for line in path.read_text().splitlines(True)
-                                      if not line.lstrip().startswith("//")))
+            try:
+                data = json.loads("".join(line for line in path.read_text().splitlines(True)
+                                          if not line.lstrip().startswith("//")))
+            except ValueError:
+                raise ValueError(f"{path} has comments or is not plain JSON; edit it by hand or remove the comments") from None
             servers = data.get("mcp" if harness == "opencode" else "mcpServers", {})
             if harness == "opencode" and server not in servers:
                 servers = servers.get("servers", {})  # the layout OpenCode 2 writes

@@ -174,7 +174,9 @@ name, kept out of Git like the rest:
 | `grok` | `.grok/config.toml` | `.grok/rules/lonca.md` |
 | `agy` (Antigravity) | `.agents/mcp_config.json` | `.agents/rules/lonca.md` |
 
-Copilot, pi and Grok read these files only in a folder you trust. Lane worktrees don't have them: Copilot lanes get
+Init stops at a file that already has a different `kanzo` or `deja` entry, or at JSON with comments (these CLIs accept
+it, Lonca does not rewrite it): edit that file by hand. Remove keeps your own lines, and Copilot's `applyTo` header with
+them. Copilot, pi and Grok read these files only in a folder you trust. Lane worktrees don't have them: Copilot lanes get
 Kanzo and deja per run, and `lane` copies the OpenCode, pi, Grok and Antigravity files into the worktree, so those
 lanes need the agent opted in. pi lanes start with `--approve` only when the branch tracks nothing under `.pi/` or
 `.agents/skills/`; otherwise pi asks before it loads project files. A Codex lead started in a project folder that is not a repository reads only

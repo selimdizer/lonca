@@ -19,7 +19,8 @@ versions follow [Semantic Versioning](https://semver.org/).
   files into the lane worktree (pi gets `--approve` only when the branch tracks no `.pi/` or `.agents/skills/`
   files). `lonca migrate` and uninstall remove the recorded user-level entries of all five, also OpenCode 2's
   `mcp.servers` layout and Copilot's and Antigravity's default `tools`/`disabled` fields, and Grok's user entry
-  only (`--scope user`) when a project defines the same server.
+  only (`--scope user`) when a project defines the same server. Init refuses a different existing `kanzo`/`deja`
+  entry, and init, remove and migrate stop at a JSON file with comments instead of rewriting it.
 - A Codex lead started in a project folder that is not a repository gets the Lonca rules: init adds a pointer line
   to that folder's `AGENTS.md`, the only instructions file Codex reads there; init and `migrate --dry-run` name it.
 
