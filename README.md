@@ -212,6 +212,7 @@ root without keeping `.lonca/`.
 - Claude Code installs `lonca@lonca` with local scope. Its agents, skills, hooks and MCP servers come
   from the local marketplace. Init also installs these protections at a non-Git project root for leads. Personal settings hold the deny rules and deja policy, and
   `CLAUDE.local.md` imports `@~/lonca/AGENTS.md`. Use a CLI with local marketplace scope support.
+  The first Claude session in a project asks to allow that external import: answer yes, or the project gets no Lonca rules.
   Personal settings also turn off Claude's commit and PR signature (`attribution`, `includeCoAuthoredBy`).
   Init replaces an existing `attribution` or `includeCoAuthoredBy` value there, and remove restores it.
   Claude lanes get the same two settings through `--settings`, since their worktrees have no personal settings.
