@@ -9,11 +9,11 @@ for n in git gh pkill; do
   echo 'exit 0' >> "$stubs/$n"
   chmod +x "$stubs/$n"
 done
-# The git stub answers the guard's alias lookups with the real git; aliases live only in a throwaway repo's config.
+# The git stub answers the guard's alias and built-in lookups with the real git; aliases live only in a throwaway repo's config.
 for d in $(printf '%s' "$PATH" | tr ':' ' '); do
   [ -x "$d/git" ] && [ "$(basename "$(readlink -f "$d/git")")" != guard ] && { realgit=$d/git; break; }
 done
-printf '#!/bin/sh\ncase " $* " in *" config --get alias."*) exec %s "$@" ;; esac\nexit 0\n' "$realgit" > "$stubs/git"
+printf '#!/bin/sh\ncase " $* " in *" config --get alias."*|" --list-cmds="*) exec %s "$@" ;; esac\nexit 0\n' "$realgit" > "$stubs/git"
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1   # never the owner's own aliases
 "$realgit" init -q "$repo"
 while read -r k v; do "$realgit" -C "$repo" config "alias.$k" "$v"; done <<'EOF'
@@ -28,6 +28,14 @@ lg log --oneline
 sci !git commit --no-verify
 sfn !f() { git add -A && git commit "$@"; }; f
 st !git status
+q1 commit "--no-verify"
+q2 commit '-n'
+q3 !'git' commit --no-verify
+q4 !git-commit --no-verify
+q5 !"git" commit -n
+q6 commit \-\-no-verify
+commit commit --no-verify
+whatchanged commit --no-verify
 EOF
 "$realgit" -C "$repo" config "alias.sub alias.command" "commit --no-verify"
 printf '#!/bin/sh\necho "${COMPOSE_PROJECT_NAME:--}" "$@"\n' > "$stubs/docker"; chmod +x "$stubs/docker"
@@ -78,6 +86,14 @@ t blocked git -C "$repo" sfn -n -m x
 t ok      git -C "$repo" sfn -m x
 t ok      git -C "$repo" st --short
 t blocked git -C "$repo" "sub alias" -m x
+t blocked git -C "$repo" q1 -m x
+t blocked git -C "$repo" q2 -m x
+t blocked git -C "$repo" q3 -m x
+t blocked git -C "$repo" q4 -m x
+t blocked git -C "$repo" q5 -m x
+t blocked git -C "$repo" q6 -m x
+t ok      git -C "$repo" commit -m x
+t blocked git -C "$repo" whatchanged
 t blocked gh pr merge 3 --squash
 t blocked gh api repos/a/b/pulls/3/merge -X PUT
 t ok      gh --version
