@@ -2,7 +2,7 @@
 """Remove idle temporary directories, finished worktrees and old runs recorded by registered projects.
 Use --dry-run to preview, or --tmp-age-hours N to change the default 48-hour temp age.
 """
-import json, os, shutil, subprocess, sys, time
+import json, os, shutil, stat, subprocess, sys, time
 from pathlib import Path
 from lonca_legacy import Legacy
 from lonca_registry import registered, records, lane_worktree, resources, identity, names, forget_resource
@@ -51,8 +51,15 @@ def in_use_paths():
 Legacy(DRY).prune()
 # merge-pr's approval codes live 1 h; batch and key files of codes never used stay behind (2 h: well past that)
 approvals = HOME / ".local/state/lonca/approvals"
+def stale_approval(f):
+    try:
+        st = f.lstat()
+    except OSError:   # gone meanwhile: merge-pr used the code
+        return False
+    return stat.S_ISREG(st.st_mode) and now - st.st_mtime > 2 * 3600
+
 if approvals.is_dir():
-    stale = [f for f in approvals.iterdir() if f.is_file() and not f.is_symlink() and now - f.stat().st_mtime > 2 * 3600]
+    stale = [f for f in approvals.iterdir() if stale_approval(f)]
     if not DRY:
         for f in stale:
             f.unlink(missing_ok=True)

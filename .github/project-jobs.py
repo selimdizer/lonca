@@ -80,6 +80,26 @@ print(legacy.directory)
     assert "would remove 2 approval files" in run(BIN / "ai-cleanup", "--dry-run") and all(f.exists() for f in old_files)
     run(BIN / "ai-cleanup")
     assert not any(f.exists() for f in old_files) and all(f.exists() for f in fresh)
+    # a file removed between the listing and its stat (merge-pr used the code) does not stop the cleanup
+    vanish = """import runpy, sys
+from pathlib import Path
+from unittest.mock import patch
+program = sys.argv[1]
+sys.path.insert(0, str(Path(program).parent))
+sys.argv = [program]
+iterdir, is_file = Path.iterdir, Path.is_file
+def listing(self):
+    yield from iterdir(self)
+    if self.name == "approvals":
+        yield self / "used_meanwhile"
+def present(self):   # seen as a file, gone by the time it is stat'ed
+    return self.name == "used_meanwhile" or is_file(self)
+with patch.object(Path, "iterdir", listing), patch.object(Path, "is_file", present):
+    runpy.run_path(program, run_name="__main__")
+"""
+    os.utime(fresh[0], (time.time() - 3 * 3600,) * 2)
+    run("python3", "-c", vanish, BIN / "ai-cleanup")
+    assert not fresh[0].exists() and fresh[1].exists()
 
     root = home / "project"
     root.mkdir()

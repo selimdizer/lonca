@@ -18,8 +18,12 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The lane git guard decides by the git subcommand and its own options, not by the whole command line: words in a
+  commit, tag, merge or notes message, an `--author`, a `-c` value or a path after `--` no longer get a command
+  refused (`git commit -m "clean up X"`, `-m "fix: push to main later"`). Every refusal stays, and `push -d`,
+  `push -uf`, `branch -Dq` and `refs/heads/main` refspecs are now refused too (lonca#414).
 - ai-cleanup removes approval batch and key files older than 2 h (codes live 1 h), so unused asks no longer pile up
-  until no code is free (lonca#435).
+  until no code is free (lonca#435). A file merge-pr removes during the sweep no longer stops the cleanup.
 
 ## [0.5.0] - 2026-11-25
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Exit 1 for a protected Git configuration write. Compare argv, including scope and value."""
+"""Exit 1 for a protected Git configuration write. Compare argv, including scope and value.
+Arguments: the number of global options before the subcommand, then git's argv."""
 import re
 import sys
 
@@ -9,14 +10,14 @@ def protected(key):
             or bool(re.fullmatch(r"includeif\..+\.path", key)))
 
 
-args = sys.argv[1:]
+n, args = int(sys.argv[1]), sys.argv[2:]
 lower = [arg.lower() for arg in args]
-if any("=" in arg and protected(arg.removeprefix("--config-env=").removeprefix("-c").split("=", 1)[0]) for arg in lower):
+# Only the global options set config (-c, --config-env); a later argument is text, such as a commit message.
+if any("=" in arg and protected(arg.removeprefix("--config-env=").removeprefix("-c").split("=", 1)[0]) for arg in lower[:n]):
     sys.exit(1)
-if "config" not in args:
+if args[n:n + 1] != ["config"]:
     sys.exit(0)
-idx = args.index("config")
-config = lower[idx + 1:]
+config = lower[n + 1:]
 # Section operations select core itself rather than spelling out the key.
 section_args = [item for arg in config for item in arg.split("=", 1)]
 if "core" in section_args and any(

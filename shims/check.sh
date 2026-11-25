@@ -124,6 +124,36 @@ t blocked git config --edit
 t blocked git config --local include.path fixture
 t blocked git config set includeIf.gitdir:fixture.path fixture
 t ok      git config --get include.path
+# message text, -c values and paths never trip a rule; the subcommand and its own options do
+t ok      git commit --dry-run -m "clean up X"
+t ok      git commit -m "fix: push to main later"
+t ok      git commit -m "reset --hard" -m "push origin main"
+t ok      git commit --message "--no-verify"
+t ok      git commit -m -D --author "push -f <a@b>"
+t ok      git commit -F clean
+t ok      git tag -a v1 -m "git clean and branch -D"
+t ok      git tag -m "push origin +main" v1
+t ok      git notes add -m "reset --hard; --no-verify" HEAD
+t ok      git merge -m "--no-verify" feature
+t ok      git commit -m "alias.x=1 core.hooksPath=/dev/null"
+t ok      git -c user.name="git clean main" commit -m x
+t ok      git config user.name "push origin main"
+t ok      git log -- clean
+t ok      git checkout main
+t ok      git status clean
+t ok      git push origin x -o "main"
+t blocked git clean
+t blocked git -C . clean -n
+t blocked git push origin x:main
+t blocked git push origin refs/heads/x:refs/heads/main
+t blocked git push origin -- main
+t blocked git push -- origin +x
+t blocked git push -uf origin x
+t blocked git push --force-with-lease origin x
+t blocked git push -d origin x
+t blocked git branch -Dq x
+t blocked git -c alias.x=y status
+t blocked git --config-env alias.x=FIXTURE status
 t blocked lonca migrate
 t blocked lonca init fixture
 t blocked lonca remove fixture
