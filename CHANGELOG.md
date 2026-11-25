@@ -15,11 +15,13 @@ versions follow [Semantic Versioning](https://semver.org/).
 - OpenCode, Copilot, pi, Grok and Antigravity get Kanzo, deja and the Lonca rules per project, like Claude, Codex
   and omp (lonca#361). `lonca init --agents` accepts `opencode`, `copilot`, `pi`, `grok` and `agy` and writes each
   CLI's project MCP and rules files (kept out of Git, undone by `lonca remove`); `lonca status` shows each one on or
-  off per repo. OpenCode and Copilot lanes get the MCP servers per run; `lane` copies the pi, Grok and Antigravity
-  files into the lane worktree. `lonca migrate` and uninstall remove the recorded user-level entries of all five,
-  also OpenCode 2's `mcp.servers` layout and Copilot's and Antigravity's default `tools`/`disabled` fields.
+  off per repo. Copilot lanes get the MCP servers per run; `lane` copies the OpenCode, pi, Grok and Antigravity
+  files into the lane worktree (pi gets `--approve` only when the branch tracks no `.pi/` or `.agents/skills/`
+  files). `lonca migrate` and uninstall remove the recorded user-level entries of all five, also OpenCode 2's
+  `mcp.servers` layout and Copilot's and Antigravity's default `tools`/`disabled` fields, and Grok's user entry
+  only (`--scope user`) when a project defines the same server.
 - A Codex lead started in a project folder that is not a repository gets the Lonca rules: init adds a pointer line
-  to that folder's `AGENTS.md`, the only instructions file Codex reads there.
+  to that folder's `AGENTS.md`, the only instructions file Codex reads there; init and `migrate --dry-run` name it.
 
 ### Security
 

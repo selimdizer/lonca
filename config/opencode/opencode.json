@@ -1,8 +1,0 @@
-{
-  "mcp": {
-    "servers": {
-      "kanzo": {"type": "local", "command": ["kanzo", "mcp"]},
-      "deja": {"type": "local", "command": ["deja", "mcp"]}
-    }
-  }
-}

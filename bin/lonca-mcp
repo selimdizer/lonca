@@ -49,7 +49,7 @@ case $op:$h in
   add:agy)       has "\"$n\"" "$HOME/.gemini/config/mcp_config.json" || agy mcp add "$n" "$@" ;;
   remove:agy)    ! has "\"$n\"" "$HOME/.gemini/config/mcp_config.json" || agy mcp remove "$n" ;;
   add:grok)      has "mcp_servers.$n\]" "$HOME/.grok/config.toml" || grok mcp add "$n" "$@" ;;
-  remove:grok)   ! has "mcp_servers.$n\]" "$HOME/.grok/config.toml" || grok mcp remove "$n" ;;
+  remove:grok)   ! has "mcp_servers.$n\]" "$HOME/.grok/config.toml" || grok mcp remove --scope user "$n" ;;   # a project entry may share the name
   add:opencode)  has "\"$n\"" "$HOME/.config/opencode/opencode.json" || opencode mcp add --global "$n" -- "$@" ;;
   remove:opencode) json "$HOME/.config/opencode/opencode.json" mcp.servers && json "$HOME/.config/opencode/opencode.json" mcp ;;   # OpenCode 2 has no mcp remove
   *:omp)         [ -d "$HOME/.omp/agent" ] && json "$HOME/.omp/agent/mcp.json" mcpServers "$@" ;;

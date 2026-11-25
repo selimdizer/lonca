@@ -80,7 +80,7 @@ case $agent in
   # Copilot: Kanzo and deja for this run only (-i: runs the prompt, stays interactive)
   copilot:*) mcp=$(python3 -I -c 'import json,shlex,sys; print(shlex.quote(json.dumps({"mcpServers": {s: {"type": "local", "command": s, "args": ["mcp"], **({"env": {"DEJA_POLICY_FILE": sys.argv[1]}} if s == "deja" else {})} for s in ("kanzo", "deja")}})))' "$DEJA_POLICY_FILE")
              cmd="copilot --model ${agent#copilot:} --yolo --additional-mcp-config $mcp -i" ;;
-  pi:*)      cmd="pi --approve --model ${agent#pi:}" ;;   # no approvals to bypass; --approve: load the copied .pi files without the trust prompt
+  pi:*)      cmd="pi --model ${agent#pi:}" ;;                                # pi has no approvals to bypass; --approve below
   agy:*)     cmd="agy --model ${agent#agy:} --dangerously-skip-permissions -i" ;;   # Antigravity CLI; worktree trust below
   grok:*)    cmd="grok -m ${agent#grok:} --always-approve" ;;              # the prompt is the positional argument
   opencode:*) cmd="opencode mini --standalone --agent lonca-lane --model ${agent#opencode:} --prompt" ;;   # standalone: its tools run in this terminal (shims, TMPDIR, tagged messages); permissions: the lonca-lane agent
@@ -112,9 +112,10 @@ elif git -C "$repo" show-ref -q --verify "refs/heads/$branch"; then
 else
   git -C "$repo" worktree add -q "$wt" -b "$branch" "origin/$base"
 fi
-# pi, Grok and Antigravity have no per-run MCP option: copy their project files (lonca init --agents, OTHER in
-# bin/lonca) from the main checkout. The repo's info/exclude, shared with its worktrees, keeps the copies out of Git.
+# opencode (servers in OPENCODE_CONFIG_DIR did not show up), pi, Grok and Antigravity: no per-run MCP option, so copy their project files (lonca init --agents, OTHER in bin/lonca) from the main checkout.
+# The repo's info/exclude, shared with its worktrees, keeps the copies out of Git.
 case $agent in
+  opencode:*) files=".opencode/opencode.json" ;;
   pi:*) files=".pi/mcp.json .pi/APPEND_SYSTEM.md" ;; grok:*) files=".grok/config.toml .grok/rules/lonca.md" ;;
   agy:*) files=".agents/mcp_config.json .agents/rules/lonca.md" ;; *) files= ;;
 esac
@@ -122,6 +123,8 @@ for f in $files; do
   git -C "$wt" check-ignore -q -- "$f" || { echo "lane: $f would show in git in $wt; ask your lead to run lonca init" >&2; exit 1; }
   mkdir -p "$(dirname "$wt/$f")" && cp "$repo/$f" "$wt/$f"
 done
+# --approve trusts every project resource pi loads: only when the branch tracks none of them (else pi asks)
+case $agent in pi:*) if [ -z "$(git -C "$wt" ls-files -- .pi .agents/skills)" ]; then cmd="pi --approve ${cmd#pi }"; fi ;; esac
 fi
 
   # hc names are unique among live terminals: repo prefix + branch, then a short hash if it had to be cut

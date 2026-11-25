@@ -174,9 +174,10 @@ name, kept out of Git like the rest:
 | `grok` | `.grok/config.toml` | `.grok/rules/lonca.md` |
 | `agy` (Antigravity) | `.agents/mcp_config.json` | `.agents/rules/lonca.md` |
 
-Copilot, pi and Grok read these files only in a folder you trust. Lane worktrees don't have them: OpenCode and
-Copilot lanes get Kanzo and deja per run, and `lane` copies the pi, Grok and Antigravity files into the worktree,
-so those lanes need the agent opted in. A Codex lead started in a project folder that is not a repository reads only
+Copilot, pi and Grok read these files only in a folder you trust. Lane worktrees don't have them: Copilot lanes get
+Kanzo and deja per run, and `lane` copies the OpenCode, pi, Grok and Antigravity files into the worktree, so those
+lanes need the agent opted in. pi lanes start with `--approve` only when the branch tracks nothing under `.pi/` or
+`.agents/skills/`; otherwise pi asks before it loads project files. A Codex lead started in a project folder that is not a repository reads only
 that folder's `AGENTS.md` (Codex finds no project root there), so init adds the pointer line to it. Each repository gets its own local Git hooks setting, which Git also
 uses in linked worktrees. Inside a lane, Git also inherits Lonca’s hooks path for commands in sibling
 and newly cloned repositories. Status lists linked worktrees inside the project next to their main checkout.

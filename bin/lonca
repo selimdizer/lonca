@@ -27,7 +27,7 @@ IMPORT = "@~/lonca/AGENTS.md"
 MARKERS = (".lonca.toml", "lonca.toml")
 RULES = "Read ~/lonca/AGENTS.md before you start: it holds the Lonca rules for this project."
 # Project MCP and rules files of the other agent CLIs, the paths their own docs name (lonca#361).
-# bin/lane copies the pi, grok and agy files into lane worktrees: keep both lists the same.
+# bin/lane copies the opencode, pi, grok and agy files into lane worktrees: keep both lists the same.
 OTHER = {"opencode": (".opencode/opencode.json",),
          "copilot": (".github/mcp.json", ".github/instructions/lonca.instructions.md"),
          "pi": (".pi/mcp.json", ".pi/APPEND_SYSTEM.md"),
@@ -502,9 +502,11 @@ class Project:
             self.init_claude(self.root, rec, paths, policy)
         if self.root not in dict(found) and "codex" in self.data["agents"]:
             # Outside a Git repository Codex reads AGENTS.md only from the folder it starts in.
+            # main() refuses a folder inside a repository, so no Git checkout tracks this file.
             path = plain(self.root / "AGENTS.md")
             old = read(path) or b""
             if RULES.encode() not in old.splitlines():
+                print(f"add the Lonca rules line to {path}")
                 self.write(path, append(old, RULES))
         for repo, common in found:
             self.init_repo(repo, common, self.data["agents"], policy)
@@ -903,6 +905,9 @@ def migrate(args):
             print(f"  reconcile registration {project.file} and backups {project.backups}")
             if not (root / ".git").exists() and "claude" in project.data["agents"]:
                 print(f"  install {PLUGIN} locally; merge {root / SETTINGS} and {root / 'CLAUDE.local.md'}")
+            if (not (root / ".git").exists() and "codex" in project.data["agents"]
+                    and RULES.encode() not in (read(root / "AGENTS.md") or b"").splitlines()):
+                print(f"  add the Lonca rules line to {root / 'AGENTS.md'}")
             for repo, common in found[root]:
                 local = git(repo, "config", "--local", "--get", "core.hooksPath", optional=True)
                 effective = git(repo, "config", "--get", "core.hooksPath", optional=True)
@@ -1108,8 +1113,8 @@ def main():
             project_root = Path(p.stdout.rstrip("\n").split("\t")[1]) if p.returncode == 0 else root
             if args.lane:
                 agents = Project(project_root).data["agents"]
-                # opencode and Copilot lanes get MCP per run; pi, Grok and Antigravity lanes copy the project files
-                if args.agent in ("claude", "codex", "pi", "grok", "agy") and args.agent not in agents:
+                # Copilot lanes get MCP per run; opencode, pi, Grok and Antigravity lanes copy the project files
+                if args.agent in ("claude", "codex", "opencode", "pi", "grok", "agy") and args.agent not in agents:
                     sys.exit(f"lane: ask your lead to run lonca init --agents {args.agent} {shlex.quote(str(project_root))}")
                 if not status(project_root, root):
                     sys.exit(f"lane: project setup incomplete. Ask your lead to run lonca init {shlex.quote(str(project_root))} "

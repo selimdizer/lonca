@@ -268,8 +268,11 @@ def other_clis(base):
     (root / "AGENTS.md").write_text("Folder notes\n")
     files = (*names, ".git/info/exclude")
     baseline = snapshot(repo, files)
+    assert f"add the Lonca rules line to {root / 'AGENTS.md'}" in run(script, "migrate", "--dry-run", root)
+    assert (root / "AGENTS.md").read_text() == "Folder notes\n"
     run(script, "init", "--agents", "codex,crush", root, ok=False)
-    run(script, "init", "--agents", "codex," + ",".join(lonca["OTHER"]), root)
+    added = run(script, "init", "--agents", "codex," + ",".join(lonca["OTHER"]), root)
+    assert f"add the Lonca rules line to {root / 'AGENTS.md'}" in added
     policy = tomllib.loads((repo / ".codex/config.toml").read_text())["mcp_servers"]["deja"]["env"]["DEJA_POLICY_FILE"]
     opencode = json.loads((repo / ".opencode/opencode.json").read_bytes())
     assert opencode["mcp"]["servers"]["deja"]["environment"] == {"DEJA_POLICY_FILE": policy}
@@ -305,6 +308,16 @@ def other_clis(base):
     (repo / ".pi/APPEND_SYSTEM.md").unlink()
     assert snapshot(repo, files) == baseline and (root / "AGENTS.md").read_text() == "Folder notes\n"
     assert not any((repo / folder).exists() for folder in (".opencode", ".github", ".grok", ".agents"))
+    # A folder inside a repository is refused, so init never edits an AGENTS.md that repository tracks.
+    enclosing = base / "enclosing"
+    (enclosing / "space/app").mkdir(parents=True)
+    git(enclosing, "init", "-q")
+    git(enclosing / "space/app", "init", "-q")
+    (enclosing / "space/AGENTS.md").write_text("Team rules\n")
+    git(enclosing, "add", "space/AGENTS.md")
+    refused = subprocess.run([script, "init", "--agents", "codex", enclosing / "space"], capture_output=True, text=True)
+    assert refused.returncode and "repository root or its parent project directory" in refused.stderr, refused.stderr
+    assert (enclosing / "space/AGENTS.md").read_text() == "Team rules\n" and not (enclosing / "space/.lonca.toml").exists()
 
 
 def legacy_defaults(home):
@@ -497,13 +510,13 @@ if sys.argv[1] == "get":
         assert all(os.access(Path(hooks_path) / hook, os.X_OK) for hook in ("pre-push", "commit-msg"))
         rec = json.loads(Path(str(result) + ".lane.json").read_bytes())
         assert Path(rec["temp"]).is_dir() and Path(rec["project"]) == repo
-    # pi, Grok and Antigravity lanes copy the opted-in project files; Copilot and opencode lanes get MCP per run.
+    # opencode, pi, Grok and Antigravity lanes copy the opted-in project files; Copilot lanes get MCP per run.
     result = home / ".cache/ai-runs/fixture/run/pi.result"
     refused = subprocess.run([SRC / "bin/lane", repo, "feat/pi", "pi:x/y", brief, result, main], capture_output=True, text=True)
     assert refused.returncode and "lonca init --agents pi" in refused.stderr, refused.stderr
-    run(script, "init", "--agents", "pi,grok,agy", repo)
+    run(script, "init", "--agents", "opencode,pi,grok,agy", repo)
     for agent, copied in (("pi:x/y", ".pi/mcp.json"), ("grok:g", ".grok/config.toml"), ("agy:a", ".agents/rules/lonca.md"),
-                          ("copilot:c", None), ("opencode:o/p", None)):
+                          ("copilot:c", None), ("opencode:o/p", ".opencode/opencode.json")):
         kind = agent.split(":")[0]
         result = home / f".cache/ai-runs/fixture/run/{kind}.result"
         run(SRC / "bin/lane", repo, "feat/" + kind, agent, brief, result, main)
@@ -515,6 +528,18 @@ if sys.argv[1] == "get":
         assert ("--additional-mcp-config" in argv[-1] and policy in argv[-1]) == (kind == "copilot")
         assert ("--approve" in argv[-1]) == (kind == "pi")
         assert any(arg.startswith("OPENCODE_CONFIG_DIR=") for arg in argv) == (kind == "opencode")
+    # A branch that tracks pi resources gets pi's own trust prompt, not --approve.
+    git(sibling, "fetch", "-q", "origin")
+    git(sibling, "checkout", "-q", "-b", "with-skills", "origin/" + main)
+    (sibling / ".agents/skills/x").mkdir(parents=True)
+    (sibling / ".agents/skills/x/SKILL.md").write_text("fixture skill")
+    git(sibling, "add", ".agents/skills/x/SKILL.md")
+    git(sibling, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-q", "-m", "Fixture skill")
+    git(sibling, "push", "-q", "origin", "with-skills")
+    result = home / ".cache/ai-runs/fixture/run/pi-skills.result"
+    run(SRC / "bin/lane", repo, "feat/pi-skills", "pi:x/y", brief, result, "with-skills")
+    argv = json.loads((home / "terminal.json").read_bytes())
+    assert "pi --model x/y" in argv[-1] and "--approve" not in argv[-1], argv[-1]
     # Two branches that map to one worktree folder: the second is refused, not run in the first one's worktree.
     first = json.loads((home / ".cache/ai-runs/fixture/run/fixture.result.lane.json").read_bytes())
     result = home / ".cache/ai-runs/fixture/run/clash.result"
@@ -584,7 +609,25 @@ if sys.argv[1] == "get":
     guards.write_text("")
     denied = subprocess.run([script, "status", "--lane", repo], capture_output=True, text=True)
     assert denied.returncode and "lonca init" in denied.stderr
-    run(script, "migrate")
+    grok = base / "bin/grok"
+    grok.write_text("""#!/usr/bin/env python3
+import os, re, sys
+from pathlib import Path
+args = sys.argv[1:]
+name = args[-1]
+user = Path(os.environ["HOME"]) / ".grok/config.toml"
+if args[:2] != ["mcp", "remove"]:
+    sys.exit(2)
+if "--scope" not in args and f"[mcp_servers.{name}]" in Path(".grok/config.toml").read_text():
+    sys.exit(f"'{name}' exists in multiple scopes. Specify which one to remove")
+user.write_text(re.sub(rf"(?m)^\\[mcp_servers\\.{name}(\\.env)?\\]\\n(?:(?!\\[).*\\n)*", "", user.read_text()))
+""")
+    grok.chmod(0o755)
+    (home / ".grok/config.toml").write_text('[mcp_servers.kanzo]\ncommand = "kanzo"\nargs = ["mcp"]\nenabled = true\n')
+    state.write_text("grok kanzo\n")
+    run(script, "migrate", cwd=repo)
+    assert "kanzo" not in (home / ".grok/config.toml").read_text() and not state.exists()
+    assert "kanzo" in tomllib.loads((repo / ".grok/config.toml").read_text())["mcp_servers"]
     assert run(script, "status", "--lane", repo)
     backups = list((home / ".local/state/lonca/migration-backups").iterdir())
     assert backups
