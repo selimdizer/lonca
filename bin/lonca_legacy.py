@@ -19,7 +19,6 @@ OLD_MARKET = LONCA / "extras/sui/plugins"
 MCP = {"claude": ".claude.json", "codex": ".codex/config.toml", "copilot": ".copilot/mcp-config.json",
        "agy": ".gemini/config/mcp_config.json", "grok": ".grok/config.toml", "omp": ".omp/agent/mcp.json",
        "pi": ".pi/agent/mcp.json", "opencode": ".config/opencode/opencode.json"}
-DEFERRED_MCP = {"opencode", "copilot", "agy", "grok", "pi"}
 HARNESS_LINKS = {
     ".codex/AGENTS.md": "AGENTS.md", ".codex/rules/default.rules": "config/codex-rules/default.rules",
     ".omp/agent/RULES.md": "AGENTS.md", ".omp/agent/extensions/lonca-guard": "config/omp-guard",
@@ -77,18 +76,6 @@ def installed_hook(event, hook):
 def has_installed_hooks(data):
     return any(installed_hook(event, hook) for event, groups in data.get("hooks", {}).items()
                for group in groups for hook in group.get("hooks", []))
-
-
-def deferred_mcp():
-    for harness in sorted(DEFERRED_MCP):
-        for server in ("kanzo", "deja"):
-            try:
-                entry = Legacy.mcp_entry(harness, server)
-            except ValueError:
-                print(f"  cannot inspect {harness} MCP file", file=sys.stderr)
-                break
-            if entry is not None:
-                yield harness, server
 
 
 class Legacy:
@@ -373,9 +360,11 @@ class Legacy:
             data = json.loads("".join(line for line in path.read_text().splitlines(True)
                                       if not line.lstrip().startswith("//")))
             servers = data.get("mcp" if harness == "opencode" else "mcpServers", {})
+            if harness == "opencode" and server not in servers:
+                servers = servers.get("servers", {})  # the layout OpenCode 2 writes
         return servers.get(server)
 
-    def remove_mcp(self, uninstall):
+    def remove_mcp(self):
         state = STATE / "mcp-added"
         if not state.is_file():
             return
@@ -383,17 +372,16 @@ class Legacy:
             harness, server = line.split()
             if harness not in MCP or server not in ("kanzo", "deja"):
                 continue
-            if harness in DEFERRED_MCP and not uninstall:
-                print(f"still global: {harness} MCP {server}")
-                continue
             entry = self.mcp_entry(harness, server)
             command = (entry or {}).get("command", "")
             argv = command if isinstance(command, list) else [command, *(entry or {}).get("args", [])]
             # Only remove the plain stdio registration installed by lonca-mcp.
             # A customized environment, URL or credential belongs to its owner.
-            simple = (isinstance(entry, dict) and set(entry) <= {"type", "command", "args", "env", "enabled"}
+            # Copilot adds "tools": ["*"], Antigravity "disabled": false.
+            simple = (isinstance(entry, dict) and set(entry) <= {"type", "command", "args", "env", "enabled", "disabled", "tools"}
                       and entry.get("type", "stdio") in ("stdio", "local") and not entry.get("env")
-                      and entry.get("enabled", True) is True)
+                      and entry.get("enabled", True) is True and entry.get("disabled", False) is False
+                      and entry.get("tools", ["*"]) == ["*"])
             if not simple or not argv or Path(argv[0]).name != server or argv[1:] != ["mcp"]:
                 print(f"keep current {harness} MCP settings; release old record for {server}")
                 remaining = state.read_text().splitlines()
@@ -421,4 +409,4 @@ class Legacy:
         self.harness_files(uninstall)
         self.global_git()
         self.scope_settings(upcoming)
-        self.remove_mcp(uninstall)
+        self.remove_mcp()

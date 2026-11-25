@@ -118,9 +118,9 @@ Migration and uninstall also clear the old installer’s exact attribution setti
 If a command stops, correct the reported problem and repeat it.
 
 Both interactive and read-only omp lanes load Kanzo and deja through the lane extension. Deja receives
-the project's policy. Migration leaves existing user-level MCP entries for OpenCode, Copilot, Antigravity,
-Grok and pi in place. `lonca status` lists retained registrations as `still global`. Full uninstall
-removes the entries recorded by the legacy installer.
+the project's policy. Migration also removes the user-level Kanzo and deja entries the legacy installer
+recorded for OpenCode, Copilot, Antigravity, Grok and pi: these CLIs get them per project now (see
+[Per-project setup](#per-project-setup)). Opt them in with `lonca init --agents` before you migrate.
 
 ## Quick start
 
@@ -162,7 +162,22 @@ lonca remove ~/work/shop
 ```
 
 The default agents are Claude and Codex. Start with `--agents codex` or `--agents claude` to select one.
-Running init again can add an agent. Each repository gets its own local Git hooks setting, which Git also
+Running init again can add an agent. The other agent CLIs are opt-in (`--agents claude,codex,pi`): init gives
+each one Kanzo, deja (with the project's policy) and a line pointing to the Lonca rules, in the files its own docs
+name, kept out of Git like the rest:
+
+| Agent | MCP servers | Rules |
+|-------|-------------|-------|
+| `opencode` | `.opencode/opencode.json` | the same file (`instructions`) |
+| `copilot` | `.github/mcp.json` | `.github/instructions/lonca.instructions.md` |
+| `pi` | `.pi/mcp.json` | `.pi/APPEND_SYSTEM.md` (replaces a personal `~/.pi/agent/APPEND_SYSTEM.md`) |
+| `grok` | `.grok/config.toml` | `.grok/rules/lonca.md` |
+| `agy` (Antigravity) | `.agents/mcp_config.json` | `.agents/rules/lonca.md` |
+
+Copilot, pi and Grok read these files only in a folder you trust. Lane worktrees don't have them: OpenCode and
+Copilot lanes get Kanzo and deja per run, and `lane` copies the pi, Grok and Antigravity files into the worktree,
+so those lanes need the agent opted in. A Codex lead started in a project folder that is not a repository reads only
+that folder's `AGENTS.md` (Codex finds no project root there), so init adds the pointer line to it. Each repository gets its own local Git hooks setting, which Git also
 uses in linked worktrees. Inside a lane, Git also inherits Lonca’s hooks path for commands in sibling
 and newly cloned repositories. Status lists linked worktrees inside the project next to their main checkout.
 A repository with a custom hooks path keeps it. `LONCA=0` silences memory, deja-scope and temporary-directory

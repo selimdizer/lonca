@@ -254,6 +254,59 @@ p.write_text(json.dumps(data))
     assert not (home / ".gitconfig").exists()
 
 
+def other_clis(base):
+    # The other CLIs' project files: written per opted-in agent, kept out of Git, reported, repaired and undone.
+    lonca = runpy.run_path(str(SRC / "bin/lonca"))
+    names = [name for files in lonca["OTHER"].values() for name in files]
+    script = SRC / "bin/lonca"
+    root = base / "clis"
+    repo = root / "app"
+    repo.mkdir(parents=True)
+    git(repo, "init", "-q")
+    (repo / ".pi").mkdir()
+    (repo / ".pi/mcp.json").write_text('{"mcpServers":{"mine":{"command":"mine"}}}')
+    (root / "AGENTS.md").write_text("Folder notes\n")
+    files = (*names, ".git/info/exclude")
+    baseline = snapshot(repo, files)
+    run(script, "init", "--agents", "codex,crush", root, ok=False)
+    run(script, "init", "--agents", "codex," + ",".join(lonca["OTHER"]), root)
+    policy = tomllib.loads((repo / ".codex/config.toml").read_text())["mcp_servers"]["deja"]["env"]["DEJA_POLICY_FILE"]
+    opencode = json.loads((repo / ".opencode/opencode.json").read_bytes())
+    assert opencode["mcp"]["servers"]["deja"]["environment"] == {"DEJA_POLICY_FILE": policy}
+    assert opencode["mcp"]["servers"]["kanzo"]["command"] == ["kanzo", "mcp"]
+    assert opencode["instructions"] == [str(Path.home() / "lonca/AGENTS.md")]
+    for name in (".github/mcp.json", ".pi/mcp.json", ".agents/mcp_config.json"):
+        servers = json.loads((repo / name).read_bytes())["mcpServers"]
+        assert servers["kanzo"]["args"] == ["mcp"] and servers["deja"]["env"] == {"DEJA_POLICY_FILE": policy}, name
+    assert json.loads((repo / ".pi/mcp.json").read_bytes())["mcpServers"]["mine"] == {"command": "mine"}
+    assert tomllib.loads((repo / ".grok/config.toml").read_text())["mcp_servers"]["deja"]["env"] == {"DEJA_POLICY_FILE": policy}
+    for name in (".github/instructions/lonca.instructions.md", ".pi/APPEND_SYSTEM.md", ".grok/rules/lonca.md", ".agents/rules/lonca.md"):
+        assert lonca["RULES"] in (repo / name).read_text().splitlines(), name
+    assert (repo / ".github/instructions/lonca.instructions.md").read_text().startswith('---\napplyTo: "**"\n---\n')
+    # Codex started in the folder (no Git root) reads only that folder's AGENTS.md.
+    assert (root / "AGENTS.md").read_text() == "Folder notes\n" + lonca["RULES"] + "\n"
+    for name in names:
+        assert git(repo, "check-ignore", "--", name) == name
+    assert not git(repo, "status", "--porcelain")
+    installed = snapshot(repo, files)
+    run(script, "init", root)
+    assert snapshot(repo, files) == installed
+    assert "opencode on, copilot on, pi on, grok on, agy on" in run(script, "status", root)
+    run(script, "status", "--lane", "--agent", "grok", repo)
+    (repo / ".grok/rules/lonca.md").unlink()
+    assert "grok off" in run(script, "status", root)
+    run(script, "status", "--lane", "--agent", "grok", repo, ok=False)
+    run(script, "init", root)
+    assert "grok on" in run(script, "status", root)
+    with (repo / ".pi/APPEND_SYSTEM.md").open("a") as f:
+        f.write("My own pi note\n")
+    run(script, "remove", root)
+    assert (repo / ".pi/APPEND_SYSTEM.md").read_text() == "My own pi note\n"
+    (repo / ".pi/APPEND_SYSTEM.md").unlink()
+    assert snapshot(repo, files) == baseline and (root / "AGENTS.md").read_text() == "Folder notes\n"
+    assert not any((repo / folder).exists() for folder in (".opencode", ".github", ".grok", ".agents"))
+
+
 def legacy_defaults(home):
     return {"attribution": {"commit": "", "pr": ""}, "includeCoAuthoredBy": False,
             "env": {"TMPDIR": str(home / ".cache/lonca/tmp")}}
@@ -359,7 +412,11 @@ def migration(base):
     deferred.parent.mkdir(parents=True)
     original_pi = '{"mcpServers":{"deja":{"command":"deja","args":["mcp"]},"personal":{}}}'
     deferred.write_text(original_pi)
-    state.write_text("omp kanzo\nclaude kanzo\nclaude deja\npi deja\n")
+    opencode = home / ".config/opencode/opencode.json"
+    opencode.parent.mkdir(parents=True)
+    mine = {"type": "local", "command": ["mine"]}
+    opencode.write_text(json.dumps({"mcp": {"servers": {"kanzo": {"type": "local", "command": ["kanzo", "mcp"]}, "mine": mine}}}))
+    state.write_text("omp kanzo\nclaude kanzo\nclaude deja\npi deja\nopencode kanzo\n")
     script = SRC / "bin/lonca"
     originals = {p: p.read_bytes() for p in (catalog, settings, doc, mcp, state, home / ".gitconfig")}
     preview = run(script, "migrate", "--dry-run", explicit)
@@ -385,9 +442,11 @@ def migration(base):
     assert json.loads(claude_mcp.read_bytes()) == {"clientState": "global-only-fixture", "mcpServers": {"deja": customized},
                                                  "openSessionUpdate": True}
     assert not mcp.with_name("mcp.json.lonca-bak").exists()
-    assert state.read_text() == "pi deja\n" and deferred.read_text() == original_pi
+    # Every CLI now gets Kanzo and deja per project: the recorded global entries go, personal ones stay.
+    assert not state.exists() and json.loads(deferred.read_bytes())["mcpServers"] == {"personal": {}}
+    assert json.loads(opencode.read_bytes()) == {"mcp": {"servers": {"mine": mine}}}
     status = run(script, "status", repo)
-    assert "still global: pi MCP deja" in status and "global install still present" not in status
+    assert "still global" not in status and "global install still present" not in status
     assert "outside a Lonca project" in run(script, "outside-session", cwd=base)
     assert json.loads(catalog.read_bytes())["lonca"]["source"]["path"] == str(home / "lonca")
     run("git", "config", "--global", "--get", "core.hooksPath", ok=False)
@@ -438,6 +497,24 @@ if sys.argv[1] == "get":
         assert all(os.access(Path(hooks_path) / hook, os.X_OK) for hook in ("pre-push", "commit-msg"))
         rec = json.loads(Path(str(result) + ".lane.json").read_bytes())
         assert Path(rec["temp"]).is_dir() and Path(rec["project"]) == repo
+    # pi, Grok and Antigravity lanes copy the opted-in project files; Copilot and opencode lanes get MCP per run.
+    result = home / ".cache/ai-runs/fixture/run/pi.result"
+    refused = subprocess.run([SRC / "bin/lane", repo, "feat/pi", "pi:x/y", brief, result, main], capture_output=True, text=True)
+    assert refused.returncode and "lonca init --agents pi" in refused.stderr, refused.stderr
+    run(script, "init", "--agents", "pi,grok,agy", repo)
+    for agent, copied in (("pi:x/y", ".pi/mcp.json"), ("grok:g", ".grok/config.toml"), ("agy:a", ".agents/rules/lonca.md"),
+                          ("copilot:c", None), ("opencode:o/p", None)):
+        kind = agent.split(":")[0]
+        result = home / f".cache/ai-runs/fixture/run/{kind}.result"
+        run(SRC / "bin/lane", repo, "feat/" + kind, agent, brief, result, main)
+        argv = json.loads((home / "terminal.json").read_bytes())
+        wt = Path(json.loads(Path(str(result) + ".lane.json").read_bytes())["worktree"])
+        if copied:
+            assert (wt / copied).read_bytes() == (repo / copied).read_bytes() and not git(wt, "status", "--porcelain")
+        policy = next(arg.split("=", 1)[1] for arg in argv if arg.startswith("DEJA_POLICY_FILE="))
+        assert ("--additional-mcp-config" in argv[-1] and policy in argv[-1]) == (kind == "copilot")
+        assert ("--approve" in argv[-1]) == (kind == "pi")
+        assert any(arg.startswith("OPENCODE_CONFIG_DIR=") for arg in argv) == (kind == "opencode")
     # Two branches that map to one worktree folder: the second is refused, not run in the first one's worktree.
     first = json.loads((home / ".cache/ai-runs/fixture/run/fixture.result.lane.json").read_bytes())
     result = home / ".cache/ai-runs/fixture/run/clash.result"
@@ -596,6 +673,7 @@ if __name__ == "__main__":
         overlapping_hooks(base)
         off_switch(base)
         test(base)
+        other_clis(base)
         migration(base)
         direct_uninstall(base)
     print("per-project layout passed")

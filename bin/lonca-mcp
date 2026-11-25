@@ -15,7 +15,9 @@ import json, os, sys, tempfile, stat
 f, key, op, name, *cmd = sys.argv[1:]
 try: d = json.load(open(f))
 except FileNotFoundError: d = {}
-servers = d.setdefault(key, {})
+servers = d
+for part in key.split("."):  # opencode: mcp, or mcp.servers since OpenCode 2
+    servers = servers.setdefault(part, {})
 if op == "remove":
     if servers.pop(name, None) is None: sys.exit(0)
 elif name in servers: sys.exit(0)
@@ -49,7 +51,7 @@ case $op:$h in
   add:grok)      has "mcp_servers.$n\]" "$HOME/.grok/config.toml" || grok mcp add "$n" "$@" ;;
   remove:grok)   ! has "mcp_servers.$n\]" "$HOME/.grok/config.toml" || grok mcp remove "$n" ;;
   add:opencode)  has "\"$n\"" "$HOME/.config/opencode/opencode.json" || opencode mcp add --global "$n" -- "$@" ;;
-  remove:opencode) opencode mcp remove --global "$n" ;;
+  remove:opencode) json "$HOME/.config/opencode/opencode.json" mcp.servers && json "$HOME/.config/opencode/opencode.json" mcp ;;   # OpenCode 2 has no mcp remove
   *:omp)         [ -d "$HOME/.omp/agent" ] && json "$HOME/.omp/agent/mcp.json" mcpServers "$@" ;;
   *:pi)          [ -d "$HOME/.pi/agent" ] && json "$HOME/.pi/agent/mcp.json" mcpServers "$@" ;;
   *) exit 0 ;;
