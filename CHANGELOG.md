@@ -16,8 +16,8 @@ Lonca now lives per project: nothing global, every rule, guard and hook comes fr
 - Start leads with `claude --agent lonca:lead`.
 - Sessions outside a project folder (no `.lonca.toml` above them) get no Lonca rules.
 - Each new project needs `lonca init <dir>` once.
-- A repo with its own `core.hooksPath` keeps it and gets no Lonca git hooks: unset it first
-  (`git config --unset core.hooksPath`), then run `lonca init` again.
+- A repo with its own `core.hooksPath` keeps it and gets no Lonca git hooks: unset it first, then run `lonca init`
+  again. A global one needs `git config --global --unset core.hooksPath`, a repo one `git config --unset core.hooksPath`.
 
 ### Known limits
 
