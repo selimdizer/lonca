@@ -55,6 +55,8 @@ Lonca now lives per project: nothing global, every rule, guard and hook comes fr
 - Start leads with `claude --agent lonca:lead`.
 - Sessions outside a project folder (no `.lonca.toml` above them) get no Lonca rules.
 - Each new project needs `lonca init <dir>` once.
+- The first Claude session in each project asks "Allow external CLAUDE.md file imports?" for `~/lonca/AGENTS.md`
+  (imported by the project's `CLAUDE.local.md`): answer yes, or that project's sessions get no Lonca rules.
 - A repo with its own `core.hooksPath` keeps it and gets no Lonca git hooks: unset it first, then run `lonca init`
   again. A global one needs `git config --global --unset core.hooksPath`, a repo one `git config --unset core.hooksPath`.
 
