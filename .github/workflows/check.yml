@@ -87,7 +87,7 @@ jobs:
           assert not bad, bad
           assert m.tier_of([F("src/app.py")], {"high_paths": ["src/app.py"]})[0] == "high"
           PY
-      - name: merge-pr gate (lane refused, code per project batch and base, fetched settings, crash-safe lock, night, worktree at the merged head, file list)
+      - name: merge-pr gate (lane refused, a new code per ask for exactly its PRs, bound to the base, fetched settings, crash-safe lock, night, worktree at the merged head, file list)
         run: python3 .github/merge-gate.py
       - name: deja scope (this project's sessions only, checked with deja's own match rule)
         run: |
