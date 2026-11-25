@@ -318,7 +318,7 @@ def other_clis(base):
     copilot.write_bytes(commented)
     for command in ("init", "remove"):
         stopped = subprocess.run([script, command, root], capture_output=True, text=True)
-        assert stopped.returncode and f"{copilot} has comments or is not plain JSON" in stopped.stderr, stopped.stderr
+        assert stopped.returncode and ".github/mcp.json has comments or is not plain JSON" in stopped.stderr, stopped.stderr
         assert copilot.read_bytes() == commented and (root / ".lonca.toml").exists()
     copilot.write_bytes(installed_copilot)
     user = Path.home() / ".config/opencode/opencode.json"
