@@ -68,6 +68,19 @@ print(legacy.directory)
     run(BIN / "ai-cleanup")
     assert not backup.exists() and not old_layout.exists() and recent.exists() and foreign.exists()
 
+    # approval files of codes never used go after 2 h; fresh ones stay
+    approvals = home / ".local/state/lonca/approvals"
+    approvals.mkdir()
+    old_files = [approvals / "batch_fixture_abc", approvals / "owner_repo_1"]
+    fresh = [approvals / "batch_fixture_xyz", approvals / "owner_repo_2"]
+    for f in old_files + fresh:
+        f.write_text("fixture\n")
+    for f in old_files:
+        os.utime(f, (time.time() - 3 * 3600,) * 2)
+    assert "would remove 2 approval files" in run(BIN / "ai-cleanup", "--dry-run") and all(f.exists() for f in old_files)
+    run(BIN / "ai-cleanup")
+    assert not any(f.exists() for f in old_files) and all(f.exists() for f in fresh)
+
     root = home / "project"
     root.mkdir()
     run("git", "-C", root, "init", "-q")

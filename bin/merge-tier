@@ -5,8 +5,9 @@
           files, env and secrets config, auth/login/session/permission/payment/billing/crypto paths, agent instructions
           (AGENTS.md, CLAUDE.md, .claude/, .codex/, .mcp.json, skills/, agents/*.md, routing.md), git hooks and shims,
           install.sh, Makefile, Lonca's own gate and agent config (bin/merge-*, night-on, lonca*, ai-trace-*, bin/lane,
-          .claude-plugin/, config/codex-rules|omp-guard|omp-lane|opencode/), AGENTS.md/CLAUDE.md in any folder or case,
-          .lonca.toml, the project's own `high_paths`; a file that is renamed, copied or deleted; or a file list
+          .claude-plugin/, config/codex-rules|omp-guard|omp-lane|opencode/), prompts for timer-started model runs
+          (config/*.prompt.md, config/monthly-card.md), AGENTS.md/AGENT.md/CLAUDE.md in any folder or case,
+          .opencode/agent/*.md, .lonca.toml, the project's own `high_paths`; a file that is renamed, copied or deleted; or a file list
           shorter than the PR's file count (GitHub lists at most 3000)
   low     every path is plain docs (*.md, *.txt, docs/; not SECURITY or INSTALL docs) or a test file (not
           conftest.py, which runs for every test), at most 10 files and 100 changed lines
@@ -29,9 +30,10 @@ HIGH = [".github/*", ".gitlab-ci*", ".circleci/*", "Jenkinsfile", "Dockerfile*",
         ".cursorrules", ".mcp.json", "skills/*", "*/skills/*", "agents/*.md", "routing.md", ".husky/*", ".githooks/*",
         "git-hooks/*", "hooks/hooks.json", "shims/*", "install.sh", "Makefile", "lonca.toml", ".lonca.toml",
         "bin/merge-*", "bin/night-on", "bin/lonca*", "bin/ai-trace-*", "bin/lane", ".claude-plugin/*",
-        "config/codex-rules/*", "config/omp-guard/*", "config/omp-lane/*", "config/opencode/*"]
+        "config/codex-rules/*", "config/omp-guard/*", "config/omp-lane/*", "config/opencode/*",
+        "config/*.prompt.md", "config/monthly-card.md", ".opencode/agent/*.md", "*/.opencode/agent/*.md"]
 # agent instruction files in any folder and any case: never plain docs
-INSTRUCTIONS = {"agents.md", "claude.md", "gemini.md", "agents.override.md", "claude.local.md"}
+INSTRUCTIONS = {"agents.md", "agent.md", "claude.md", "gemini.md", "agents.override.md", "claude.local.md"}
 RISKY_WORDS = re.compile(r"auth|login|session|permission|rbac|acl|payment|billing|checkout|crypto|token|password", re.I)
 TEST = re.compile(r"(^|/)(tests?|__tests__|spec)/|(_test\.go|\.test\.[jt]sx?|\.spec\.[jt]sx?|(^|/)test_[^/]+\.py|_test\.py)$")
 DOCS = re.compile(r"(^|/)docs/|\.(md|txt)$", re.I)

@@ -7,6 +7,77 @@ L=$(dirname "$(dirname "$(readlink -f "$0")")")   # the Lonca checkout this shim
 args=" $* "
 deny() { echo "lonca guard: blocked '$name$args'— $1. Stop and report to the owner." >&2; exit 126; }
 
+# run the real binary: PATH without this shims dir
+here=$(dirname "$(readlink -f "$0")")
+real_path=$(printf '%s' "$PATH" | tr ':' '\n' | grep -vx "$here" | grep -vx "$(dirname "$0")" | paste -sd: -)
+
+# The git rules, on one argv. An alias already in git config is looked up with the real git and its expansion checked
+# the same way (git refuses aliases that shadow a built-in, so a built-in never expands).
+# shortcut: alias text is split on spaces (git also honours quotes), fine for flags; a parser if quoted flags matter.
+expansions=0
+git_check() {
+  s=" $* " sub= skip= n=0   # n: global options before the subcommand
+  # Hook skips anywhere after the subcommand: --no-verify (a unique prefix on commit and push; exact on
+  # merge and pull, which also have --no-verify-signatures), and -n alone or in a cluster (-an) on commit.
+  for a do
+    if [ -n "$skip" ]; then skip=; [ -n "$sub" ] || n=$((n + 1)); continue; fi
+    if [ -z "$sub" ]; then
+      case $a in -C|-c|--git-dir|--work-tree|--namespace|--config-env|--attr-source) skip=1 n=$((n + 1)) ;; -*) n=$((n + 1)) ;; *) sub=$a ;; esac
+      continue
+    fi
+    case $sub:$a in
+      *:--) break ;;
+      commit:--no-veri*|push:--no-veri*|merge:--no-verify|pull:--no-verify) deny "don't skip git hooks" ;;
+      commit:-[!-]*)
+        o=${a#-}
+        while [ -n "$o" ]; do
+          c=${o%"${o#?}"}; o=${o#?}
+          case $c in
+            n) deny "don't skip git hooks" ;;
+            [mCcFt]) [ -z "$o" ] && skip=1; break ;;   # takes a value: the rest, or the next argument
+            [Su]) break ;;                              # optional value, only inline
+          esac
+        done ;;
+    esac
+  done
+  case $(printf '%s' "$s" | tr '[:upper:]' '[:lower:]') in
+    *hookspath*|*include*".path"*|*alias.*|*" config "*)
+      python3 -I "$L/shims/hooks-config.py" "$@" || deny "don't change git hooks" ;;
+  esac
+  case $s in
+    *" push "*" --force"*|*" push "*" -f "*|*" push --force"*|*" push -f "*|*" push "*" +"*) deny "no force-push" ;;
+    *" push "*" --delete"*|*" push "*" -d "*|*" push "*" :"*) deny "no branch deletion" ;;
+    *" push "*" main "*|*" push "*":main "*|*" push "*" master "*|*" push "*":master "*) deny "push a branch and open a PR; the default branch is the owner's" ;;
+    *"core.hooksPath="*|*"core.hookspath="*) deny "don't bypass git hooks" ;;
+    *" push "*" --no-verify"*) deny "don't skip the pre-push hook" ;;
+    *" reset --hard"*|*" reset "*" --hard"*) deny "no reset --hard" ;;
+    *" clean "*) deny "no git clean" ;;
+    *" branch -D "*|*" branch "*" -D "*) deny "no branch deletion" ;;
+  esac
+  [ -n "$sub" ] || return 0
+  for k in "alias.$sub" "alias.$sub.command"; do   # both spellings git reads ([alias "x"] command = ...)
+    exp=$(alias_of "$n" "$k" "$@")
+    [ -z "$exp" ] || (alias_check "$n" "$exp" "$@") || exit 126   # a subshell: this loop's state survives
+  done
+}
+alias_check() {   # <global-option count> <alias text> <argv>: the git rules on the argv the alias expands to
+  n=$1 exp=$2 i=0; shift 2
+  expansions=$((expansions + 1)); [ $expansions -le 8 ] || deny "git aliases nest too deep"
+  for a do   # rebuild the argv: the alias's words in place of the subcommand
+    shift; i=$((i + 1))
+    if [ $i -eq $((n + 1)) ]; then set -- "$@" ${exp#!}; else set -- "$@" "$a"; fi
+  done
+  case $exp in !*) ;; *) git_check "$@"; return ;; esac
+  while [ $# -gt 0 ]; do   # a shell alias: every git command in its text, as if typed with the arguments after it
+    case $1 in *git) shift; git_check "$@" ;; *) shift ;; esac
+  done
+}
+alias_of() {   # <global-option count> <config key> <argv>: the alias's text, read with the real git and those options
+  k=$1 key=$2 j=0; shift 2
+  for a do shift; j=$((j + 1)); [ $j -gt "$k" ] || set -- "$@" "$a"; done
+  env PATH="$real_path" git "$@" config --get "$key" 2>/dev/null
+}
+
 case $name in
   pkill|killall) deny "stop only processes you started, by PID" ;;
   docker)
@@ -45,47 +116,8 @@ case $name in
     case $(printf '%s' "${GIT_CONFIG_PARAMETERS:-}" | tr '[:upper:]' '[:lower:]') in
       *hookspath*|*include*|*alias.*) deny "don't bypass git hooks" ;;   # an alias can hide a hook skip
     esac
-    # Hook skips anywhere after the subcommand: --no-verify (a unique prefix on commit and push; exact on
-    # merge and pull, which also have --no-verify-signatures), and -n alone or in a cluster (-an) on commit.
-    sub= skip=
-    for a do
-      if [ -n "$skip" ]; then skip=; continue; fi
-      if [ -z "$sub" ]; then
-        case $a in -C|-c|--git-dir|--work-tree|--namespace|--config-env|--attr-source) skip=1 ;; -*) ;; *) sub=$a ;; esac
-        continue
-      fi
-      case $sub:$a in
-        *:--) break ;;
-        commit:--no-veri*|push:--no-veri*|merge:--no-verify|pull:--no-verify) deny "don't skip git hooks" ;;
-        commit:-[!-]*)
-          o=${a#-}
-          while [ -n "$o" ]; do
-            c=${o%"${o#?}"}; o=${o#?}
-            case $c in
-              n) deny "don't skip git hooks" ;;
-              [mCcFt]) [ -z "$o" ] && skip=1; break ;;   # takes a value: the rest, or the next argument
-              [Su]) break ;;                              # optional value, only inline
-            esac
-          done ;;
-      esac
-    done
-    case $(printf '%s' "$args" | tr '[:upper:]' '[:lower:]') in
-      *hookspath*|*include*".path"*|*alias.*|*" config "*)
-        python3 -I "$L/shims/hooks-config.py" "$@" || deny "don't change git hooks" ;;
-    esac
-    case $args in
-      *" push "*" --force"*|*" push "*" -f "*|*" push --force"*|*" push -f "*|*" push "*" +"*) deny "no force-push" ;;
-      *" push "*" --delete"*|*" push "*" -d "*|*" push "*" :"*) deny "no branch deletion" ;;
-      *" push "*" main "*|*" push "*":main "*|*" push "*" master "*|*" push "*":master "*) deny "push a branch and open a PR; the default branch is the owner's" ;;
-      *"core.hooksPath="*|*"core.hookspath="*) deny "don't bypass git hooks" ;;
-      *" push "*" --no-verify"*) deny "don't skip the pre-push hook" ;;
-      *" reset --hard"*|*" reset "*" --hard"*) deny "no reset --hard" ;;
-      *" clean "*) deny "no git clean" ;;
-      *" branch -D "*|*" branch "*" -D "*) deny "no branch deletion" ;;
-    esac ;;
+    set -f   # alias words are split below, never globbed
+    git_check "$@" ;;
 esac
 
-# run the real binary: PATH without this shims dir
-here=$(dirname "$(readlink -f "$0")")
-real_path=$(printf '%s' "$PATH" | tr ':' '\n' | grep -vx "$here" | grep -vx "$(dirname "$0")" | paste -sd: -)
 exec env PATH="$real_path" "$name" "$@"
