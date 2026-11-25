@@ -25,6 +25,26 @@ PLUGIN = "lonca@lonca"
 SETTINGS = ".claude/settings.local.json"
 IMPORT = "@~/lonca/AGENTS.md"
 MARKERS = (".lonca.toml", "lonca.toml")
+RULES = "Read ~/lonca/AGENTS.md before you start: it holds the Lonca rules for this project."
+# Project MCP and rules files of the other agent CLIs, the paths their own docs name (lonca#361).
+# bin/lane copies the opencode, pi, grok and agy files into lane worktrees: keep both lists the same.
+OTHER = {"opencode": (".opencode/opencode.json",),
+         "copilot": (".github/mcp.json", ".github/instructions/lonca.instructions.md"),
+         "pi": (".pi/mcp.json", ".pi/APPEND_SYSTEM.md"),
+         "grok": (".grok/config.toml", ".grok/rules/lonca.md"),
+         "agy": (".agents/mcp_config.json", ".agents/rules/lonca.md")}
+AGENTS = ("claude", "codex", *OTHER)
+# Copilot applies an .instructions.md file only to the paths in its applyTo header.
+APPLY_ALL = b'---\napplyTo: "**"\n---\n'
+NOT_JSON = "has comments or is not plain JSON; edit it by hand or remove the comments"
+
+
+def loads(path, data):
+    # OpenCode and others also accept JSONC: never rewrite what we cannot parse exactly.
+    try:
+        return json.loads(data)
+    except ValueError:
+        raise ValueError(f"{path} {NOT_JSON}") from None
 
 
 def git(repo, *args, optional=False):
@@ -181,9 +201,9 @@ def undo_file(path, before, installed, current):
     if current is None or current == before:
         return current
     original = before or b""
-    if path.name in ("settings.local.json", "hooks.json"):
-        value = undo_json(json.loads(before) if before is not None else MISSING,
-                          json.loads(installed or b"{}"), json.loads(current))
+    if path.name in ("settings.local.json", "hooks.json", "opencode.json", "mcp.json", "mcp_config.json"):
+        value = undo_json(loads(path, before) if before is not None else MISSING,
+                          json.loads(installed or b"{}"), loads(path, current))
         if value is MISSING:
             return None
         if before is not None and value == json.loads(before):
@@ -224,8 +244,10 @@ def undo_file(path, before, installed, current):
             expected = undo_json(tomllib.loads(original.decode()), tomllib.loads(installed.decode()), tomllib.loads(current.decode()))
             if tomllib.loads(cleaned.decode()) != expected:
                 raise ValueError(f"ambiguous edits in {path}; preserve your custom settings before removal")
-    elif path.name in ("CLAUDE.local.md", "exclude"):
+    elif path.name in ("CLAUDE.local.md", "exclude", "AGENTS.md", "APPEND_SYSTEM.md", "lonca.md", "lonca.instructions.md"):
         cleaned = without_lines(original, installed or b"", current)
+        if path.name == "lonca.instructions.md" and before is None and cleaned.strip():
+            cleaned = APPLY_ALL + cleaned  # the owner's own lines stay applied
     elif path.name == "lonca.rules" and installed:
         rules = (SRC / "config/codex-rules/default.rules").read_bytes()
         cleaned = current.replace(rules, b"", 1) if rules not in original else current
@@ -413,6 +435,7 @@ class Project:
             names.extend([SETTINGS, "CLAUDE.local.md"])
         if "codex" in agents:
             names.extend([".codex/config.toml", ".codex/hooks.json", ".codex/rules/lonca.rules"])
+        names.extend(name for agent in agents for name in OTHER.get(agent, ()))
         paths = {name: personal(repo, name) for name in names}
         # The questions ledger is the owner's data: hidden from Git here, kept by remove.
         self.exclude(repo, common, names + [".lonca"] * (repo == self.root))
@@ -443,6 +466,15 @@ class Project:
             rules = (SRC / "config/codex-rules/default.rules").read_bytes()
             if rules not in old:
                 self.write(path, old + (b"\n" if old else b"") + rules)
+        for name in (name for agent in agents for name in OTHER.get(agent, ())):
+            if name.endswith(".toml"):
+                self.write_mcp(paths[name], policy)
+            else:
+                try:
+                    data = other_config(name, read(paths[name]), policy)
+                except ValueError as error:
+                    raise ValueError(f"{repo}: {error}") from None
+                self.write(paths[name], data)
         rec["ready"] = True
         self.save()
 
@@ -485,6 +517,14 @@ class Project:
                 raise ValueError(f"project folder was replaced: {self.root}")
             paths = {name: plain(self.root / name) for name in (SETTINGS, "CLAUDE.local.md")}
             self.init_claude(self.root, rec, paths, policy)
+        if self.root not in dict(found) and "codex" in self.data["agents"]:
+            # Outside a Git repository Codex reads AGENTS.md only from the folder it starts in.
+            # main() refuses a folder inside a repository, so no Git checkout tracks this file.
+            path = plain(self.root / "AGENTS.md")
+            old = read(path) or b""
+            if RULES.encode() not in old.splitlines():
+                print(f"add the Lonca rules line to {path}")
+                self.write(path, append(old, RULES))
         for repo, common in found:
             self.init_repo(repo, common, self.data["agents"], policy)
         self.save()
@@ -648,6 +688,42 @@ def codex_mcp(old, policy):
     return text.encode()
 
 
+def other_config(name, old, policy):
+    """One project file of another agent CLI, merged into its current contents."""
+    if name.endswith(".toml"):  # Grok reads Codex's mcp_servers tables
+        return codex_mcp(old or b"", policy)
+    if name.endswith(".json"):
+        data = loads(name, old or b"{}")
+        for server in ("kanzo", "deja"):
+            env = {"DEJA_POLICY_FILE": str(policy)} if server == "deja" else {}
+            if name == ".opencode/opencode.json":
+                key, entry = "mcp.servers", {"type": "local", "command": [server, "mcp"], **({"environment": env} if env else {})}
+                servers = data.setdefault("mcp", {}).setdefault("servers", {})
+            else:
+                entry = {"command": server, "args": ["mcp"], **({"env": env} if env else {})}
+                key, entry = "mcpServers", {"type": "local", **entry} if name == ".github/mcp.json" else entry
+                servers = data.setdefault("mcpServers", {})
+            if servers.setdefault(server, entry) != entry:
+                raise ValueError(f"existing {key}.{server} in {name} conflicts with project settings")
+        if name == ".opencode/opencode.json" and str(HOME / "lonca/AGENTS.md") not in data.setdefault("instructions", []):
+            data["instructions"].append(str(HOME / "lonca/AGENTS.md"))
+        return formatted(data)
+    text = old or (APPLY_ALL if name.endswith(".instructions.md") else b"")
+    return text if RULES.encode() in text.splitlines() else append(text, RULES)
+
+
+def other_on(repo, agent, policy):
+    try:
+        for name in OTHER[agent]:
+            data = read(repo / name)
+            wanted = other_config(name, data, policy) if data is not None and policy else None
+            if wanted is None or (json.loads(wanted) != json.loads(data) if name.endswith(".json") else wanted != data):
+                return False
+    except ValueError:
+        return False
+    return True
+
+
 def claude_status(repo, project):
     settings = json.loads(read(repo / SETTINGS) or b"{}")
     enabled = settings.get("enabledPlugins", {}).get(PLUGIN)
@@ -698,13 +774,15 @@ def status(root, target=None):
                                  for g in groups))
             except ValueError as error:
                 print(f"    warning: {repo}/.codex/config.toml: {error}")
-        print(f"  {repo}: git hooks {hooks}, Claude plugin {claude}, settings {'on' if configured else 'off'}, Codex {'on' if codex else 'off'}")
+        others = {a: other_on(repo, a, policy) for a in project.data["agents"] if a in OTHER}
+        print(f"  {repo}: git hooks {hooks}, Claude plugin {claude}, settings {'on' if configured else 'off'}, Codex {'on' if codex else 'off'}"
+              + "".join(f", {a} {'on' if on else 'off'}" for a, on in others.items()))
         entry = project.data["repos"].get(str(repo), {})
         if target and entry.get("ready") and marked(root) and common.is_dir():
             ready = (entry.get("identity") == [common.stat().st_dev, common.stat().st_ino]
                      and hooks == "on" and all(os.access(Path(HOOKS) / h, os.X_OK) for h in ("commit-msg", "pre-push"))
                      and ("claude" not in project.data["agents"] or enabled and configured)
-                     and ("codex" not in project.data["agents"] or codex))
+                     and ("codex" not in project.data["agents"] or codex) and all(others.values()))
         if local == HOOKS:
             for hook in ("commit-msg", "pre-push"):
                 if not os.access(Path(HOOKS) / hook, os.X_OK):
@@ -760,9 +838,6 @@ def legacy_settings(folder):
 
 
 def global_status(folder):
-    from lonca_legacy import deferred_mcp
-    for harness, server in deferred_mcp():
-        print(f"  still global: {harness} MCP {server}")
     legacy = legacy_settings(folder)
     if legacy:
         print("  warning: global install still present: run lonca migrate --dry-run (" + ", ".join(legacy) + ")")
@@ -849,6 +924,9 @@ def migrate(args):
             print(f"  reconcile registration {project.file} and backups {project.backups}")
             if not (root / ".git").exists() and "claude" in project.data["agents"]:
                 print(f"  install {PLUGIN} locally; merge {root / SETTINGS} and {root / 'CLAUDE.local.md'}")
+            if (not (root / ".git").exists() and "codex" in project.data["agents"]
+                    and RULES.encode() not in (read(root / "AGENTS.md") or b"").splitlines()):
+                print(f"  add the Lonca rules line to {root / 'AGENTS.md'}")
             for repo, common in found[root]:
                 local = git(repo, "config", "--local", "--get", "core.hooksPath", optional=True)
                 effective = git(repo, "config", "--get", "core.hooksPath", optional=True)
@@ -860,6 +938,8 @@ def migrate(args):
                 if "codex" in project.data["agents"]:
                     for name in ("config.toml", "hooks.json", "rules/lonca.rules"):
                         print(f"  reconcile {repo / '.codex' / name}")
+                for name in (name for agent in project.data["agents"] for name in OTHER.get(agent, ())):
+                    print(f"  reconcile {repo / name}")
         else:
             project.init(None)
     legacy.cleanup(upcoming=managed_claude)
@@ -1022,7 +1102,7 @@ def main():
     migration.add_argument("--dry-run", action="store_true")
     migration.add_argument("roots", nargs="*", type=Path)
     init = commands.add_parser("init")
-    init.add_argument("--agents", help="comma-separated agents (default: claude,codex)")
+    init.add_argument("--agents", help=f"comma-separated agents: {','.join(AGENTS)} (default: claude,codex)")
     init.add_argument("dir", type=Path)
     commands.add_parser("remove").add_argument("dir", type=Path)
     status_cmd = commands.add_parser("status")
@@ -1052,7 +1132,8 @@ def main():
             project_root = Path(p.stdout.rstrip("\n").split("\t")[1]) if p.returncode == 0 else root
             if args.lane:
                 agents = Project(project_root).data["agents"]
-                if args.agent in ("claude", "codex") and args.agent not in agents:
+                # Copilot lanes get MCP per run; opencode, pi, Grok and Antigravity lanes copy the project files
+                if args.agent in ("claude", "codex", "opencode", "pi", "grok", "agy") and args.agent not in agents:
                     sys.exit(f"lane: ask your lead to run lonca init --agents {args.agent} {shlex.quote(str(project_root))}")
                 if not status(project_root, root):
                     sys.exit(f"lane: project setup incomplete. Ask your lead to run lonca init {shlex.quote(str(project_root))} "
@@ -1069,8 +1150,8 @@ def main():
         global_status(Path.cwd())
         return
     agents = args.agents.split(",") if getattr(args, "agents", None) is not None else None
-    if agents is not None and set(agents) - {"claude", "codex"}:
-        parser.error("--agents accepts claude,codex")
+    if agents is not None and set(agents) - set(AGENTS):
+        parser.error("--agents accepts " + ",".join(AGENTS))
     # Serialize overlapping init/remove calls without leaving a stale lock after interruption.
     REGISTRY.mkdir(mode=0o700, parents=True, exist_ok=True)
     fd = os.open(REGISTRY, os.O_RDONLY)

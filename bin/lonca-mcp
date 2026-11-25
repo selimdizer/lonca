@@ -5,6 +5,7 @@
 # another installer made.
 #   harnesses: claude codex omp opencode copilot agy grok pi
 set -u
+exec 3>&2   # json() reports a file it cannot parse here: the CLI calls below are silenced
 op=$1 h=$2 n=$3; shift 3
 R=$HOME/.local/state/lonca/mcp-added
 has() { grep -qs "$1" "$2"; }
@@ -15,7 +16,12 @@ import json, os, sys, tempfile, stat
 f, key, op, name, *cmd = sys.argv[1:]
 try: d = json.load(open(f))
 except FileNotFoundError: d = {}
-servers = d.setdefault(key, {})
+except ValueError:  # JSONC (comments) parses differently: never rewrite it
+    os.write(3, f"  {f} has comments or is not plain JSON; edit it by hand or remove the comments\n".encode())
+    sys.exit(1)
+servers = d
+for part in key.split("."):  # opencode: mcp, or mcp.servers since OpenCode 2
+    servers = servers.setdefault(part, {})
 if op == "remove":
     if servers.pop(name, None) is None: sys.exit(0)
 elif name in servers: sys.exit(0)
@@ -47,9 +53,9 @@ case $op:$h in
   add:agy)       has "\"$n\"" "$HOME/.gemini/config/mcp_config.json" || agy mcp add "$n" "$@" ;;
   remove:agy)    ! has "\"$n\"" "$HOME/.gemini/config/mcp_config.json" || agy mcp remove "$n" ;;
   add:grok)      has "mcp_servers.$n\]" "$HOME/.grok/config.toml" || grok mcp add "$n" "$@" ;;
-  remove:grok)   ! has "mcp_servers.$n\]" "$HOME/.grok/config.toml" || grok mcp remove "$n" ;;
+  remove:grok)   ! has "mcp_servers.$n\]" "$HOME/.grok/config.toml" || grok mcp remove --scope user "$n" ;;   # a project entry may share the name
   add:opencode)  has "\"$n\"" "$HOME/.config/opencode/opencode.json" || opencode mcp add --global "$n" -- "$@" ;;
-  remove:opencode) opencode mcp remove --global "$n" ;;
+  remove:opencode) json "$HOME/.config/opencode/opencode.json" mcp.servers && json "$HOME/.config/opencode/opencode.json" mcp ;;   # OpenCode 2 has no mcp remove
   *:omp)         [ -d "$HOME/.omp/agent" ] && json "$HOME/.omp/agent/mcp.json" mcpServers "$@" ;;
   *:pi)          [ -d "$HOME/.pi/agent" ] && json "$HOME/.pi/agent/mcp.json" mcpServers "$@" ;;
   *) exit 0 ;;
