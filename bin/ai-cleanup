@@ -49,6 +49,15 @@ def in_use_paths():
     return used
 
 Legacy(DRY).prune()
+# merge-pr's approval codes live 1 h; batch and key files of codes never used stay behind (2 h: well past that)
+approvals = HOME / ".local/state/lonca/approvals"
+if approvals.is_dir():
+    stale = [f for f in approvals.iterdir() if f.is_file() and not f.is_symlink() and now - f.stat().st_mtime > 2 * 3600]
+    if not DRY:
+        for f in stale:
+            f.unlink(missing_ok=True)
+    if stale:
+        say(f"{'would remove' if DRY else 'removed'} {len(stale)} approval files older than 2 h in {approvals}")
 projects = registered()
 if not projects:
     sys.exit(0)

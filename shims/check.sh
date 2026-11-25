@@ -2,13 +2,42 @@
 # Self-check: sh ~/lonca/shims/check.sh
 S=$(dirname "$(readlink -f "$0")"); fail=0
 # A regression should fail the test without forwarding a mutating test case to a real CLI.
-stubs=$(mktemp -d)
-trap 'rm -f "$stubs/git" "$stubs/gh" "$stubs/pkill" "$stubs/docker" && rmdir "$stubs"' EXIT
+stubs=$(mktemp -d) repo=$(mktemp -d)
+trap 'rm -f "$stubs/git" "$stubs/gh" "$stubs/pkill" "$stubs/docker" && rmdir "$stubs"; rm -rf "$repo"' EXIT
 for n in git gh pkill; do
   echo '#!/bin/sh' > "$stubs/$n"
   echo 'exit 0' >> "$stubs/$n"
   chmod +x "$stubs/$n"
 done
+# The git stub answers the guard's alias and built-in lookups with the real git; aliases live only in a throwaway repo's config.
+for d in $(printf '%s' "$PATH" | tr ':' ' '); do
+  [ -x "$d/git" ] && [ "$(basename "$(readlink -f "$d/git")")" != guard ] && { realgit=$d/git; break; }
+done
+printf '#!/bin/sh\ncase " $* " in *" config --get alias."*|" --list-cmds="*) exec %s "$@" ;; esac\nexit 0\n' "$realgit" > "$stubs/git"
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1   # never the owner's own aliases
+"$realgit" init -q "$repo"
+while read -r k v; do "$realgit" -C "$repo" config "alias.$k" "$v"; done <<'EOF'
+ci commit
+br branch
+nv commit --no-verify
+c2 ci
+pf push --force
+la lb
+lb la
+lg log --oneline
+sci !git commit --no-verify
+sfn !f() { git add -A && git commit "$@"; }; f
+st !git status
+q1 commit "--no-verify"
+q2 commit '-n'
+q3 !'git' commit --no-verify
+q4 !git-commit --no-verify
+q5 !"git" commit -n
+q6 commit \-\-no-verify
+commit commit --no-verify
+whatchanged commit --no-verify
+EOF
+"$realgit" -C "$repo" config "alias.sub alias.command" "commit --no-verify"
 printf '#!/bin/sh\necho "${COMPOSE_PROJECT_NAME:--}" "$@"\n' > "$stubs/docker"; chmod +x "$stubs/docker"
 t() { want=$1; shift; PATH="$S:$stubs:$PATH" "$@" >/dev/null 2>&1; rc=$?; got=ok; [ $rc -eq 126 ] && got=blocked; [ "$got" = "$want" ] || { echo "FAIL: $* -> $got (want $want)"; fail=1; }; }
 export LONCA_LANE=1 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="$HOME/lonca/git-hooks"
@@ -41,6 +70,30 @@ t blocked git config --global alias.x commit
 t ok      git config --get alias.x
 t blocked git --attr-source HEAD commit --no-verify -m x
 t blocked git --attr-source=HEAD commit -n -m x
+# aliases already in git config are checked as their expansion
+t blocked git -C "$repo" ci --no-verify -m x
+t blocked git -C "$repo" ci -n -m x
+t ok      git -C "$repo" ci -m x
+t blocked git -C "$repo" br -D x
+t ok      git -C "$repo" br -d x
+t blocked git -C "$repo" nv -m x
+t blocked git -C "$repo" c2 -an -m x
+t blocked git -C "$repo" pf origin x
+t blocked git -C "$repo" la
+t ok      git -C "$repo" lg -n 3
+t blocked git -C "$repo" sci -m x
+t blocked git -C "$repo" sfn -n -m x
+t ok      git -C "$repo" sfn -m x
+t ok      git -C "$repo" st --short
+t blocked git -C "$repo" "sub alias" -m x
+t blocked git -C "$repo" q1 -m x
+t blocked git -C "$repo" q2 -m x
+t blocked git -C "$repo" q3 -m x
+t blocked git -C "$repo" q4 -m x
+t blocked git -C "$repo" q5 -m x
+t blocked git -C "$repo" q6 -m x
+t ok      git -C "$repo" commit -m x
+t blocked git -C "$repo" whatchanged
 t blocked gh pr merge 3 --squash
 t blocked gh api repos/a/b/pulls/3/merge -X PUT
 t ok      gh --version

@@ -82,7 +82,11 @@ jobs:
                    ([F("config/omp-lane/x.json")], "high"), ([F("config/opencode/agents/lane.md")], "high"),
                    ([F("bin/lane")], "high"), ([F(".claude-plugin/plugin.json")], "high"),
                    ([F("AGENTS.override.md")], "high"), ([F("CLAUDE.local.md")], "high"), ([F("docs/agents.md")], "high"),
-                   ([F("pkg/Claude.md")], "high"), ([F("sub/dir/AGENTS.MD")], "high"), ([F("docs/agents-guide.md")], "low")]
+                   ([F("pkg/Claude.md")], "high"), ([F("sub/dir/AGENTS.MD")], "high"), ([F("docs/agents-guide.md")], "low"),
+                   ([F("config/memory-review.prompt.md")], "high"), ([F("config/history-candidates.prompt.md")], "high"),
+                   ([F("config/monthly-card.md")], "high"), ([F("Agent.md")], "high"), ([F("app/AGENT.md")], "high"),
+                   ([F(".opencode/agent/review.md")], "high"), ([F("web/.opencode/agent/lane.md")], "high"),
+                   ([F("config/notes.md")], "low")]
           bad = [(f, w, m.tier_of(f, {})) for f, w in cases if m.tier_of(f, {})[0] != w]
           assert not bad, bad
           assert m.tier_of([F("src/app.py")], {"high_paths": ["src/app.py"]})[0] == "high"

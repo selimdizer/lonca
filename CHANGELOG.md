@@ -5,6 +5,22 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+- The lane git guard checks git aliases already in git config by their expansion: `git ci -n` with `alias.ci = commit`
+  and `git br -D` with `alias.br = branch` are refused like the commands they stand for, and a `!` shell alias is
+  refused when a git command in its text (also `git-<cmd>`) breaks a rule; quotes and backslashes in alias text do
+  not hide a flag, and an alias named like a built-in is not expanded, as git ignores it (lonca#414).
+- merge-tier rates prompts for timer-started model runs (`config/*.prompt.md`, `config/monthly-card.md`) and, in any
+  project, `AGENT.md` (any case) and `.opencode/agent/*.md` as high (lonca#435).
+- merge-pr ignores an exported `MERGE_PR_SEAL`: `--ask` hands its children the internal `--seal <file>` instead, so a
+  stray variable no longer makes a plain run exit 0 without merging (lonca#435).
+
+### Fixed
+
+- ai-cleanup removes approval batch and key files older than 2 h (codes live 1 h), so unused asks no longer pile up
+  until no code is free (lonca#435).
+
 ## [0.5.0] - 2026-11-25
 
 Lonca now lives per project: nothing global, every rule, guard and hook comes from the project you are in.

@@ -149,6 +149,9 @@ def main(home):
     for f in taken:
         if f.name != f"batch_fixture_{code}":
             f.unlink()
+    # a stray exported MERGE_PR_SEAL is cleared: a plain run still asks (exit 3 with a code), it never exits 0 unmerged
+    r = merge(6, lane_env=dict(env, MERGE_PR_SEAL=str(home / "stray")))
+    assert r.returncode == 3 and "evet " in r.stdout and not (home / "stray").exists() and not merged(), r.stdout + r.stderr
     # a key file carrying the --ask code for a PR outside its list is refused
     (A / "owner_repo_6").write_text(f"{code} {(home / 'head_6').read_text()} {int(time.time())} main\n")
     r = merge(6, "--code", code)
