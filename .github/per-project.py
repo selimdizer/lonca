@@ -399,8 +399,17 @@ def migration(base):
     hc.write_text("""#!/usr/bin/env python3
 import json, os, sys
 from pathlib import Path
+home = Path(os.environ["HOME"])
 if sys.argv[1] == "run":
-    Path(os.environ["HOME"], "terminal.json").write_text(json.dumps(sys.argv[1:]))
+    (home / "terminal.json").write_text(json.dumps(sys.argv[1:]))
+if sys.argv[1] == "send":
+    with (home / "hc-sent").open("a") as sent:
+        sent.write(" ".join(sys.argv[2:]) + "\\n")
+if sys.argv[1] == "get":
+    live = home / "live" / sys.argv[2]   # a live terminal of that name; the file holds its folder
+    if not live.is_file():
+        sys.exit(3)
+    print(json.dumps({"state": "live", "cwd": live.read_text()}))
 """)
     hc.chmod(0o755)
     git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "Fixture")
@@ -413,11 +422,15 @@ if sys.argv[1] == "run":
     sibling = base / "sibling"
     run("git", "clone", "-q", origin, sibling)
     git(sibling, "config", "--get", "core.hooksPath", ok=False)
-    for flags, branch, model in [(["--read"], "read", "example/small"), ([], "feat/fixture", "github-copilot/test")]:
+    for flags, branch, model in [(["--read"], "read", "example/small"), (["--read"], "read-copilot", "github-copilot/test"),
+                                 ([], "feat/fixture", "github-copilot/test")]:
         result = home / ".cache/ai-runs/fixture/run" / (branch.split("/")[-1] + ".result")
         run(SRC / "bin/lane", *flags, repo, branch, "omp:" + model, brief, result, main)
         argv = json.loads((home / "terminal.json").read_bytes())
         assert '--extension "$HOME/lonca/config/omp-lane"' in argv[-1]
+        # Copilot lanes keep their helpers on Copilot, read lanes too; the brief may set its own report length
+        assert ("--smol github-copilot/" in argv[-1]) == model.startswith("github-copilot/")
+        assert "at most 30 lines unless the brief sets another length" in argv[-1]
         assert any(arg.startswith("DEJA_POLICY_FILE=") for arg in argv)
         lane_env = dict(arg.split("=", 1) for arg in argv if arg.startswith("GIT_CONFIG_"))
         hooks_path = git(sibling, "config", "--get", "core.hooksPath", env=dict(os.environ, **lane_env))
@@ -425,6 +438,44 @@ if sys.argv[1] == "run":
         assert all(os.access(Path(hooks_path) / hook, os.X_OK) for hook in ("pre-push", "commit-msg"))
         rec = json.loads(Path(str(result) + ".lane.json").read_bytes())
         assert Path(rec["temp"]).is_dir() and Path(rec["project"]) == repo
+    # Two branches that map to one worktree folder: the second is refused, not run in the first one's worktree.
+    first = json.loads((home / ".cache/ai-runs/fixture/run/fixture.result.lane.json").read_bytes())
+    result = home / ".cache/ai-runs/fixture/run/clash.result"
+    clash = subprocess.run([SRC / "bin/lane", repo, "feat-fixture", "omp:example/small", brief, result, main],
+                           capture_output=True, text=True)
+    assert clash.returncode and "existing worktree does not match" in clash.stderr, clash.stderr
+    # lonca#410: another repo's live lane holds the name: this one adds its hash; a live lane in this folder: refused
+    live = home / "live"
+    live.mkdir()
+    (live / first["name"]).write_text(str(base / "other-repo/worktree"))
+    run(SRC / "bin/lane", repo, "feat/fixture", "omp:example/small", brief, result, main)
+    second = json.loads(Path(str(result) + ".lane.json").read_bytes())
+    assert second["name"].startswith(first["name"] + "-") and second["worktree"] == first["worktree"], second
+    (live / second["name"]).write_text(second["worktree"])
+    again = subprocess.run([SRC / "bin/lane", repo, "feat/fixture", "omp:example/small", brief, result, main],
+                           capture_output=True, text=True)
+    assert again.returncode and f"{second['name']} already runs in {second['worktree']}" in again.stderr, again.stderr
+    for name in (first["name"], second["name"]):
+        (live / name).unlink()
+    live.rmdir()
+    # A read lane that fails says so in its DONE and keeps its output; one that succeeds names its report.
+    fake = base / "fake-omp"
+    fake.mkdir()
+    for code in (3, 0):
+        (fake / "omp").write_text(f"#!/bin/sh\necho answer-{code}\nexit {code}\n")
+        (fake / "omp").chmod(0o755)
+        result = home / f".cache/ai-runs/fixture/run/read{code}.result"
+        run(SRC / "bin/lane", "--read", repo, f"read{code}", "omp:example/small", brief, result,
+            env=dict(os.environ, HC_TERMINAL_ID="lead-fixture"))
+        lane_run = json.loads((home / "terminal.json").read_bytes())[-1]
+        subprocess.run(["sh", "-c", lane_run], capture_output=True,
+                       env=dict(os.environ, PATH=f"{fake}{os.pathsep}{os.environ['PATH']}"))
+        sent = (home / "hc-sent").read_text().splitlines()[-1]
+        if code:
+            assert sent.startswith("lead-fixture DONE: read lane failed (exit 3)") and not result.exists(), sent
+            assert Path(str(result) + ".part").read_text() == "answer-3\n"
+        else:
+            assert sent == f"lead-fixture DONE: answer-0 — {result}" and result.read_text() == "answer-0\n", sent
     # A read lane on a temp copy outside Git: no Git guard check, its own marker is the project.
     copy = base / "read-copy"
     copy.mkdir()
@@ -440,7 +491,13 @@ if sys.argv[1] == "run":
     mcp_file = home / "lonca-local/mcp/chrome-devtools.json"
     mcp_file.parent.mkdir(parents=True, exist_ok=True)
     mcp_file.write_text("{}")
+    # A clean install has no ~/.claude.json yet: the lane writes the folder trust into a new private one.
+    saved = claude_mcp.read_bytes()
+    claude_mcp.unlink()
     run(*browser)
+    assert json.loads(claude_mcp.read_bytes())["projects"][str(repo.resolve())]["hasTrustDialogAccepted"]
+    assert claude_mcp.stat().st_mode & 0o777 == 0o600
+    claude_mcp.write_bytes(saved)
     argv = json.loads((home / "terminal.json").read_bytes())
     assert '--mcp-config "$HOME/lonca-local/mcp/chrome-devtools.json"' in argv[-1]
     lane_name = json.loads(Path(str(result) + ".lane.json").read_bytes())["name"]
