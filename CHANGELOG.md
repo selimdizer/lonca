@@ -5,63 +5,154 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Merge gate fixes. `merge-evidence` accepts only whole verdict lines (`VERDICT: PASS`, `VERDICT: SHIP`, `PERF: OK`, `SECURITY: CLEAN`, `SECURITY: FINDINGS (n), highest: LOW|MEDIUM`), so a copied template line such as `VERDICT: PASS | NEEDS_WORK` no longer passes. `merge-tier` reads every page of the PR's files from the REST API (`--json files` stopped at 100), rates agent and gate files high (`.codex/`, `.mcp.json`, nested `.claude/` and `skills/`, `agents/*.md`, `routing.md`, git hooks, `shims/`, `install.sh`, `Makefile`, `bin/merge-*`, `night-on`), and no longer rates `conftest.py` low; Lonca's agent config (`config/codex-rules|omp-guard|omp-lane|opencode/`, `bin/lane`, `.claude-plugin/`) and `AGENTS.md`/`CLAUDE.md` (also `.override`/`.local`) in any folder or case are high too, and a file list shorter than the PR's file count (GitHub lists at most 3000) is high. It fetches `origin/<base>` (explicit refspec, 60 s timeout) before reading the project's `.lonca.toml` there, also when given a lane worktree, and refuses when it cannot or the repo has no origin, instead of falling back to the global `auto_merge` or a working tree's copy. `merge-pr` refuses to run inside a lane (`LONCA_LANE`); it ignores `LONCA_PROJECT`; every ask prints a new code (never one still on file): a PR asked alone gets its own, and `merge-pr --ask <repo-dir> <run-dir> <pr>:<lane> ...` checks several PRs and prints one code for exactly that list (nothing if one is refused); a code approves only the PRs it was printed for, ends when the last of them merges or after 1 h, and is bound to the base branch as well as the head; the owner may answer with the code in any language. Its lock is now a kernel file lock that a crashed merge cannot leave behind; a night past its end time or cap asks the owner instead of refusing, and the night cap counts a merge from the moment it starts. After a merge it removes a lane worktree only when the worktree's HEAD is the merged head, deletes the branch only if it still points there, and only then closes the terminals in that worktree (not in a sibling folder whose name starts the same). `night-on` refuses to run inside a lane. The checker docs name each verdict line alone, so nobody copies a line listing the alternatives.
-- `lane` reliability: a read lane whose agent fails sends `DONE: read lane failed (exit N), no report; its output — <result>.part` instead of a DONE for a missing report; the report length is "at most 30 lines unless the brief sets another length"; Claude lanes work on a clean install without `~/.claude.json` (created with mode 600); when another repo of the project already runs a lane of that name, the new lane's terminal name gets the short repo hash, and a live lane in the same folder, or an `hc run` that fails, stops `lane` with a clear message (lonca#335, lonca#410).
-- Agents write to the owner in the language memory `owner/language` names, else that of the owner's own last message, also after task notifications and lane messages (they are not the owner), and don't repeat an unchanged message.
-- Containers carry their lane: lanes get `LONCA_LANE=<lane name>`, and the `docker` shim adds `--label lonca.lane=<lane>` to `docker run`/`create` and sets `COMPOSE_PROJECT_NAME=lonca-lane-<lane>` for `docker compose` when the caller set none. When a lane closes (`ai-cleanup` once its worktree is gone after a merged or closed PR, `lane-watch` when it closes an empty lane) its containers (label `lonca.lane=<lane>` or compose project `lonca-lane-<lane>`, nothing else) and that compose project's networks are removed and logged; named volumes stay and are named in the log.
-- `~/lonca/bin/test-slot [-n N] -- <command>`: heavy test suites wait for one of N machine-wide slots (`test_slots` in `~/.config/lonca/config.toml`, default 2) instead of running all at once (a nested call inside a held slot runs at once); it says once who holds the slots and passes the exit code through. The orchestrate skill, implementer and verifier send live/integration tests, `-race`, perf runs and full gates through it.
-- `merge-pr` reads the PR again (up to 6 times, 5 s apart) while GitHub still reports `mergeable: UNKNOWN` after a push, instead of refusing it at once.
-- `lane --browser` starts a Claude lane with `--mcp-config ~/lonca-local/mcp/chrome-devtools.json` (refused when that file is missing; Codex and omp lanes don't take it).
-- Leads act on a ledger answer they did not record only after finding the owner's own message for it.
-- `lonca questions` keeps every question for the owner in `<project root>/.lonca/questions.md` (AI-DLC's block format: id, who asked and when, options with the recommended one marked, `[Answer]:`) until it is answered or dropped; `lonca init` hides `.lonca/` from Git at a repository root and `lonca remove` keeps the file and its exclusion. Lanes may add questions but not answer or drop them. Leads add each question they ask and list open ones from the file on "açık sorular" and status checks.
-- Agents delete with the literal path written in the command (a `$VAR` or `$(…)` path makes Claude ask even in bypass mode, so runs waited for the owner), and use only containers, databases and services they started, named after their lane: a lane removed a shared-name container while verifiers had test databases in it.
-- Installation now provides commands and memory templates. Run `lonca init` from an owner or lead session
-  to register the root plugin marketplace locally and set up the project.
-- `lonca migrate --dry-run [roots...]` previews the move from global settings. Migration initializes projects
-  and records the removed global settings. These backups expire after 30 days or on uninstall. Timers are opt-in. Project jobs require registration. Shared memory commits and machine-wide history indexing remain available.
-- Lanes check project guards before launch and carry Git hooks into fresh clones. Folder roots receive local lead protections. Cleanup requires a matching ownership record.
-- `lonca init` turns off Claude's commit and PR signature (`attribution`, `includeCoAuthoredBy`) in the project's personal settings, and `lonca remove` takes it out again; folders without Lonca get Claude's default signature. Migration still removes these values from `~/.claude/settings.json` and keeps `autoMemoryDirectory` there. It also removes the `session-scope` hook and the deny rules earlier releases shipped (`ok-merge`, `merge-grants`, `night-on`, `git push * main*`).
-- The git shim refuses `GIT_CONFIG_PARAMETERS` that set a hooks path, an include or an alias, alias writes (an alias can hide a hook skip), `--no-verify` anywhere on commit, merge, pull and push (`--no-verify-signatures` still works), and `-n` on commit (also inside `-an`). In a lane it also refuses any git command whose environment lost the lane's `GIT_CONFIG_*` values (test suites that clean the git environment fail in lanes). Claude lanes turn off Claude's commit and PR signature through `--settings`. Read lanes skip the project Git guard check, so they run on temp copies outside Git again. A read lane on an unregistered temp copy whose marker carries a registered project's name is watched and cleaned up as that project's lane (STALLED, terminal removal); a copy of an unregistered project is not.
-- Lane names start with the project's name (from the lane's project marker, not the folder: a read lane in a temp copy named src gets its project's name), headless read lanes print one line saying the report appears when they finish, and lane-watch removes a finished read lane's terminal 10 min after its report.
-- STALLED and READY go to the recorded session only while it runs a session of the lane's project; otherwise to the project's one live lead, or, when the project has no lead, to the live session outside every project that started the lane (setup work). `LONCA_PROJECT` is ignored by lane-watch.
-- Night mode updates a lane whose base moved by merging the base into it (no rebase, no force-push). The rule against starting other agents now covers lanes and other agent CLIs only; subagents inside a session are fine.
-- `lane-watch` sends STALLED and READY to the project's current lead when the terminal recorded for a lane no longer runs an agent session (a lead restarted in a new terminal), and updates the lane record; with no single current lead the line waits instead of going to a terminal that may run something else; `leads --json` lists the sessions for it.
-- `lane-watch` sends the lead one `READY: <repo>#<pr> head <sha>` per head when a lane's PR passes `merge-pr --dry-run`, so PRs whose checks finished in files no longer wait unnoticed; the lead's orchestrate skill says to run merge-pr on it. `merge-pr --dry-run` no longer takes the merge lock or writes refusals to the audit log.
-- Every Claude and Codex session (leads, the owner's sessions) moves itself into its own systemd scope capped at 24 GB memory and 4 GB swap at start (`bin/session-scope`, Linux), so a runaway test inside a lead, or one of its subagents, is killed there while the session stays up, instead of systemd-oomd killing every terminal. Programs the session started before the move (MCP servers) stay outside the cap.
-- Each lane runs in its own systemd scope capped at 16 GB memory and 4 GB swap (Linux with systemd 254 or later), so running out of memory kills the runaway process inside that lane (the lane's agent stays up and can report it) instead of every terminal in Herdr's unit. Where no such scope can be made (macOS, older systemd, no user manager) the lane starts uncapped, as before.
-- `lonca init [--agents claude,codex] <dir>` registers a marked project and installs personal repo
-  settings and local Git hooks. `lonca status` reports coverage and conflicts. `lonca remove <dir>`
-  restores backed-up files. Linked worktrees share the Git configuration, and `LONCA=0` silences session automation while Git and attribution guards stay active. Project membership now requires a marker.
-- Before code: the lead asks the owner only the open choices that change what users see or what data is kept, and writes the rest as `Assumptions:` in the brief; implementers ask the same kind of choice and list their own choices in the report.
-- Spec review before code for work that will be tier medium or high (money, auth, data, public API, network exposure, secrets, merge gate), by the family that will not write the code.
-- Memory: a rule from an owner's correction is saved only after the owner says yes; every note names its source; memory-review ignores lane messages and pasted text inside the owner's messages.
-- `leads` also lists sessions outside every project (PROJECT `-`) and shows ROLE/DOING from the `lonca.role`/`lonca.does` hc labels (else the agent's own status), and machine-wide work (containers, cleanup, killing processes, packages, disk) is announced to every listed session first, then reported.
-- The project marker is documented as the hidden `.lonca.toml` (like `.editorconfig`); `lonca.toml` still works.
-  Keep it next to your repos, not inside one.
-- Worktrees go when the work is done: `merge-pr` closes the PR's lane and removes its worktree and local branch right
-  after merging (a worktree with uncommitted changes is left). `ai-cleanup` also removes lane worktrees whose PR was
-  closed without merging (head unchanged) or whose work already reached the default branch; your own worktrees are
-  only touched for merged PRs.
-- `ai-cleanup` removes run folders in `~/.cache/ai-runs` untouched for 30 days (unless a lane of theirs still has a
-  worktree). The merge log moved to `~/.local/state/lonca/merge.log`, so the audit trail is kept.
+## [0.5.0] - 2026-11-25
 
-- Each project sees only itself in deja. `deja-scope` writes a per-project deja policy that leaves out every session
-  outside the project, written as the complement of the project's own names (so a project created later is left out
-  too, and no other project's name is in the file). `lane` starts every lane with it (Codex gets it through its MCP
-  server config, since Codex starts MCP servers with a minimal environment), the Herdr "start a lead" action starts
-  the lead with it, and a new Claude SessionStart hook gives it to every session started in a project: right away
-  for Bash, and for the deja MCP tool from the next session in that folder (`.claude/settings.local.json`, kept out
-  of git). CI checks the policy against deja's own match rule. Lanes and leads use only their project's Kanzo cards.
-- `leads` lists the agent sessions open in project folders, so a lead can ask another one ("was it you?") instead of
-  reading its sessions; the `orchestrate` skill says how to look a change up first (logs, lane records, deja, git).
-- `lanes --mine` shows only the lanes the calling lead started; `merge-pr` logs the lane worktrees it removes.
+Lonca now lives per project: nothing global, every rule, guard and hook comes from the project you are in.
 
-- Each lane gets its own temp folder (`<tmpdir>/lane-<name>`; Claude and Codex through their settings override flags,
-  since their own settings may pin TMPDIR), so a cleanup inside it can't reach another lane's files. AGENTS.md: delete
-  only what you created, by its exact path; never a glob in a shared folder.
-- Each Claude session (and the subagents it starts) gets its own temp folder too, `<tmpdir>/session-<id>`, from a
-  SessionStart hook (`session-tmpdir`); lanes keep theirs.
+### Upgrading from 0.4
+
+- Preview with `lonca migrate --dry-run`, then run `lonca migrate`. It sets up your registered projects and removes
+  the global install; what it removed is backed up under `~/.local/state/lonca/migration-backups/` (kept 30 days).
+- Start leads with `claude --agent lonca:lead`.
+- Sessions outside a project folder (no `.lonca.toml` above them) get no Lonca rules.
+- Each new project needs `lonca init <dir>` once.
+- A repo with its own `core.hooksPath` keeps it and gets no Lonca git hooks: unset it first, then run `lonca init`
+  again. A global one needs `git config --global --unset core.hooksPath`, a repo one `git config --unset core.hooksPath`.
+
+### Known limits
+
+- Not tried on macOS.
+- MCP servers for the other CLIs (agy, copilot, grok, opencode, pi) are still registered globally (lonca#361).
+- Open low findings in the merge gate (lonca#435) and in the lane git guard (aliases, lonca#414).
+
+### Added
+
+- `lonca init [--agents claude,codex] <dir>` registers a marked project and installs, with local scope, the `lonca`
+  plugin from the `~/lonca` marketplace, personal repo settings and local Git hooks (linked worktrees share them);
+  folder roots get local lead protections. `lonca status` reports coverage and conflicts, `lonca remove <dir>` restores
+  the backed-up files. A folder belongs to a project only through a marker: the hidden `.lonca.toml` (`lonca.toml`
+  still works), kept next to your repos, not inside one. `LONCA=0` silences session automation; Git and attribution
+  guards stay active.
+- `lonca migrate --dry-run [roots...]` previews the move from the global install and `lonca migrate` does it: it
+  initializes the projects and records the removed global settings. Backups expire after 30 days or on uninstall.
+  Timers are opt-in and project jobs need a registered project; shared-memory commits and machine-wide history
+  indexing stay available.
+- `lonca questions` keeps every question for the owner in `<project root>/.lonca/questions.md` (block format: id, who
+  asked and when, options with the recommended one marked, `[Answer]:`) until it is answered or dropped. `lonca init`
+  hides `.lonca/` from Git at a repository root; `lonca remove` keeps the file and its exclusion. Lanes may add
+  questions but not answer or drop them. Leads record each question they ask, list open ones on "açık sorular" and
+  status checks, and act on an answer they did not record only after finding the owner's own message for it.
+- `~/lonca/bin/test-slot [-n N] -- <command>`: heavy test suites wait for one of N machine-wide slots (`test_slots`
+  in `~/.config/lonca/config.toml`, default 2); a nested call inside a held slot runs at once. It says once who holds
+  the slots and passes the exit code through. The orchestrate skill, implementer and verifier send live/integration
+  tests, `-race`, perf runs and full gates through it.
+- Containers carry their lane: lanes get `LONCA_LANE=<lane>`, the `docker` shim adds `--label lonca.lane=<lane>` to
+  `docker run`/`create` and sets `COMPOSE_PROJECT_NAME=lonca-lane-<lane>` for `docker compose` when the caller set
+  none. When a lane closes (`ai-cleanup` once its worktree is gone, `lane-watch` when it closes an empty lane) its
+  containers and that compose project's networks are removed and logged; named volumes stay and are named in the log.
+- `lane --browser` starts a Claude lane with `--mcp-config ~/lonca-local/mcp/chrome-devtools.json` (refused when the
+  file is missing; Codex and omp lanes don't take it).
+- Each project sees only itself in deja: `deja-scope` writes a per-project policy that leaves out every session
+  outside the project, written as the complement of the project's own names (projects created later are left out
+  too, no other project's name is in the file). Lanes, the Herdr "start a lead" action and a SessionStart hook in
+  every project session use it (Codex through its MCP server config); CI checks it against deja's own match rule.
+  Lanes and leads use only their project's Kanzo cards.
+- `leads` lists the agent sessions in project folders and outside every project (PROJECT `-`), with ROLE/DOING from
+  the `lonca.role`/`lonca.does` hc labels (else the agent's own status); `leads --json` too. A lead asks another one
+  ("was it you?") instead of reading its sessions, and the orchestrate skill says how to look a change up first.
+  Machine-wide work (containers, cleanup, killing processes, packages, disk) is announced to every listed session
+  first, then reported.
+- `lanes --mine` shows only the lanes the calling lead started.
+- `lane-watch` sends the lead one `READY: <repo>#<pr> head <sha>` per head when a lane's PR passes
+  `merge-pr --dry-run`; the orchestrate skill says to run merge-pr on it.
+- `merge-pr --ask <repo-dir> <run-dir> <pr>:<lane> ...` checks several PRs and prints one code for exactly that list
+  (nothing if one is refused).
+- Memory caps (Linux): every Claude and Codex session in a project moves itself into its own systemd scope (24 GB
+  memory, 4 GB swap; `bin/session-scope`), and each lane runs in its own scope (16 GB memory, 4 GB swap; systemd 254
+  or later), so a runaway process is killed inside it instead of systemd-oomd killing every terminal. Programs a
+  session started before the move (MCP servers) stay outside the cap; where no scope can be made the lane starts
+  uncapped, as before.
+- Temp folders per lane (`<tmpdir>/lane-<name>`, passed to Claude and Codex through their settings override flags)
+  and per Claude session (`<tmpdir>/session-<id>`, SessionStart hook `session-tmpdir`; its subagents share it).
+
+### Changed
+
+- `install.sh` installs only the commands and memory templates; projects are set up with `lonca init`.
+- `lonca init` turns off Claude's commit and PR signature (`attribution`, `includeCoAuthoredBy`) in the project's
+  personal settings and `lonca remove` takes it out again; folders without Lonca get Claude's default signature.
+  Claude lanes get the same settings through `--settings`. Migration removes these values from
+  `~/.claude/settings.json` (keeping `autoMemoryDirectory`), the global `session-scope` hook and the deny rules
+  earlier releases shipped (`ok-merge`, `merge-grants`, `night-on`, `git push * main*`).
+- Approval codes: every ask prints a new code, never one still on file; a code approves only the PRs it was printed
+  for, is bound to the base branch as well as the head, and ends when the last of them merges or after 1 h. The owner
+  may answer with the code in any language.
+- `merge-pr` ignores `LONCA_PROJECT`; a night past its end time or cap asks the owner instead of refusing, and the
+  night cap counts a merge from the moment it starts. `merge-pr --dry-run` no longer takes the merge lock or writes
+  refusals to the audit log.
+- Worktrees go when the work is done: `merge-pr` closes the PR's lane and removes its worktree, local branch and the
+  terminals in it right after merging (a worktree with uncommitted changes is left; removals are logged).
+  `ai-cleanup` also removes lane worktrees whose PR was closed unmerged (head unchanged) or whose work reached the
+  default branch, and run folders in `~/.cache/ai-runs` untouched for 30 days (unless a lane of theirs still has a
+  worktree); your own worktrees are touched only for merged PRs. Cleanup needs a matching ownership record. The merge
+  log moved to `~/.local/state/lonca/merge.log`.
+- Lanes check the project guards before launch and carry Git hooks into fresh clones. Read lanes skip that check, so
+  they run on temp copies outside Git; one on an unregistered temp copy whose marker names a registered project is
+  watched and cleaned up as that project's lane (a copy of an unregistered project is not).
+- Lane names start with the project's name (from the marker, not the folder). Headless read lanes print one line
+  saying the report appears when they finish, and `lane-watch` removes a finished read lane's terminal 10 min after
+  its report. When another repo of the project already runs a lane of that name, the new terminal name gets the short
+  repo hash (lonca#410). The report length is "at most 30 lines unless the brief sets another length".
+- STALLED and READY go to the recorded session only while it runs a session of the lane's project; otherwise to the
+  project's one current lead (also after a lead restarted in a new terminal; the lane record is updated), or, with no
+  lead, to the live session outside every project that started the lane. With no single current lead the line waits.
+  `lane-watch` ignores `LONCA_PROJECT`.
+- Night mode updates a lane whose base moved by merging the base into it (no rebase, no force-push).
+- Agent rules: write to the owner in the language memory `owner/language` names, else that of the owner's own last
+  message, also after task notifications and lane messages, and don't repeat an unchanged message. Delete only by the
+  literal path written in the command (a `$VAR` or `$(…)` path makes Claude ask even in bypass mode) and never a glob
+  in a shared folder. Use only containers, databases and services you started, named after your lane. The rule
+  against starting other agents covers lanes and other agent CLIs only; subagents are fine.
+- Before code, the lead asks the owner only the open choices that change what users see or what data is kept and
+  writes the rest as `Assumptions:` in the brief; implementers ask the same kind of choice and list their own
+  choices in the report. Work that will be tier medium or high (money, auth, data, public API, network exposure,
+  secrets, merge gate) gets a spec review before code, by the family that will not write the code.
+- Memory: a rule from an owner's correction is saved only after the owner says yes; every note names its source;
+  memory-review ignores lane messages and pasted text inside the owner's messages.
+
+### Fixed
+
+- `merge-pr` reads the PR again (up to 6 times, 5 s apart) while GitHub still reports `mergeable: UNKNOWN` after a
+  push, instead of refusing at once.
+- `merge-tier` reads every page of the PR's files from the REST API (`--json files` stopped at 100) and no longer
+  rates `conftest.py` low.
+- The merge lock is a kernel file lock that a crashed merge cannot leave behind.
+- After a merge, `merge-pr` removes a lane worktree only when its HEAD is the merged head, deletes the branch only if
+  it still points there, and closes only the terminals in that worktree (not in a sibling folder whose name starts
+  the same).
+- A read lane whose agent fails sends `DONE: read lane failed (exit N), no report; its output — <result>.part`
+  instead of a DONE for a missing report.
+- Claude lanes work on a clean install without `~/.claude.json` (created with mode 600). A live lane in the same
+  folder, or an `hc run` that fails, stops `lane` with a clear message (lonca#335).
 - Grok lanes no longer wait at the folder-trust prompt: `lane` records the repo in `~/.grok/trusted_folders.toml`.
+
+### Security
+
+- `merge-evidence` accepts only whole verdict lines (`VERDICT: PASS`, `VERDICT: SHIP`, `PERF: OK`,
+  `SECURITY: CLEAN`, `SECURITY: FINDINGS (n), highest: LOW|MEDIUM`), so a copied template line such as
+  `VERDICT: PASS | NEEDS_WORK` no longer passes. The checker docs name each verdict line alone.
+- `merge-tier` rates agent and gate files high: `.codex/`, `.mcp.json`, nested `.claude/` and `skills/`,
+  `agents/*.md`, `routing.md`, git hooks, `shims/`, `install.sh`, `Makefile`, `bin/merge-*`, `night-on`, Lonca's agent
+  config (`config/codex-rules|omp-guard|omp-lane|opencode/`, `bin/lane`, `.claude-plugin/`) and `AGENTS.md`/`CLAUDE.md`
+  (also `.override`/`.local`) in any folder or case. A file list shorter than the PR's file count (GitHub lists at
+  most 3000) is high.
+- `merge-tier` fetches `origin/<base>` (explicit refspec, 60 s timeout) before reading the project's `.lonca.toml`
+  there, also from a lane worktree, and refuses when it cannot or the repo has no origin, instead of falling back to
+  the global `auto_merge` or a working tree's copy.
+- `merge-pr` and `night-on` refuse to run inside a lane (`LONCA_LANE`).
+- The git shim refuses `GIT_CONFIG_PARAMETERS` that set a hooks path, an include or an alias, alias writes (an alias
+  can hide a hook skip), `--no-verify` anywhere on commit, merge, pull and push (`--no-verify-signatures` still
+  works), and `-n` on commit (also inside `-an`). In a lane it also refuses any git command whose environment lost
+  the lane's `GIT_CONFIG_*` values (test suites that clean the git environment fail in lanes).
 
 ## [0.4.0] - 2026-11-22
 
@@ -149,6 +240,8 @@ First public release.
 - `kanzo-sync`, `lane-watch`, `ai-cleanup` and their timers.
 - `install.sh` (with `--uninstall`) and the Herdr plugin.
 
+[Unreleased]: https://github.com/selimdizer/lonca/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/selimdizer/lonca/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/selimdizer/lonca/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/selimdizer/lonca/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/selimdizer/lonca/compare/v0.3.0...v0.3.1
