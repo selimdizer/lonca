@@ -1,6 +1,6 @@
 # Roadmap
 
-What Lonca works on next, in order. Work outside this list starts only after it is added here. Items name their board card (`lonca#N`) where one exists. Open decisions are in the owner's questions ledger (`lonca questions`, ids `Q-n`).
+What Lonca works on next, in order. Work outside this list starts only after it is added here. Items name their board card (`lonca#N`) where one exists. Open decisions carry their id (`Q-n`) in the owner's questions ledger, which lives on the owner's machine (`lonca questions`) and is not part of the repo.
 
 ## Urgent
 
