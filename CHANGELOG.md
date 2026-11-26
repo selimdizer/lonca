@@ -10,6 +10,10 @@ versions follow [Semantic Versioning](https://semver.org/).
 - Before `lonca migrate`, opt in the projects where you use OpenCode, Copilot, pi, Grok or Antigravity:
   `lonca init --agents <cli> <dir>`. Migration now removes their user-level Kanzo and deja entries too.
 
+### Added
+
+- `ROADMAP.md`: the ordered plan, its open decisions and board cards.
+
 ### Changed
 
 - OpenCode, Copilot, pi, Grok and Antigravity get Kanzo, deja and the Lonca rules per project, like Claude, Codex

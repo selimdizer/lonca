@@ -327,6 +327,8 @@ stop an agent you can't see.
 
 ## Contributing
 
+What comes next is in [ROADMAP.md](ROADMAP.md).
+
 Issues and PRs are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). Report security issues privately: [SECURITY.md](SECURITY.md).
 
 ## License
