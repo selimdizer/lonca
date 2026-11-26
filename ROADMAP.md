@@ -1,6 +1,6 @@
 # Roadmap
 
-What Lonca works on next, in order. Work outside this list starts only after it is added here. Items name their board card (`lonca#N`) where one exists. Open decisions carry their id (`Q-n`) in the owner's questions ledger, which lives on the owner's machine (`lonca questions`) and is not part of the repo.
+Updated 26 Nov 2026. What the maintainer's own agent work on Lonca does next, in order; that work starts only after it is listed here. Outside contributions go through [CONTRIBUTING.md](CONTRIBUTING.md). Items name their board card (`lonca#N`) where one exists. Open decisions carry their id (`Q-n`) in the owner's questions ledger, which lives on the owner's machine (`lonca questions`) and is not part of the repo.
 
 ## Urgent
 
@@ -17,7 +17,7 @@ What Lonca works on next, in order. Work outside this list starts only after it 
 | Q-2 | Claude Code's built-in commands in Lonca projects | `/code-review high` as an extra local review (not cross-family); `ultra` on request; `/ship` and `/steward` off; `/simplify` allowed |
 | Q-3 | Claude Code Review (managed service) | per project on request, with a spend cap; `merge-pr` reads its check as extra input |
 | Q-4 | Claude Approvals | no: `merge-pr` covers it, and private repos need a paid GitHub plan for the required check |
-| Q-5 | What to adopt from ozstack | format rule and check, standards, brief slots, review loop, PR self-review record, merge ordering |
+| Q-5 | What to adopt from [ozstack](https://github.com/selimozten/ozstack) (MIT, credited like the vendored skills in `skills/VENDOR.md`) | format rule and check, standards, brief slots, review loop, PR self-review record, merge ordering |
 | Q-6 | Board: Kanzo, Notion, Excalidraw | research first; files stay the source of truth |
 | Q-7 | Where this roadmap lives | here, plus one card per item (this file is the proposal) |
 | Q-8 | Build a non-code workflow (video, marketing) now? | not yet: phase 1 skills avoid assuming repo/PR/CI; phase 5 waits for real examples |
@@ -75,4 +75,4 @@ What Lonca works on next, in order. Work outside this list starts only after it 
 
 ## Dated
 
-- **28 Nov:** lead and security-auditor models back to the default (lonca#411).
+- **28 Nov 2026:** lead and security-auditor models back to the default (lonca#411).
