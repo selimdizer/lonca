@@ -1,6 +1,6 @@
 # Roadmap
 
-What Lonca works on next, in order. Work outside this list starts only after it is added here. Each item has a board card (`lonca#N`). Open decisions are in the owner's questions ledger (`lonca questions`, ids `Q-n`).
+What Lonca works on next, in order. Work outside this list starts only after it is added here. Items name their board card (`lonca#N`) where one exists. Open decisions are in the owner's questions ledger (`lonca questions`, ids `Q-n`).
 
 ## Urgent
 
@@ -16,12 +16,11 @@ What Lonca works on next, in order. Work outside this list starts only after it 
 | Q-1 | Split into **Lonca skills** (works alone) and **Lonca runtime** (`lane`, `merge-pr`, guards, Herdr) | yes |
 | Q-2 | Claude Code's built-in commands in Lonca projects | `/code-review high` as an extra local review (not cross-family); `ultra` on request; `/ship` and `/steward` off; `/simplify` allowed |
 | Q-3 | Claude Code Review (managed service) | per project on request, with a spend cap; `merge-pr` reads its check as extra input |
-| Q-4 | Claude Approvals | no: `merge-pr` covers it, and it needs a paid GitHub plan |
+| Q-4 | Claude Approvals | no: `merge-pr` covers it, and private repos need a paid GitHub plan for the required check |
 | Q-5 | What to adopt from ozstack | format rule and check, standards, brief slots, review loop, PR self-review record, merge ordering |
 | Q-6 | Board: Kanzo, Notion, Excalidraw | research first; files stay the source of truth |
-| Q-7 | Where this roadmap lives | here, plus one card per item |
-| Q-8 | Non-code work | phase 1 avoids assuming repo/PR/CI; phase 5 waits for real examples |
-| lonca#358 | `--force-with-lease` on a lane's own branch | per project, off by default |
+| Q-7 | Where this roadmap lives | here, plus one card per item (this file is the proposal) |
+| Q-8 | Build a non-code workflow (video, marketing) now? | not yet: phase 1 skills avoid assuming repo/PR/CI; phase 5 waits for real examples |
 
 ## Phase 1: the skills layer
 

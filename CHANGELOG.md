@@ -5,14 +5,14 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Added
-
-- `ROADMAP.md`: the ordered plan, its open decisions and board cards.
-
 ### Upgrading
 
 - Before `lonca migrate`, opt in the projects where you use OpenCode, Copilot, pi, Grok or Antigravity:
   `lonca init --agents <cli> <dir>`. Migration now removes their user-level Kanzo and deja entries too.
+
+### Added
+
+- `ROADMAP.md`: the ordered plan, its open decisions and board cards.
 
 ### Changed
 
