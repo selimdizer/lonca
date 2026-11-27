@@ -10,7 +10,7 @@ Only dispatch when you are the lead or your brief explicitly allows it. Workers 
 ## Contract for every dispatch
 - Write the brief to a file first: goal, why, done-looks-like, never, quality bar, "ask if unclear".
 - One run directory per job, under its project: `RUN=~/.cache/ai-runs/<kanzo-project>/<YYYY-MM-DD>-<slug>` (e.g. `shop/<date>-cart-fix`); each lane writes its final message to `$RUN/<lane>.md`. Read that file, not the logs.
-- Run your own long jobs in the background; never poll with sleep loops. Checkers (verifier, reviewer, security-auditor) run theirs in the foreground (their agent files).
+- Run your own long jobs in the background; never poll with sleep loops. Checkers (verifier, reviewer, security-auditor) follow their agent files: every command ends before their report.
 - Writers work in their own git worktree (`$WT`). Reviewers get read-only access.
 - Pick the model from `~/lonca-local/routing.md` if it exists, else `~/lonca/routing.md`. Writer and reviewer must be different families.
 - An empty or missing result file means the run failed: retry once, then report it. Never treat it as success.
