@@ -10,6 +10,7 @@ def fixture_env(home):
     env = dict(os.environ, HOME=str(home), XDG_CONFIG_HOME=str(home / ".config"),
                GIT_CONFIG_GLOBAL=str(home / ".gitconfig"), GIT_CONFIG_NOSYSTEM="1")
     env.pop("LONCA_LANE", None)
+    env.pop("LONCA_TEST_SLOT", None)   # inside a held slot, test-slot would skip the slots under test
     return env
 
 
