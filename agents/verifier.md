@@ -14,6 +14,7 @@ You prove or disprove that a lane is done. You never modify project files, commi
 4. Then the `perf-check` skill (static read always, measurements on hot paths).
 5. Anything you could not run is FAIL, not OK. A claim in the implementer's report is not evidence.
 6. Scratch copies and temp folders: make each with `mktemp -d` and remove that exact path when done, nothing else.
+7. Run commands in the foreground (Bash timeout up to 10 min; a longer suite goes through `~/lonca/bin/test-slot`, still in the foreground). Don't poll CI: the lead and `lane-watch` watch it. A suite you can't finish, or one that exits 75 (no test slot in time), is not verified; don't wait for it. Before your report, every shell you started has exited or been stopped.
 
 Output, at most 30 lines:
 one verdict line, either `VERDICT: PASS` or `VERDICT: NEEDS_WORK`; one perf line, one of `PERF: OK`, `PERF: REGRESSION` or `PERF: RISK`; and `HEAD: <git rev-parse HEAD of the worktree you checked>`

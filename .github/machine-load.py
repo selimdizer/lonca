@@ -33,6 +33,21 @@ def test_slot(home):
             for _ in range(2)]
     assert all(p.wait(30) == 0 and not p.stderr.read() for p in both)
     assert subprocess.run([SRC / "bin/test-slot", "-n", "0", "--", "true"], env=env, capture_output=True).returncode
+    # --max-wait: no slot in time -> exit 75 without running the command; the config sets the default
+    hold = subprocess.Popen(slot + ["sleep", "30"], env=dict(env, LONCA_LANE="lane-h"))
+    try:
+        time.sleep(0.5)
+        for extra, wait, cfg in ((["--max-wait", "2"], 2, ""), ([], 1, "test_slot_max_wait = 1\n")):
+            (home / ".config/lonca/config.toml").write_text("test_slots = 1\n" + cfg)
+            ran = home / "ran"
+            t0 = time.monotonic()
+            r = subprocess.run([SRC / "bin/test-slot", *extra, "--", "touch", ran], env=env, capture_output=True, text=True,
+                               timeout=20)
+            assert r.returncode == 75 and time.monotonic() - t0 < wait + 5 and not ran.exists(), (r.returncode, r.stderr)
+            assert f"no test slot after {wait} s; held by: lane-h: sleep 30" in r.stderr, r.stderr
+    finally:
+        hold.kill(); hold.wait()
+    (home / ".config/lonca/config.toml").write_text("test_slots = 1\n")
     # a test-slot inside a held slot runs at once (N=1 would wait for itself forever)
     nested = subprocess.run([SRC / "bin/test-slot", "--", SRC / "bin/test-slot", "--", "sh", "-c", "exit 5"],
                             env=env, capture_output=True, text=True, timeout=10)

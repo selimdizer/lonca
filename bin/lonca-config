@@ -6,6 +6,7 @@ Keys (all optional):
   tmpdir            = "~/.cache/lonca/tmp"      agents' TMPDIR in lanes and registered project sessions
   auto_merge        = "off"                     default for projects whose .lonca.toml doesn't say: off|low|medium|all
   test_slots        = 2                         heavy test suites that may run at once on this machine (test-slot)
+  test_slot_max_wait = 1800                     seconds test-slot waits for a slot before it exits 75
 """
 import ast, os, re, sys
 
