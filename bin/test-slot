@@ -24,6 +24,19 @@ if args[:1] != ["--"] or len(args) < 2:
     print(__doc__.strip(), file=sys.stderr)
     sys.exit(0 if sys.argv[1:2] in (["-h"], ["--help"]) else 2)
 cmd = args[1:]
+
+
+def seconds(value, name):
+    try:
+        value = int(value)
+        assert value >= 0
+        return value
+    except (ValueError, AssertionError):
+        sys.exit(f"test-slot: {name} must be a whole number of seconds, not {value!r}")
+
+
+if max_wait is not None:
+    max_wait = seconds(max_wait, "--max-wait")   # checked before the nesting shortcut, so a bad value always fails
 if os.environ.get("LONCA_TEST_SLOT"):
     os.execvp(cmd[0], cmd)   # already inside a slot: waiting for another would deadlock with N=1
 
@@ -36,17 +49,12 @@ def config(key, default):
 if n is None:
     n = config("test_slots", "2")
 if max_wait is None:
-    max_wait = config("test_slot_max_wait", "1800")
+    max_wait = seconds(config("test_slot_max_wait", "1800"), "test_slot_max_wait in the config")
 try:
     n = int(n)
     assert n >= 1
 except (ValueError, AssertionError):
     sys.exit(f"test-slot: the slot count must be a whole number of at least 1, not {n!r}")
-try:
-    max_wait = int(max_wait)
-    assert max_wait >= 0
-except (ValueError, AssertionError):
-    sys.exit(f"test-slot: --max-wait must be a whole number of seconds, not {max_wait!r}")
 
 folder = Path.home() / ".local/state/lonca/test-slots"
 folder.mkdir(parents=True, mode=0o700, exist_ok=True)
@@ -68,7 +76,8 @@ def holders():
         fd = slot(i)
         busy.append(os.read(fd, 4096).decode(errors="replace").strip())
         os.close(fd)
-    return "; ".join(b for b in busy if b)
+    # holder lines come from other callers: no escape sequences or newlines reach a terminal or an agent's output
+    return "".join(c if c.isprintable() else "?" for c in "; ".join(b for b in busy if b))
 
 
 holder = f"{os.environ.get('LONCA_LANE') or 'no lane'}: {shlex.join(cmd)}"

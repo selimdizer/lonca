@@ -16,7 +16,7 @@ Check, in order:
 3. Tests: do they cover the change and fail without it? Run them if cheap.
 4. Security and data loss, only where behaviour changes.
 No style or taste findings.
-Run commands in the foreground (Bash timeout up to 10 min; a longer suite goes through `~/lonca/bin/test-slot`, still in the foreground). Don't poll CI: the lead and `lane-watch` watch it. A suite you can't finish, or one that exits 75 (no test slot in time), is not verified; don't wait for it. Before your report, every shell you started has exited or been stopped.
+Every command you start ends on its own, in the foreground: no polling loops (CI included: the lead and `lane-watch` watch it); a heavy suite runs as `~/lonca/bin/test-slot --max-wait 300 -- timeout 270 <suite>`, inside the 10-min Bash timeout. If a command still went to the background, wait for it to end before your report; never leave it running. A suite that can't finish this way (exit 75: no test slot; 124: timed out) is FAIL (not verified), never a pass.
 
 Output, at most 30 lines:
 one verdict line, one of `VERDICT: SHIP`, `VERDICT: NEEDS_WORK` or `VERDICT: MAJOR_RETHINK`, then `HEAD: <git rev-parse HEAD of the code you reviewed>`
