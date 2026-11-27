@@ -16,6 +16,12 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- `test-slot --max-wait <seconds>` (default `test_slot_max_wait` in `~/.config/lonca/config.toml`, else 1800): when no
+  slot frees in time it prints who holds them and exits 75 without running the command (lonca#492).
+- Checkers (verifier, reviewer, security-auditor) start only commands that end on their own (heavy suites through
+  `test-slot --max-wait 1800 -- timeout -k 60 40m`), don't poll CI, report a suite that ends with 75, 124 or 137 as
+  FAIL (not verified) and report only once every shell has ended; the lead stops whatever a checker left behind
+  (lonca#492).
 - OpenCode, Copilot, pi, Grok and Antigravity get Kanzo, deja and the Lonca rules per project, like Claude, Codex
   and omp (lonca#361). `lonca init --agents` accepts `opencode`, `copilot`, `pi`, `grok` and `agy` and writes each
   CLI's project MCP and rules files (kept out of Git, undone by `lonca remove`); `lonca status` shows each one on or

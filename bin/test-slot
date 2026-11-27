@@ -1,28 +1,55 @@
 #!/usr/bin/env python3
-"""test-slot [-n N] -- <command>: run a heavy test command once one of N machine-wide slots is free.
+"""test-slot [-n N] [--max-wait SECONDS] -- <command>: run a heavy test command once one of N machine-wide slots is free.
 
 Heavy suites (live/integration tests, -race, perf runs, full gates) from every lane and project share the slots, so
 they wait instead of thrashing the machine. N: -n, else `test_slots` in ~/.config/lonca/config.toml, else 2.
 Slots are lock files under ~/.local/state/lonca/test-slots (flock; a crashed holder frees its slot).
-Prints once while it waits; the command's exit code is passed through. A test-slot inside a held slot (a verify
+Prints once while it waits; the command's exit code is passed through. No slot within --max-wait seconds (else
+`test_slot_max_wait` in the config, else 1800): prints who holds them and exits 75 without running the command;
+report that suite as not verified. A test-slot inside a held slot (a verify
 script that wraps itself) runs its command at once: the holder marks its command's environment (LONCA_TEST_SLOT).
 """
 import fcntl, os, shlex, signal, subprocess, sys, time
 from pathlib import Path
 
 args = sys.argv[1:]
-n = None
-if args[:1] == ["-n"] and len(args) > 1:
-    n, args = args[1], args[2:]
+n = max_wait = None
+while args[:1] in (["-n"], ["--max-wait"]) and len(args) > 1:
+    if args[0] == "-n":
+        n = args[1]
+    else:
+        max_wait = args[1]
+    args = args[2:]
 if args[:1] != ["--"] or len(args) < 2:
     print(__doc__.strip(), file=sys.stderr)
     sys.exit(0 if sys.argv[1:2] in (["-h"], ["--help"]) else 2)
 cmd = args[1:]
+
+
+def seconds(value, name):
+    try:
+        value = int(value)
+        assert value >= 0
+        return value
+    except (ValueError, AssertionError):
+        sys.exit(f"test-slot: {name} must be a whole number of seconds, not {value!r}")
+
+
+if max_wait is not None:
+    max_wait = seconds(max_wait, "--max-wait")   # checked before the nesting shortcut, so a bad value always fails
 if os.environ.get("LONCA_TEST_SLOT"):
     os.execvp(cmd[0], cmd)   # already inside a slot: waiting for another would deadlock with N=1
+
+
+def config(key, default):
+    return subprocess.run([Path(__file__).resolve().parent / "lonca-config", key, default],
+                          capture_output=True, text=True).stdout.strip()
+
+
 if n is None:
-    n = subprocess.run([Path(__file__).resolve().parent / "lonca-config", "test_slots", "2"],
-                       capture_output=True, text=True).stdout.strip()
+    n = config("test_slots", "2")
+if max_wait is None:
+    max_wait = seconds(config("test_slot_max_wait", "1800"), "test_slot_max_wait in the config")
 try:
     n = int(n)
     assert n >= 1
@@ -41,8 +68,21 @@ def slot(i):
         sys.exit(f"test-slot: cannot open {folder / f'slot-{i}'}: {e.strerror} (symlinks are refused)")
 
 
+
+
+def holders():
+    busy = []
+    for i in range(n):
+        fd = slot(i)
+        busy.append(os.read(fd, 4096).decode(errors="replace").strip())
+        os.close(fd)
+    # holder lines come from other callers: no escape sequences or newlines reach a terminal or an agent's output
+    return "".join(c if c.isprintable() else "?" for c in "; ".join(b for b in busy if b))
+
+
 holder = f"{os.environ.get('LONCA_LANE') or 'no lane'}: {shlex.join(cmd)}"
 told = False
+deadline = time.monotonic() + max_wait
 while True:
     for i in range(n):
         fd = slot(i)   # truncated only once the lock is ours: a waiter can read the holder line
@@ -60,12 +100,10 @@ while True:
         rc = p.wait()
         os.ftruncate(fd, 0)
         sys.exit(rc if rc >= 0 else 128 - rc)
+    if time.monotonic() >= deadline:
+        print(f"test-slot: no test slot after {max_wait} s; held by: {holders()}", file=sys.stderr, flush=True)
+        sys.exit(75)   # EX_TEMPFAIL: the command never ran
     if not told:
-        busy = []
-        for i in range(n):
-            fd = slot(i)
-            busy.append(os.read(fd, 4096).decode(errors="replace").strip())
-            os.close(fd)
-        print("waiting for a test slot: " + "; ".join(b for b in busy if b), file=sys.stderr, flush=True)
+        print("waiting for a test slot: " + holders(), file=sys.stderr, flush=True)
         told = True
     time.sleep(2)

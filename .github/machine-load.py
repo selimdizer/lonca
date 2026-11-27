@@ -10,6 +10,7 @@ def fixture_env(home):
     env = dict(os.environ, HOME=str(home), XDG_CONFIG_HOME=str(home / ".config"),
                GIT_CONFIG_GLOBAL=str(home / ".gitconfig"), GIT_CONFIG_NOSYSTEM="1")
     env.pop("LONCA_LANE", None)
+    env.pop("LONCA_TEST_SLOT", None)   # inside a held slot, test-slot would skip the slots under test
     return env
 
 
@@ -33,6 +34,31 @@ def test_slot(home):
             for _ in range(2)]
     assert all(p.wait(30) == 0 and not p.stderr.read() for p in both)
     assert subprocess.run([SRC / "bin/test-slot", "-n", "0", "--", "true"], env=env, capture_output=True).returncode
+    # --max-wait: no slot in time -> exit 75 without running the command; the config sets the default
+    hold = subprocess.Popen(slot + ["sleep", "30"], env=dict(env, LONCA_LANE="lane-h\x1b[2J"))
+    try:
+        held = home / ".local/state/lonca/test-slots/slot-0"
+        for _ in range(100):
+            if held.exists() and "lane-h" in held.read_text():
+                break
+            time.sleep(0.05)
+        for extra, wait, cfg in ((["--max-wait", "2"], 2, ""), ([], 1, "test_slot_max_wait = 1\n")):
+            (home / ".config/lonca/config.toml").write_text("test_slots = 1\n" + cfg)
+            ran = home / "ran"
+            t0 = time.monotonic()
+            r = subprocess.run([SRC / "bin/test-slot", *extra, "--", "touch", ran], env=env, capture_output=True, text=True,
+                               timeout=20)
+            assert r.returncode == 75 and time.monotonic() - t0 < wait + 5 and not ran.exists(), (r.returncode, r.stderr)
+            assert f"no test slot after {wait} s; held by: lane-h?[2J: sleep 30" in r.stderr and "\x1b" not in r.stderr, r.stderr
+    finally:
+        hold.terminate(); hold.wait(10)   # test-slot passes SIGTERM on to its sleep
+    (home / ".config/lonca/config.toml").write_text("test_slots = 1\ntest_slot_max_wait = \"soon\"\n")
+    r = subprocess.run([SRC / "bin/test-slot", "--", "true"], env=env, capture_output=True, text=True, timeout=10)
+    assert r.returncode and "test_slot_max_wait in the config" in r.stderr, r.stderr
+    (home / ".config/lonca/config.toml").write_text("test_slots = 1\n")
+    r = subprocess.run([SRC / "bin/test-slot", "--max-wait", "x", "--", "true"], env=dict(env, LONCA_TEST_SLOT="1"),
+                       capture_output=True, text=True, timeout=10)
+    assert r.returncode and "--max-wait must be" in r.stderr, "a nested call checks --max-wait too"
     # a test-slot inside a held slot runs at once (N=1 would wait for itself forever)
     nested = subprocess.run([SRC / "bin/test-slot", "--", SRC / "bin/test-slot", "--", "sh", "-c", "exit 5"],
                             env=env, capture_output=True, text=True, timeout=10)

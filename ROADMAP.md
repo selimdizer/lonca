@@ -2,13 +2,6 @@
 
 Updated 26 Nov 2026. What the maintainer's own agent work on Lonca does next, in order; that work starts only after it is listed here. Outside contributions go through [CONTRIBUTING.md](CONTRIBUTING.md). Items name their board card (`lonca#N`) where one exists. Open decisions carry their id (`Q-n`) in the owner's questions ledger, which lives on the owner's machine (`lonca questions`) and is not part of the repo.
 
-## Urgent
-
-- **Checkers leave background shells running** (lonca#492):
-  - verifier, security-auditor and reviewer run commands in the foreground and report only after their shells have exited;
-  - the lead stops what a finished check left behind;
-  - `test-slot` gets a wait limit.
-
 ## Phase 0: decisions
 
 | id | question | recommended |
