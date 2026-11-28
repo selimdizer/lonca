@@ -5,6 +5,9 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- `merge-pr --override` records owner-approved exceptions for failed CI and eligible evidence checks (lonca#552).
+- Merge and night mode now show `yes <code>` and `start <code>` in approval examples (lonca#552).
+
 ### Removed
 
 - `ROADMAP.md`: the maintainer's plan is kept outside the repo.

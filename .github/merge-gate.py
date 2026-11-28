@@ -2,7 +2,7 @@
 """merge-pr end to end with a stub gh and hc on throwaway git repos: lanes are refused, a code is new on every ask,
 covers exactly the PRs it was printed for and is bound to the base, the base's settings are fetched (fail closed), a crashed lock holder does not block,
 an expired night asks, the night cap counts reserved merges, only a worktree at the merged head is removed, and the
-tier reads every page of the PR's files and rates a short list high. Fixture checks run with a stub gh and hc."""
+tier reads every page of the PR's files and rates a short list high. Owner overrides are separately approved and audited."""
 import datetime, json, os, re, shutil, subprocess, sys, tempfile, time
 from pathlib import Path
 
@@ -17,10 +17,27 @@ case "$*" in
     n=$(cat "$HOME/changed_$pr" 2>/dev/null || wc -l < "$HOME/files_$pr")
     echo "{\"baseRefName\":\"$base\",\"changedFiles\":$n}" ;;
   "pr view $pr --json state,"*)
-    printf '{"state":"OPEN","isDraft":false,"mergeable":"MERGEABLE","title":"t","body":"b","statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}],"headRefOid":"%s","baseRefName":"%s","headRefName":"lane-%s"}' "$(cat "$HOME/head_$pr")" "$base" "$pr" ;;
+    python3 -I - "$HOME" "$pr" "$base" <<'PY'
+import json, sys
+from pathlib import Path
+home, pr, base = sys.argv[1:]
+home = Path(home)
+info = dict(state="OPEN", isDraft=False, mergeable="MERGEABLE", title="t", body="b",
+            statusCheckRollup=[dict(name="ci", conclusion="SUCCESS")],
+            headRefOid=(home / f"head_{pr}").read_text(), baseRefName=base, headRefName=f"lane-{pr}")
+overrides = home / f"pr_{pr}.json"
+if overrides.exists():
+    info.update(json.loads(overrides.read_text()))
+print(json.dumps(info))
+PY
+    ;;
   api*"repos/{owner}/{repo}/pulls/$pr/files"*)   # GitHub sends 100 files per page; later pages only with --paginate
     case " $* " in *" --paginate "*) cat "$HOME/files_$pr" ;; *) head -100 "$HOME/files_$pr" ;; esac ;;
-  "pr merge $pr --merge --match-head-commit "*) echo "$pr" >> "$HOME/merged" ;;
+  "pr merge $pr --merge --match-head-commit "*)
+    [ ! -e "$HOME/fail_merge_$pr" ] || { echo "branch protection refused the merge" >&2; exit 1; }
+    echo "$pr" >> "$HOME/merged" ;;
+  "pr comment $pr --body-file -")
+    grep -qxF "$pr" "$HOME/merged" && cat >> "$HOME/comment_$pr" ;;
   *) echo "unexpected gh $*" >&2; exit 1 ;;
 esac
 '''
@@ -73,8 +90,8 @@ def main(home):
             (run / f"x{n}.{kind}.md").write_text(text.format(h=head))
         return head, wt
 
-    def ask(*pairs, lane_env=None):
-        return subprocess.run([SRC / "bin/merge-pr", "--ask", repo, run, *pairs], env=lane_env or env,
+    def ask(*pairs, lane_env=None, opts=()):
+        return subprocess.run([SRC / "bin/merge-pr", "--ask", *opts, repo, run, *pairs], env=lane_env or env,
                               capture_output=True, text=True, timeout=60)
 
     def merge(n, *opts, lane_env=None, at=None):
@@ -132,7 +149,7 @@ def main(home):
     cfg.unlink()
     assert r.returncode == 3 and "covers exactly: owner/repo#1 owner/repo#2 " in r.stdout and "any language" in r.stdout, r.stdout + r.stderr
     assert not merged(), r.stdout
-    code = re.search(r"evet (\w+)", r.stdout).group(1)
+    code = re.search(r"yes (\w+)", r.stdout).group(1)
     assert (A / f"batch_fixture_{code}").read_text().split() == ["owner_repo_1", "owner_repo_2"]
     # one refused PR seals nothing
     (run / "x7.review.md").unlink()
@@ -145,13 +162,13 @@ def main(home):
     for f in taken:
         f.touch(exist_ok=True)
     r = merge(6, lane_env=dict(env, LONCA_PROJECT="other"))   # LONCA_PROJECT does not pick the batch either
-    assert r.returncode == 3 and "evet 999 " in r.stdout and "covers exactly: owner/repo#6 " in r.stdout, r.stdout
+    assert r.returncode == 3 and "yes 999 " in r.stdout and "covers exactly: owner/repo#6 " in r.stdout, r.stdout
     for f in taken:
         if f.name != f"batch_fixture_{code}":
             f.unlink()
     # a stray exported MERGE_PR_SEAL is cleared: a plain run still asks (exit 3 with a code), it never exits 0 unmerged
     r = merge(6, lane_env=dict(env, MERGE_PR_SEAL=str(home / "stray")))
-    assert r.returncode == 3 and "evet " in r.stdout and not (home / "stray").exists() and not merged(), r.stdout + r.stderr
+    assert r.returncode == 3 and "yes " in r.stdout and not (home / "stray").exists() and not merged(), r.stdout + r.stderr
     # a key file carrying the --ask code for a PR outside its list is refused
     (A / "owner_repo_6").write_text(f"{code} {(home / 'head_6').read_text()} {int(time.time())} main\n")
     r = merge(6, "--code", code)
@@ -166,7 +183,7 @@ def main(home):
     assert (A / f"batch_fixture_{code}").read_text().split() == ["owner_repo_1"]
 
     # B3: a crashed lock holder does not block: the lock goes with its process
-    code = re.search(r"evet (\w+)", merge(1).stdout).group(1)
+    code = re.search(r"yes (\w+)", merge(1).stdout).group(1)
     holder = subprocess.Popen([sys.executable, "-c", f"""import fcntl, time
 f = open({str(N / '.merge.flock')!r}, "a"); fcntl.flock(f, fcntl.LOCK_EX); print("held", flush=True); time.sleep(30)"""],
                               stdout=subprocess.PIPE, text=True)
@@ -191,7 +208,7 @@ f = open({str(N / '.merge.flock')!r}, "a"); fcntl.flock(f, fcntl.LOCK_EX); print
         {"address": "t3", "cwd": str(wt3)}, {"address": "t3sub", "cwd": f"{wt3}/sub"},
         {"address": "t30", "cwd": f"{wt3}0"}, {"address": "t4", "cwd": str(wt4)}]}))
     for n in (3, 4):
-        code = re.search(r"evet (\w+)", merge(n).stdout).group(1)
+        code = re.search(r"yes (\w+)", merge(n).stdout).group(1)
         r = merge(n, "--code", code)
         assert r.returncode == 0, r.stderr
     assert not wt3.exists() and not git("branch", "--list", "lane-3", cwd=repo), "merged lane left behind"
@@ -205,7 +222,7 @@ f = open({str(N / '.merge.flock')!r}, "a"); fcntl.flock(f, fcntl.LOCK_EX); print
     night.write_text(json.dumps({"until": "2000-01-01T00:00:00+00:00", "max_merges": "unlimited"}))
     pr(5, worktree=False)
     r = merge(5)
-    assert r.returncode == 3 and "evet" in r.stdout and "asking the owner" in r.stderr, r.stdout + r.stderr
+    assert r.returncode == 3 and "yes " in r.stdout and "asking the owner" in r.stderr, r.stdout + r.stderr
     # the night cap counts a merge reserved before a crash; a failed merge gives its place back
     night.write_text(json.dumps({"until": "2999-01-01T00:00:00+00:00", "max_merges": 1}))
     os.utime(night, (time.time() - 10,) * 2)
@@ -218,6 +235,143 @@ f = open({str(N / '.merge.flock')!r}, "a"); fcntl.flock(f, fcntl.LOCK_EX); print
     r = merge(5)
     assert r.returncode == 0 and "night" in r.stdout and merged()[-1] == "5", r.stdout + r.stderr
     assert f"merging [night:fixture] {repo} #5" in log.read_text()
+
+    def update(n, **info):
+        (home / f"pr_{n}.json").write_text(json.dumps(info))
+
+    red = dict(name="ci", workflowName="checks", conclusion="FAILURE")
+    pending = dict(name="lint", status="IN_PROGRESS")
+    tool_check = dict(name="Copilot", conclusion="FAILURE")
+    night_active = json.dumps({"until": "2999-01-01T00:00:00+00:00", "max_merges": "unlimited"})
+
+    # Night mode alone never overrides a failed check.
+    night.write_text(night_active)
+    pr(8, worktree=False)
+    update(8, statusCheckRollup=[red])
+    r = merge(8)
+    assert r.returncode == 1 and "checks not green" in r.stderr and not (A / "owner_repo_8").exists(), r.stdout + r.stderr
+    night.unlink()
+
+    # Good checks still use ordinary approval and ordinary approval cannot authorize an override.
+    update(8)
+    r = merge(8, "--override")
+    assert r.returncode == 3 and "override " not in r.stdout, r.stdout + r.stderr
+    normal_code = re.search(r"yes (\w+)", r.stdout).group(1)
+    update(8, statusCheckRollup=[red, pending, tool_check])
+    r = merge(8, "--override", "--code", normal_code)
+    assert r.returncode == 1 and "requires an override code" in r.stderr, r.stdout + r.stderr
+    cfg.write_text('auto_merge = "all"\n')
+    try:
+        r = merge(8)
+        assert r.returncode == 1 and "checks not green" in r.stderr, r.stdout + r.stderr
+        r = merge(8, "--override")
+        assert r.returncode == 3 and "any language" in r.stdout, r.stdout + r.stderr
+    finally:
+        cfg.unlink()
+    expected_comment = ("The owner approved a merge override for these checks. See the run report for details.\n\n"
+                        "    CI check ('FAILURE')\n    CI check ('FAILURE')\n")
+    code = re.search(r"override (\w+)", r.stdout).group(1)
+    while code in expected_comment:   # avoid an incidental match with the randomly generated code
+        r = merge(8, "--override")
+        assert r.returncode == 3, r.stdout + r.stderr
+        code = re.search(r"override (\w+)", r.stdout).group(1)
+    ci_fail = "CI: 'checks / ci' ('FAILURE')"
+    assert code != normal_code and ci_fail in r.stdout.splitlines() and "CI: 'lint' ('IN_PROGRESS')" in r.stdout.splitlines(), r.stdout
+    r = merge(8, "--code", code)
+    assert r.returncode == 1 and "an override code requires --override" in r.stderr, r.stdout + r.stderr
+
+    # Same or fewer means membership, not merely the count. An expired code and a retargeted PR also fail.
+    run_code = ("--override", "--code", code)
+    update(8, statusCheckRollup=[dict(red, workflowName="other")])
+    r = merge(8, *run_code)
+    assert r.returncode == 1 and "failed checks changed" in r.stderr, r.stdout + r.stderr
+    update(8, statusCheckRollup=[red, tool_check])
+    request = A / "owner_repo_8"
+    record = request.read_text()
+    request.write_text(re.sub(r"^([^ ]+ [^ ]+) \d+ ", r"\1 0 ", record))
+    r = merge(8, *run_code)
+    assert r.returncode == 1 and "older than 1 h" in r.stderr, r.stdout + r.stderr
+    request.write_text(record.replace(" main override", " release override"))
+    r = merge(8, *run_code)
+    assert r.returncode == 1 and "base is now main" in r.stderr, r.stdout + r.stderr
+    request.write_text(record)
+
+    # An owner override works during night mode. A refused merge leaves the code valid and creates no audit artifacts.
+    night.write_text(night_active)
+    merge_failure = home / "fail_merge_8"
+    report_path = run / "x8.override.md"
+    comment_path = home / "comment_8"
+    merge_failure.touch()
+    r = merge(8, *run_code)
+    assert r.returncode == 1 and "branch protection refused the merge" in r.stderr, r.stdout + r.stderr
+    assert "8" not in merged() and not comment_path.exists() and not report_path.exists() and request.exists()
+    merge_failure.unlink()
+    r = merge(8, *run_code)
+    assert r.returncode == 0 and merged()[-1] == "8", r.stdout + r.stderr
+    night.unlink()
+    assert any("merged [override]" in line and "#8" in line and ci_fail in line for line in log.read_text().splitlines())
+    report = report_path.read_text()
+    comment = comment_path.read_text()
+    assert all(line in report for line in (f"Head: {(home / 'head_8').read_text()}", "Time:", ci_fail, "Copilot")), report
+    assert "Code:" not in report and not re.search(rf"\b{re.escape(code)}\b", report), report
+    assert code not in comment and "Copilot" not in comment and comment == expected_comment, comment
+    trace_env = dict(env, GIT_CONFIG_COUNT="2", GIT_CONFIG_KEY_0="lonca.strictTraces", GIT_CONFIG_VALUE_0="true",
+                     GIT_CONFIG_KEY_1="lonca.toolNamesOk", GIT_CONFIG_VALUE_1="false")
+    r = subprocess.run([SRC / "bin/ai-trace-check"], cwd=repo, env=trace_env, input=comment, text=True, capture_output=True)
+    assert r.returncode == 0, r.stderr
+    assert not (A / f"batch_fixture_{code}").read_text()   # still reserved, with no PRs left to approve
+    report_written = report_path.stat().st_mtime_ns
+    assert merge(8, *run_code).returncode == 1 and merged().count("8") == 1
+    assert comment_path.read_text() == comment and report_path.stat().st_mtime_ns == report_written
+
+    # Collect independent evidence failures. A new commit voids the code.
+    head, _ = pr(9, worktree=False)
+    (run / "x9.tier").write_text("high\n")
+    (run / "x9.verify.md").write_text(f"VERDICT: NEEDS_WORK\nHEAD: {head}\nPERF: REGRESSION\nHEAD: {head}\n")
+    (run / "x9.review.md").unlink()
+    findings = "SECURITY: FINDINGS (1), highest: HIGH"
+    (run / "x9.security.md").write_text(f"{findings}\nHEAD: {head}\n")
+    r = merge(9, "--override")
+    assert r.returncode == 3, r.stdout + r.stderr
+    for failure in ("verify: VERDICT: NEEDS_WORK", "perf: PERF: REGRESSION", "missing x9.review.md", f"security: {findings}"):
+        assert failure in r.stdout.splitlines(), r.stdout
+    code = re.search(r"override (\w+)", r.stdout).group(1)
+    (home / "head_9").write_text("f" * 40)
+    r = merge(9, "--override", "--code", code)
+    assert r.returncode == 1 and "PR changed" in r.stderr and "9" not in merged(), r.stdout + r.stderr
+    (home / "head_9").write_text(head)
+    r = merge(9, "--override", "--code", code)
+    assert r.returncode == 0 and merged()[-1] == "9" and findings in (home / "comment_9").read_text(), r.stdout + r.stderr
+
+    # A hard refusal takes precedence over collected CI failures and produces no approval request.
+    head, _ = pr(10, worktree=False)
+    for info, why in ((dict(isDraft=True), "not open, or draft"), (dict(state="CLOSED"), "not open, or draft"),
+                      (dict(mergeable="CONFLICTING"), "not mergeable: CONFLICTING"),
+                      (dict(body="Generated with AI"), "PR title/body has AI traces")):
+        update(10, statusCheckRollup=[red], **info)
+        r = merge(10, "--override")
+        assert r.returncode == 1 and why in r.stderr and not (A / "owner_repo_10").exists(), r.stdout + r.stderr
+    r = merge(10, "--override", lane_env=dict(env, LONCA_LANE="fixture-x"))
+    assert r.returncode == 1 and "refused in lane" in r.stderr, r.stdout + r.stderr
+    r = merge(10, "--override", at=home)
+    assert r.returncode == 1 and "no Lonca project marker" in r.stderr, r.stdout + r.stderr
+    r = ask("10:x10", opts=("--override",))
+    assert r.returncode == 2 and "usage:" in r.stderr, r.stdout + r.stderr
+
+    # If all refused checks are fixed by the rerun, the owner's code still approves the PR, with no override audit.
+    update(10, statusCheckRollup=[red])
+    (run / "x10.tier").write_text("high\n")
+    (run / "x10.verify.md").write_text(f"VERDICT: PASS\nHEAD: 123abcd\nPERF: RISK\nHEAD: {head}\n")
+    (run / "x10.review.md").write_text(f"VERDICT: MAJOR_RETHINK\nHEAD: {head}\n")
+    r = merge(10, "--override")
+    assert r.returncode == 3 and "judged 123abcd" in r.stdout and "perf: PERF: RISK" in r.stdout, r.stdout + r.stderr
+    assert "review: VERDICT: MAJOR_RETHINK" in r.stdout, r.stdout
+    code = re.search(r"override (\w+)", r.stdout).group(1)
+    pr(10, worktree=False)
+    update(10)
+    r = merge(10, "--override", "--code", code)
+    assert r.returncode == 0 and merged()[-1] == "10" and "[override]" not in log.read_text().splitlines()[-1], r.stdout + r.stderr
+    assert not (run / "x10.override.md").exists() and not (home / "comment_10").exists()
 
 
 base = Path(tempfile.mkdtemp())

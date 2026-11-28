@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""merge-evidence <run-dir> <lane> <pr-head-sha> [low|medium|high]: exit 0 when the lane's checks pass for exactly this
+"""merge-evidence [--all] <run-dir> <lane> <pr-head-sha> [low|medium|high]: exit 0 when the lane's checks pass for exactly this
 head, as the tier asks (default medium): verify PASS, review SHIP and a security result with no HIGH finding always
 (for low the security result may come from the scanners alone); PERF: OK required for high, and for medium whenever a
 PERF line exists (perf runs on hot paths); low ignores PERF.
@@ -11,38 +11,65 @@ Files (written by the lead from each checker's own result; each verdict is a who
 The last line of each kind counts (a re-check appends), and it counts only for the commit in the first HEAD: line
 after it, which must be the PR head (at least 7 characters of it). So a PASS judged on commit A never passes for B,
 even when a later check appends HEAD: B to the same file.
+
+With --all, report every overridable failure, one per line on stdout, and exit 2. Other errors still exit 1.
 """
 import os, re, sys
 
+collect = sys.argv[1] == "--all"
+if collect:
+    del sys.argv[1]
 run, lane, head = sys.argv[1:4]
 tier = sys.argv[4] if len(sys.argv) > 4 else "medium"
+failures = []
 
-def last(kind, pat):
-    path = os.path.join(run, f"{lane}.{kind}.md")
+
+def fail(message, overridable=False):
+    if not collect or not overridable:
+        sys.exit(message)
+    failures.append(message)
+
+
+def read(kind):
+    name = f"{lane}.{kind}.md"
     try:
-        lines = [l.strip() for l in open(path).read().splitlines()]
-    except OSError:
-        sys.exit(f"missing {lane}.{kind}.md")
-    idx = [i for i, l in enumerate(lines) if re.match(pat, l)]
-    if not idx:
-        sys.exit(f"no '{pat}' line in {lane}.{kind}.md")
-    i = idx[-1]
-    judged = next((l.split(":", 1)[1].strip() for l in lines[i + 1:] if l.startswith("HEAD:")), "")
-    if len(judged) < 7 or not head.startswith(judged):
-        sys.exit(f"{lane}.{kind}.md: '{lines[i]}' judged {judged[:12] or 'no HEAD'}, the PR head is {head[:12]}: re-check")
-    return lines[i]
+        with open(os.path.join(run, name)) as evidence:
+            return [line.strip() for line in evidence]
+    except OSError as exc:
+        fail(f"missing {name}", isinstance(exc, FileNotFoundError))
 
-def need(ok, msg):
-    if not ok:
-        sys.exit(msg)
+
+def check(kind, lines, prefix, label, good, bad):
+    idx = [i for i, line in enumerate(lines) if line.startswith(prefix)]
+    if not idx:
+        sys.exit(f"no '{prefix}' line in {lane}.{kind}.md")
+    i = idx[-1]
+    verdict = lines[i]
+    passed = re.fullmatch(good, verdict) is not None
+    overridable = re.fullmatch(bad, verdict) is not None
+    judged = next((line.split(":", 1)[1].strip() for line in lines[i + 1:] if line.startswith("HEAD:")), "")
+    if len(judged) < 7 or not head.startswith(judged):
+        fail(f"{lane}.{kind}.md: '{verdict}' judged {judged[:12] or 'no HEAD'}, the PR head is {head[:12]}: re-check",
+             (passed or overridable) and re.fullmatch(r"[0-9a-fA-F]{7,}", judged) is not None)
+    elif not passed:
+        fail(f"{label}: {verdict}", overridable)
+
 
 # whole lines only: a copied template line listing the alternatives is not a verdict
-v = last("verify", r"VERDICT: ");  need(v == "VERDICT: PASS", f"verify: {v}")
-has_perf = any(l.strip().startswith("PERF: ") for l in open(os.path.join(run, f"{lane}.verify.md")))
-if tier == "high" or (tier == "medium" and has_perf):
-    p = last("verify", r"PERF: ");  need(p == "PERF: OK", f"perf: {p}")
-r = last("review", r"VERDICT: ");  need(r == "VERDICT: SHIP", f"review: {r}")
-s = last("security", r"SECURITY: ")
-need(s == "SECURITY: CLEAN" or re.fullmatch(r"SECURITY: FINDINGS \(\d+\), highest: (LOW|MEDIUM)", s),
-     f"security: {s}")
+verify = read("verify")
+if verify is not None:
+    check("verify", verify, "VERDICT: ", "verify", "VERDICT: PASS", "VERDICT: NEEDS_WORK")
+    has_perf = any(line.startswith("PERF: ") for line in verify)
+    if tier == "high" or (tier == "medium" and has_perf):
+        check("verify", verify, "PERF: ", "perf", "PERF: OK", r"PERF: (REGRESSION|RISK)")
+review = read("review")
+if review is not None:
+    check("review", review, "VERDICT: ", "review", "VERDICT: SHIP", r"VERDICT: (NEEDS_WORK|MAJOR_RETHINK)")
+security = read("security")
+if security is not None:
+    check("security", security, "SECURITY: ", "security",
+          r"SECURITY: (CLEAN|FINDINGS \(\d+\), highest: (LOW|MEDIUM))", r"SECURITY: FINDINGS \(\d+\), highest: HIGH")
+if failures:
+    print(*failures, sep="\n")
+    sys.exit(2)
 print(f"evidence OK for {head[:12]} ({tier})")
