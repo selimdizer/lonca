@@ -12,14 +12,14 @@ Updated 28 Nov 2026. What the maintainer's own agent work on Lonca does next, in
 | Q-4 | Claude Approvals | not added: `merge-pr` covers it |
 | Q-5 | What to adopt from [ozstack](https://github.com/selimozten/ozstack) (MIT) | what helps our skills, credited: standards, brief slots, review loop, PR self-review record, merge ordering, "Done when" endings with a format check (no hard line cap) |
 | Q-6 | Board | every user picks one: files stay the source of truth, boards are adapters (Kanzo now, Obsidian next, Notion on request); Excalidraw stays a drawing skill |
-| Q-7 | Where this roadmap lives | here, plus one card per item |
+| Q-7 | Where this roadmap lives | here; items name their card where one exists, on whichever board the user runs |
 | Q-8 | Non-code workflow (video, marketing) | phase 1 skills stop assuming repo/PR/CI; phase 5 waits for 2-3 real jobs |
 | Q-9 | Let the owner merge a PR a check refused | an owner-only override, CI included (lonca#552) |
 
 ## Phase 1: the skills layer
 
 - **Skills work without Lonca's commands** (lonca#493): a fallback for each command, and a README section on using only the skills.
-- **Skill format rule and CI check** (lonca#494): a prompt audit of our own skills; vendored skills stay as they are.
+- **Skill format rule and CI check** (lonca#494): every stage ends on "Done when", a CI check for the format and frontmatter (no hard line cap), and a prompt audit of our own skills; vendored skills stay as they are.
 - **Ideas adopted from ozstack** (lonca#495):
   - engineering and signal standards;
   - Focus and risk slots in briefs;
@@ -40,7 +40,7 @@ Updated 28 Nov 2026. What the maintainer's own agent work on Lonca does next, in
   - refuse on CHANGES_REQUESTED or unresolved review threads;
   - a `protected_branches` setting;
   - mobile and Firebase files count as high risk.
-- **Owner override and English approval words** (lonca#552): `override <code>` merges a PR a check refused, CI included; never in auto or night mode; `yes <code>` and `start <code>` replace the Turkish examples.
+- **Owner override and English approval words** (lonca#552): `override <code>` merges a PR a check refused, CI included; the owner's code only, never auto or night mode; each override is recorded with what failed (PR comment, run folder, merge log); `yes <code>` and `start <code>` replace the Turkish examples (also the approval-words part of lonca#333).
 - **Merge ordering: independent, chained, blocked** (lonca#495).
 - **Open gate items** (lonca#333, lonca#435).
 - **Force-with-lease decision** (lonca#358).
