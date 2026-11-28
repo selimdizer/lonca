@@ -32,7 +32,7 @@ rails, not a sandbox: lanes run with full permissions as your user, so a determi
 ```
              you (usta)
                 │ "build X"                         ▲ "PR #12 ready: verify ✔ review ✔ security ✔ CI ✔"
-                ▼                                   │  you: "evet 4f2"           ← the code for that PR
+                ▼                                   │  you: "yes 4f2"            ← the code for that PR
          ┌──── lead (kalfa) ───────────────────────┴──┐
          │ plan → split → route → brief → check → PR  │
          └──┬────────────────┬────────────────┬───────┘
@@ -45,8 +45,8 @@ rails, not a sandbox: lanes run with full permissions as your user, so a determi
 ## What it does
 
 - 🧵 **Lanes you can see.** `lane` starts an agent in its own worktree as a [Herdr](https://herdr.dev) terminal. It reports back with `DONE: <outcome>` or asks `QUESTION: …`, and `lane-watch` tells the lead when one goes quiet. A read lane that fails says so in its DONE; the brief may set a report length other than 30 lines.
-- 🔏 **One way to merge, sized to the risk.** `merge-pr` merges only the PR's *exact* head commit, after CI and evidence from verify, review and security for that commit. A script reads the diff and sets the risk tier (docs/tests = low, auth/payments/migrations/CI/dependencies = high, the rest medium); low needs fewer checks, and you choose per project which tiers merge themselves (none, low, medium or all). Everything else waits for your `evet <code>` in chat.
-- 🌙 **Night mode.** The lead asks every question up front and proposes tonight's work for its project. You answer `başla <code>` and go to bed: until the end time, every PR of that project that passes its checks merges without asking. In the morning you get what was done and the questions that came up.
+- 🔏 **One way to merge, sized to the risk.** `merge-pr` checks CI and the verify, review and security evidence for the PR's exact head commit. A script reads the diff and sets the risk tier (docs/tests = low, auth/payments/migrations/CI/dependencies = high, the rest medium). Low needs fewer checks, and you choose per project which tiers merge themselves (none, low, medium or all). Other PRs that pass wait for your `yes <code>` in chat.
+- 🌙 **Night mode.** The lead asks every question up front and proposes tonight's work for its project. You answer `start <code>` and go to bed: until the end time, every PR of that project that passes its checks merges without asking. In the morning you get what was done and the questions that came up.
 - 🧠 **Memory you only fill once.** `~/ai-memory` is plain Markdown that every agent loads at start, with one group per project. Agents save decisions as they go; an optional background review catches the ones they missed.
 - 📋 **A board that keeps itself current.** With [Kanzo](https://github.com/emanuele-em/kanzo), cards move by themselves: *doing* when a lane starts, *review* when its PR opens, *done* when it merges. Issues and PRs your account opens in a project's linked repos get a card too.
 - 🧯 **Machine load.** Containers a lane starts carry its name (`docker` shim: label `lonca.lane`, compose project) and go when the lane closes; heavy suites wait for one of N machine-wide slots (`~/lonca/bin/test-slot -- <cmd>`), about `--max-wait` seconds (default 1800), then exit 75 without running; checkers (verifier, reviewer, security-auditor) start only commands that end on their own and report only once they have; `lane --browser` gives only the Claude lane that needs one a chrome-devtools browser.
@@ -137,14 +137,18 @@ verified, reviewed by the other model family and security-checked. Finally it op
 ```
 acme/shop#12 → main, head 9c1e4a2, tier medium (14 files, 220 lines)
 verify PASS · review SHIP · security CLEAN · CI green. My opinion: safe to merge; it only touches the settings page.
-To merge, write: evet 4f2
+To merge, write: yes 4f2
 ```
 
-You answer `evet 4f2` (or `yes 4f2`, `ok 4f2`: any language, the code is what binds), and the lead merges exactly that
+You answer `yes 4f2` (any language works because the code binds the approval), and the lead merges exactly that
 commit. The code is good for that PR's current head and base branch for one hour: if someone pushes after the checks,
 the evidence no longer matches, the checks run again and you get a new code. With several PRs ready, the lead asks
 once (`merge-pr --ask`): one code for exactly the PRs it shows you, never one an earlier question used. Only a lead
 merges; `merge-pr` refuses to run inside a lane.
+
+If you still want to merge after seeing a CI or evidence refusal, the lead can run `merge-pr --override` to show
+every failed check and ask for `override <code>`. That code is valid for one hour and applies to the same head and
+base when only the failures you saw remain. The override is recorded in the merge log, the run folder and a PR comment.
 
 ## Configuration
 

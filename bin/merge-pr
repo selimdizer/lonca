@@ -1,5 +1,5 @@
 #!/bin/sh
-# merge-pr [--dry-run] [--code <c>] <repo-dir> <pr-number> <run-dir> <lane>: the only way an agent merges a PR.
+# merge-pr [--dry-run] [--override] [--code <c>] <repo-dir> <pr-number> <run-dir> <lane>: the only way to merge a PR.
 # merge-pr --ask <repo-dir> <run-dir> <pr>:<lane> [<pr>:<lane> ...]: one owner's code for several PRs at once.
 #
 # Checks, always: the PR is open, not a draft, mergeable; CI is green (with `wait_for_ci = false` in the project's
@@ -14,22 +14,26 @@
 #     --ask runs every check for each listed PR and, when all pass, prints one new code sealed to exactly those PRs
 #     (each at its head and base); a refused PR seals nothing. A code is never one already on file, and approves only
 #     the PRs it was printed for. The lead shows the owner the PRs, tiers and its opinion; the owner answers with the
-#     code once ("evet <code>", "yes <code>": any language, the code is what binds); the lead reruns each with --code.
+#     code once ("yes <code>": any language, the code is what binds); the lead reruns each with --code.
 #     The code ends when its last PR merges, or after 1 h.
+#   - the owner's override: --override lists failed CI and eligible evidence checks, then prints its own code.
+#     The owner answers "override <code>" and the lead reruns with --override --code. The same head and base
+#     must have the same or fewer failures. Night mode cannot override. Passing checks use the usual approval.
 # The lead runs it; a lane (LONCA_LANE set) is refused.
 # The merge method follows the repo (merge commit, else squash, else rebase; `git config lonca.mergeMethod` overrides)
 # and merges exactly the checked head (--match-head-commit). One merge at a time (a lock). Log: ~/.local/state/lonca/merge.log
 set -eu
 for v in $(env | cut -d= -f1 | grep -E '^(CLAUDECODE|CLAUDE_[A-Z_]*|CODEX_COMPANION_[A-Z_]*|LONCA_PROJECT)$'); do unset "$v"; done   # the project comes from the repo's marker
-dry=0 code= ask=0
+dry=0 code= ask=0 override=0 failed=
 unset MERGE_PR_SEAL   # set only by --seal, which --ask passes to its children: a stray export never skips a merge
-while [ $# -gt 0 ]; do case $1 in --dry-run) dry=1; shift ;; --code) code=${2:-}; shift 2 ;; --ask) ask=1; shift ;; --seal) MERGE_PR_SEAL=${2:-}; shift 2 ;; -h|--help) sed -n '2,/^set -eu/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;; *) break ;; esac; done
+while [ $# -gt 0 ]; do case $1 in --dry-run) dry=1; shift ;; --override) override=1; shift ;; --code) code=${2:-}; shift 2 ;; --ask) ask=1; shift ;; --seal) MERGE_PR_SEAL=${2:-}; shift 2 ;; -h|--help) sed -n '2,/^set -eu/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;; *) break ;; esac; done
 me=merge-pr
-[ "$dry" = 1 ] || [ -z "${LONCA_LANE:-}" ] || { echo "$me: refused in lane $LONCA_LANE: the lead merges" >&2; exit 1; }
-usage() { echo "usage: $me [--dry-run] [--code <c>] <repo-dir> <pr-number> <run-dir> <lane>
+[ "$dry$override" = 10 ] || [ -z "${LONCA_LANE:-}" ] || { echo "$me: refused in lane $LONCA_LANE: the lead merges" >&2; exit 1; }
+usage() { echo "usage: $me [--dry-run] [--override] [--code <c>] <repo-dir> <pr-number> <run-dir> <lane>
        $me --ask <repo-dir> <run-dir> <pr>:<lane> [<pr>:<lane> ...]   ($me --help)" >&2; exit 2; }
-if [ "$ask" = 1 ]; then [ $# -ge 3 ] && [ "$dry$code" = 0 ] || usage; repo=$(realpath "$1") run=$2 pr=; shift 2
+if [ "$ask" = 1 ]; then [ $# -ge 3 ] && [ "$dry$override$code" = 00 ] || usage; repo=$(realpath "$1") run=$2 pr=; shift 2
 else [ $# -eq 4 ] || usage; repo=$(realpath "$1") pr=$2 run=$3 lane=$4; fi
+[ "$override" = 0 ] || [ -z "${MERGE_PR_SEAL:-}" ] || usage
 N=$HOME/.cache/ai-runs/night A=$HOME/.local/state/lonca/approvals L=$HOME/lonca/bin
 LOG=$HOME/.local/state/lonca/merge.log   # the audit trail: kept, unlike the run folders in ~/.cache
 no() { echo "$me: refused PR #$pr: $*" >&2; [ "$dry" = 1 ] || echo "$(date -Iseconds) refused $repo #$pr: $*" >> "$LOG" 2>/dev/null || true; exit 1; }   # a dry run (lane-watch, every 10 min) leaves the audit log alone
@@ -39,7 +43,7 @@ project=$("$L/lonca-project" "$repo") || { echo "$me: no Lonca project marker fo
 proj=${project%%	*}
 mkdir -p "$N" "${LOG%/*}"
 
-seal() {   # stdin: "<key> <head> <base> <repo#pr>" lines that passed every check; prints one new code for exactly them
+seal() {   # stdin: "<key> <head> <base> <repo#pr>" lines; failed is set only for a single-PR override
   mkdir -p "$A"; [ -w "$A" ] || no "cannot write $A"
   # a random code whose batch file did not exist yet (created exclusively): a later ask never shares an earlier batch
   c=$(python3 -I - "$A/batch_${proj}_" <<'PY'
@@ -54,11 +58,16 @@ PY
 ) || no "no free approval code"
   now=$(date +%s) names=
   while read -r k h b n; do
-    echo "$c $h $now $b" > "$A/$k"
+    if [ -n "$failed" ]; then printf '%s\n' "$c $h $now $b override" "$failed" > "$A/$k"
+    else echo "$c $h $now $b" > "$A/$k"; fi
     grep -qxF "$k" "$A/batch_${proj}_$c" || { echo "$k" >> "$A/batch_${proj}_$c"; names="$names $n"; }   # the PRs this code may approve
   done
   echo "This code covers exactly:$names   (show the owner every one)"
-  echo "They approve by writing the code, e.g.:  evet $c  (any language)     then run for each:  $me --code $c $repo <pr> $run <lane>   (these heads and bases only, 1 h)"
+  if [ -n "$failed" ]; then
+    echo "The owner approves by writing:  override $c  (any language)     then run:  $me --override --code $c $repo $pr $run $lane   (this head and base only, 1 h)"
+  else
+    echo "They approve by writing the code, e.g.:  yes $c  (any language)     then run for each:  $me --code $c $repo <pr> $run <lane>   (these heads and bases only, 1 h)"
+  fi
 }
 if [ "$ask" = 1 ]; then   # each PR runs the whole gate in a child that only records it; any refusal seals nothing
   list=$(mktemp); trap 'rm -f "$list"' EXIT; ok=1
@@ -105,8 +114,14 @@ how=ask
 if [ -n "${MERGE_PR_SEAL:-}" ]; then :   # a --ask child: the owner's code, whatever else would approve it
 elif [ -n "$code" ]; then
   [ -f "$A/$key" ] || no "no approval request for $nwo#$pr: run $me without --code first"
-  set -- $(cat "$A/$key")   # <code> <head> <epoch> <base>
+  approval=$(cat "$A/$key") || no "cannot read approval for $nwo#$pr"
+  set -- $(printf '%s\n' "$approval" | head -1)   # <code> <head> <epoch> <base> [override]
   [ "$1" = "$code" ] || no "code '$code' does not match the one asked for $nwo#$pr"
+  case "$override:${5:-}" in
+    0:|1:override) ;;
+    0:override) no "an override code requires --override" ;;
+    *) no "--override requires an override code" ;;
+  esac
   [ "$2" = "$head" ] || no "the PR changed since the owner approved it (${2%"${2#???????}"} -> $short): ask again"
   [ "${4:-}" = "$base" ] || no "the PR's base is now $base, not the ${4:-unknown} the owner approved: ask again"
   grep -qxF "$key" "$A/batch_${proj}_$code" 2>/dev/null || no "$nwo#$pr is not in the batch the owner saw for code '$code': ask again"
@@ -114,8 +129,11 @@ elif [ -n "$code" ]; then
   how=code
 elif LEVEL=$level TIER=$tier python3 -I -c 'import os,sys; r={"low":0,"medium":1,"high":2,"all":2}; sys.exit(0 if r.get(os.environ["LEVEL"],-1) >= r[os.environ["TIER"]] else 1)'; then
   how=auto
-elif [ -n "$proj" ] && [ -f "$N/$proj.json" ]; then
-  python3 -I - "$N/$proj.json" "$LOG" "$proj" 2>/dev/null <<'PY' && how=night || echo "$me: night mode for $proj is past its end time or its cap: asking the owner" >&2
+fi
+night=0
+if [ -n "$proj" ] && [ -f "$N/$proj.json" ] &&
+   { [ "$override" = 1 ] || { [ "$how" = ask ] && [ -z "${MERGE_PR_SEAL:-}" ]; }; }; then
+  if python3 -I - "$N/$proj.json" "$LOG" "$proj" 2>/dev/null <<'PY'
 import datetime, json, os, sys
 f, log, p = sys.argv[1:]
 n = json.load(open(f))
@@ -124,25 +142,58 @@ mx = n.get("max_merges", "unlimited")
 if mx != "unlimited":
     since = os.path.getmtime(f)
     def count(word):   # a merge is reserved before it starts, so a crash after the remote merge still counts
-        return sum(1 for l in open(log) if f" {word} [night:{p}] " in l
+        return sum(1 for l in open(log) if l.split(maxsplit=3)[1:3] == [word, f"[night:{p}]"]
                    and datetime.datetime.fromisoformat(l.split()[0]).timestamp() >= since) if os.path.exists(log) else 0
     assert count("merging") - count("merge-failed") < int(mx)
 PY
+  then
+    night=1
+    [ "$how" != ask ] || how=night
+  elif [ "$how" = ask ]; then
+    echo "$me: night mode for $proj is past its end time or its cap: asking the owner" >&2
+  fi
 fi
 
 # Checks
-err=$(printf '%s' "$info" | NOWAIT=$([ "$wait_ci" = false ] && echo 1 || echo 0) python3 -I -c '
-import json,os,sys; p=json.load(sys.stdin); nowait=os.environ["NOWAIT"]=="1"
+if ci=$(printf '%s' "$info" | python3 -I -c '
+import json,sys; p=json.load(sys.stdin); nowait=sys.argv[1]=="false"
 assert p["state"]=="OPEN" and not p["isDraft"], "not open, or draft"
 assert p["mergeable"]=="MERGEABLE", "not mergeable: "+p["mergeable"]
 def running(c): return c.get("status") not in (None,"COMPLETED") or c.get("state") in ("PENDING","EXPECTED")
-bad=[c.get("name") or c.get("context") for c in p["statusCheckRollup"]
-     if (c.get("conclusion") or c.get("state")) not in ("SUCCESS","SKIPPED","NEUTRAL") and not (nowait and running(c))]
+def result(c): return c.get("conclusion") or c.get("state")
+def name(c): return c.get("name") or c.get("context")
+bad=[c for c in p["statusCheckRollup"] if result(c) not in ("SUCCESS","SKIPPED","NEUTRAL") and not (nowait and running(c))]
 assert p["statusCheckRollup"] or nowait, "no CI checks on the PR (set wait_for_ci = false for a repo without CI)"
-assert not bad, "checks not green: "+str(bad)
-' 2>&1) || no "$(printf '%s' "$err" | tail -1)"
-evd=$("$L/merge-evidence" "$run" "$lane" "$head" "$tier" 2>&1) || no "$(printf '%s' "$evd" | tail -1)"
+if bad and sys.argv[2]=="1":
+    for c in bad:
+        workflow = c.get("workflowName")
+        label = f"{workflow} / {name(c)}" if workflow else name(c)
+        status = result(c) or c.get("status")
+        print(f"CI: {label!r} ({status!r})")
+    sys.exit(2)
+assert not bad, "checks not green: "+str([name(c) for c in bad])
+' "$wait_ci" "$override" 2>&1); then ci=
+else [ "$?" = 2 ] && [ "$override" = 1 ] || no "$(printf '%s' "$ci" | tail -1)"; fi
+all=; [ "$override" = 0 ] || all=--all
+if evd=$("$L/merge-evidence" $all "$run" "$lane" "$head" "$tier" 2>&1); then evd=
+else [ "$?" = 2 ] && [ "$override" = 1 ] || no "$(printf '%s' "$evd" | tail -1)"; fi
 printf '%s' "$info" | python3 -I -c 'import json,sys;p=json.load(sys.stdin);print(p["title"]);print(p["body"])' | "$L/ai-trace-check" 2>/dev/null || no "PR title/body has AI traces"
+
+if [ -n "$ci$evd" ]; then
+  failed=$(printf '%s\n' "$ci" "$evd" | sed '/^$/d')
+  printf '%s\n' "$failed"
+  [ "$night" = 0 ] || no "night mode cannot override failed checks"
+  [ "$dry" = 0 ] || no "checks failed"
+  if [ -z "$code" ]; then
+    echo "$me: ask the owner for an override. Show: $nwo#$pr -> $base, head $short, tier $tier ($why), and every failed check."
+    echo "$key $head $base $nwo#$pr" | seal; exit 3
+  fi
+  approved=$(printf '%s\n' "$approval" | tail -n +2)
+  python3 -I -c 'from collections import Counter; import sys
+sys.exit(bool(Counter(sys.argv[1].splitlines()) - Counter(sys.argv[2].splitlines())))' "$failed" "$approved" ||
+    no "failed checks changed since the owner approved the override: ask again"
+  how=override
+fi
 
 if [ $dry = 1 ]; then echo "$me: dry run OK for $nwo#$pr -> $base, tier $tier ($why), approval: $how"; exit 0; fi
 if [ "$how" = ask ]; then
@@ -154,13 +205,34 @@ method=$(git -C "$repo" config lonca.mergeMethod || true)
 [ -n "$method" ] || method=$(cd "$repo" && "$GH" repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed \
   -q 'if .mergeCommitAllowed then "merge" elif .squashMergeAllowed then "squash" else "rebase" end' 2>/dev/null) || method=merge
 tag=$how; [ "$how" = night ] && tag="night:$proj"
+if [ "$how" = override ]; then
+  # Record the owner's approval before attempting the merge. The comment omits the approval code.
+  when=$(date -Iseconds)
+  mkdir -p "$run" && printf 'Head: %s\nBase: %s\nTime: %s\nCode: %s\n\nFailed checks\n%s\n' \
+    "$head" "$base" "$when" "$code" "$failed" > "$run/$lane.override.md" || no "cannot write override record"
+  comment=$(printf 'The owner approved a merge override for these checks.\n\n'
+    printf '%s\n' "$failed" | while IFS= read -r failure; do
+      if ! printf '%s\n' "$failure" | GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=lonca.strictTraces GIT_CONFIG_VALUE_0=true \
+        GIT_CONFIG_KEY_1=lonca.toolNamesOk GIT_CONFIG_VALUE_1=false "$L/ai-trace-check" 2>/dev/null; then
+        case $failure in
+          CI:*) failure="CI: check details in the run report" ;;
+          *) failure="Evidence check details in the run report" ;;
+        esac
+      fi
+      printf '    %s\n' "$failure"
+    done)
+  printf '%s\n' "$comment" | (cd "$repo" && "$GH" pr comment "$pr" --body-file -) || no "cannot write override PR comment"
+fi
 echo "$(date -Iseconds) merging [$tag] $repo #$pr" >> "$LOG"
 (cd "$repo" && "$GH" pr merge "$pr" "--$method" --match-head-commit "$head") || { echo "$(date -Iseconds) merge-failed [$tag] $repo #$pr" >> "$LOG"; no "gh merge ($method) failed"; }
-if [ "$how" = code ]; then rm -f "$A/$key"; b=$A/batch_${proj}_$code
+if [ "$how" = code ] || [ "$how" = override ]; then rm -f "$A/$key"; b=$A/batch_${proj}_$code
   grep -vxF "$key" "$b" > "$b.left" || true   # the code ends with its batch's last merge
-  if [ -s "$b.left" ]; then mv "$b.left" "$b"; else rm -f "$b" "$b.left"; fi
+  if [ "$override" = 1 ]; then : > "$b"; rm -f "$b.left"   # keep the spent code reserved until the usual cleanup
+  elif [ -s "$b.left" ]; then mv "$b.left" "$b"; else rm -f "$b" "$b.left"; fi
 fi
-echo "$(date -Iseconds) merged [$tag] $repo #$pr -> $base (lane $lane, tier $tier)" >> "$LOG"
+checks=
+if [ "$how" = override ]; then checks=" $(printf '%s\n' "$failed" | paste -sd '|' -)"; fi
+printf '%s\n' "$(date -Iseconds) merged [$tag] $repo #$pr -> $base (lane $lane, tier $tier)$checks" >> "$LOG"
 exec 9>&-   # release the merge lock
 "$L/kanzo-sync" >/dev/null 2>&1 || true   # its card -> done now, not at the next timer run
 # the lane that built it is done: close its terminal, remove its worktree and local branch now (not at night)

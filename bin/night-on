@@ -2,8 +2,8 @@
 # Night mode for one project, started by the owner's word. While it is on, merge-pr merges every PR of the project
 # that passes its checks (as if auto_merge were "all"), until the end time and, if one was set, up to a cap.
 #   night-on --request <project> <until HH:MM> [<max-merges>]
-#       the lead prepares tonight; prints a code (valid 1 h) for the owner to answer in chat ("başla <code>",
-#       "start <code>": any language, the code is what binds)
+#       the lead prepares tonight and prints a code (valid 1 h) for the owner to answer in chat
+#       ("start <code>" in any language, the code is what binds)
 #   night-on --code <code> <project>          the lead passes the owner's code: night mode starts
 #   night-on --off <project>                  ends it early
 # <project> is the name `lonca-project` prints for the project's repos. The lead runs it; a lane is refused.
@@ -26,7 +26,7 @@ if end <= now: end += datetime.timedelta(days=1)
 night = {"until": end.isoformat(), "max_merges": mx if mx == "unlimited" else int(mx)}
 json.dump({"code": code, "asked": time.time(), "night": night}, open(out, "w"))
 print(f"night mode for {proj} prepared: until {end:%d.%m %H:%M}" + ("" if mx == "unlimited" else f", at most {mx} merges"))
-print(f"The owner starts it by writing the code, e.g.:  başla {code}  (any language)     then run:  night-on --code {code} {proj}   (1 h)")
+print(f"The owner starts it by writing the code, e.g.:  start {code}  (any language)     then run:  night-on --code {code} {proj}   (1 h)")
 PY
     ;;
   --code)
