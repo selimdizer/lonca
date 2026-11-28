@@ -149,6 +149,7 @@ merges; `merge-pr` refuses to run inside a lane.
 If you still want to merge after seeing a CI or evidence refusal, the lead can run `merge-pr --override` to show
 every failed check and ask for `override <code>`. That code is valid for one hour and applies to the same head and
 base when only the failures you saw remain. The override is recorded in the merge log, the run folder and a PR comment.
+GitHub enforces branch protection and refuses override merges that violate its rules.
 
 ## Configuration
 

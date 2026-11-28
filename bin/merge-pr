@@ -18,7 +18,8 @@
 #     The code ends when its last PR merges, or after 1 h.
 #   - the owner's override: --override lists failed CI and eligible evidence checks, then prints its own code.
 #     The owner answers "override <code>" and the lead reruns with --override --code. The same head and base
-#     must have the same or fewer failures. Night mode cannot override. Passing checks use the usual approval.
+#     must have the same or fewer failures. The owner's code also works during night mode.
+#     Passing checks use the usual approval.
 # The lead runs it; a lane (LONCA_LANE set) is refused.
 # The merge method follows the repo (merge commit, else squash, else rebase; `git config lonca.mergeMethod` overrides)
 # and merges exactly the checked head (--match-head-commit). One merge at a time (a lock). Log: ~/.local/state/lonca/merge.log
@@ -129,11 +130,8 @@ elif [ -n "$code" ]; then
   how=code
 elif LEVEL=$level TIER=$tier python3 -I -c 'import os,sys; r={"low":0,"medium":1,"high":2,"all":2}; sys.exit(0 if r.get(os.environ["LEVEL"],-1) >= r[os.environ["TIER"]] else 1)'; then
   how=auto
-fi
-night=0
-if [ -n "$proj" ] && [ -f "$N/$proj.json" ] &&
-   { [ "$override" = 1 ] || { [ "$how" = ask ] && [ -z "${MERGE_PR_SEAL:-}" ]; }; }; then
-  if python3 -I - "$N/$proj.json" "$LOG" "$proj" 2>/dev/null <<'PY'
+elif [ -n "$proj" ] && [ -f "$N/$proj.json" ]; then
+  python3 -I - "$N/$proj.json" "$LOG" "$proj" 2>/dev/null <<'PY' && how=night || echo "$me: night mode for $proj is past its end time or its cap: asking the owner" >&2
 import datetime, json, os, sys
 f, log, p = sys.argv[1:]
 n = json.load(open(f))
@@ -146,12 +144,6 @@ if mx != "unlimited":
                    and datetime.datetime.fromisoformat(l.split()[0]).timestamp() >= since) if os.path.exists(log) else 0
     assert count("merging") - count("merge-failed") < int(mx)
 PY
-  then
-    night=1
-    [ "$how" != ask ] || how=night
-  elif [ "$how" = ask ]; then
-    echo "$me: night mode for $proj is past its end time or its cap: asking the owner" >&2
-  fi
 fi
 
 # Checks
@@ -182,7 +174,6 @@ printf '%s' "$info" | python3 -I -c 'import json,sys;p=json.load(sys.stdin);prin
 if [ -n "$ci$evd" ]; then
   failed=$(printf '%s\n' "$ci" "$evd" | sed '/^$/d')
   printf '%s\n' "$failed"
-  [ "$night" = 0 ] || no "night mode cannot override failed checks"
   [ "$dry" = 0 ] || no "checks failed"
   if [ -z "$code" ]; then
     echo "$me: ask the owner for an override. Show: $nwo#$pr -> $base, head $short, tier $tier ($why), and every failed check."
@@ -205,24 +196,6 @@ method=$(git -C "$repo" config lonca.mergeMethod || true)
 [ -n "$method" ] || method=$(cd "$repo" && "$GH" repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed \
   -q 'if .mergeCommitAllowed then "merge" elif .squashMergeAllowed then "squash" else "rebase" end' 2>/dev/null) || method=merge
 tag=$how; [ "$how" = night ] && tag="night:$proj"
-if [ "$how" = override ]; then
-  # Record the owner's approval before attempting the merge. The comment omits the approval code.
-  when=$(date -Iseconds)
-  mkdir -p "$run" && printf 'Head: %s\nBase: %s\nTime: %s\nCode: %s\n\nFailed checks\n%s\n' \
-    "$head" "$base" "$when" "$code" "$failed" > "$run/$lane.override.md" || no "cannot write override record"
-  comment=$(printf 'The owner approved a merge override for these checks.\n\n'
-    printf '%s\n' "$failed" | while IFS= read -r failure; do
-      if ! printf '%s\n' "$failure" | GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=lonca.strictTraces GIT_CONFIG_VALUE_0=true \
-        GIT_CONFIG_KEY_1=lonca.toolNamesOk GIT_CONFIG_VALUE_1=false "$L/ai-trace-check" 2>/dev/null; then
-        case $failure in
-          CI:*) failure="CI: check details in the run report" ;;
-          *) failure="Evidence check details in the run report" ;;
-        esac
-      fi
-      printf '    %s\n' "$failure"
-    done)
-  printf '%s\n' "$comment" | (cd "$repo" && "$GH" pr comment "$pr" --body-file -) || no "cannot write override PR comment"
-fi
 echo "$(date -Iseconds) merging [$tag] $repo #$pr" >> "$LOG"
 (cd "$repo" && "$GH" pr merge "$pr" "--$method" --match-head-commit "$head") || { echo "$(date -Iseconds) merge-failed [$tag] $repo #$pr" >> "$LOG"; no "gh merge ($method) failed"; }
 if [ "$how" = code ] || [ "$how" = override ]; then rm -f "$A/$key"; b=$A/batch_${proj}_$code
@@ -234,6 +207,25 @@ checks=
 if [ "$how" = override ]; then checks=" $(printf '%s\n' "$failed" | paste -sd '|' -)"; fi
 printf '%s\n' "$(date -Iseconds) merged [$tag] $repo #$pr -> $base (lane $lane, tier $tier)$checks" >> "$LOG"
 exec 9>&-   # release the merge lock
+if [ "$how" = override ]; then
+  # The merge succeeded and consumed the code. External check names stay in the local audit records.
+  when=$(date -Iseconds)
+  if ! { mkdir -p "$run" && printf 'Head: %s\nBase: %s\nTime: %s\n\nFailed checks\n%s\n' \
+    "$head" "$base" "$when" "$failed" > "$run/$lane.override.md"; }; then
+    echo "$me: PR #$pr merged, but could not write the override record" >&2
+  fi
+  comment=$(printf 'The owner approved a merge override for these checks. See the run report for details.\n\n'
+    printf '%s\n' "$failed" | while IFS= read -r failure; do
+      case $failure in CI:*) failure="CI check ${failure##* }" ;; esac  # the final field is the GitHub check status
+      if ! printf '%s\n' "$failure" | GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=lonca.strictTraces GIT_CONFIG_VALUE_0=true \
+        GIT_CONFIG_KEY_1=lonca.toolNamesOk GIT_CONFIG_VALUE_1=false "$L/ai-trace-check" 2>/dev/null; then
+        failure="Evidence check details in the run report"
+      fi
+      printf '    %s\n' "$failure"
+    done)
+  printf '%s\n' "$comment" | (cd "$repo" && "$GH" pr comment "$pr" --body-file -) ||
+    echo "$me: PR #$pr merged, but could not post the override comment" >&2
+fi
 "$L/kanzo-sync" >/dev/null 2>&1 || true   # its card -> done now, not at the next timer run
 # the lane that built it is done: close its terminal, remove its worktree and local branch now (not at night)
 branch=$(printf '%s' "$info" | python3 -I -c 'import json,sys;print(json.load(sys.stdin)["headRefName"])')

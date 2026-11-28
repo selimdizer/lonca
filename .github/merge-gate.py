@@ -33,8 +33,11 @@ PY
     ;;
   api*"repos/{owner}/{repo}/pulls/$pr/files"*)   # GitHub sends 100 files per page; later pages only with --paginate
     case " $* " in *" --paginate "*) cat "$HOME/files_$pr" ;; *) head -100 "$HOME/files_$pr" ;; esac ;;
-  "pr merge $pr --merge --match-head-commit "*) echo "$pr" >> "$HOME/merged" ;;
-  "pr comment $pr --body-file -") cat >> "$HOME/comment_$pr" ;;
+  "pr merge $pr --merge --match-head-commit "*)
+    [ ! -e "$HOME/fail_merge_$pr" ] || { echo "branch protection refused the merge" >&2; exit 1; }
+    echo "$pr" >> "$HOME/merged" ;;
+  "pr comment $pr --body-file -")
+    grep -qxF "$pr" "$HOME/merged" && cat >> "$HOME/comment_$pr" ;;
   *) echo "unexpected gh $*" >&2; exit 1 ;;
 esac
 '''
@@ -238,14 +241,15 @@ f = open({str(N / '.merge.flock')!r}, "a"); fcntl.flock(f, fcntl.LOCK_EX); print
 
     red = dict(name="ci", workflowName="checks", conclusion="FAILURE")
     pending = dict(name="lint", status="IN_PROGRESS")
+    tool_check = dict(name="Copilot", conclusion="FAILURE")
+    night_active = json.dumps({"until": "2999-01-01T00:00:00+00:00", "max_merges": "unlimited"})
 
-    # An explicit override cannot be issued or applied while night mode is active.
-    night.write_text(json.dumps({"until": "2999-01-01T00:00:00+00:00", "max_merges": "unlimited"}))
+    # Night mode alone never overrides a failed check.
+    night.write_text(night_active)
     pr(8, worktree=False)
     update(8, statusCheckRollup=[red])
-    for opts in ((), ("--override",)):
-        r = merge(8, *opts)
-        assert r.returncode == 1 and not (A / "owner_repo_8").exists(), r.stdout + r.stderr
+    r = merge(8)
+    assert r.returncode == 1 and "checks not green" in r.stderr and not (A / "owner_repo_8").exists(), r.stdout + r.stderr
     night.unlink()
 
     # Good checks still use ordinary approval and ordinary approval cannot authorize an override.
@@ -253,7 +257,7 @@ f = open({str(N / '.merge.flock')!r}, "a"); fcntl.flock(f, fcntl.LOCK_EX); print
     r = merge(8, "--override")
     assert r.returncode == 3 and "override " not in r.stdout, r.stdout + r.stderr
     normal_code = re.search(r"yes (\w+)", r.stdout).group(1)
-    update(8, statusCheckRollup=[red, pending])
+    update(8, statusCheckRollup=[red, pending, tool_check])
     r = merge(8, "--override", "--code", normal_code)
     assert r.returncode == 1 and "requires an override code" in r.stderr, r.stdout + r.stderr
     cfg.write_text('auto_merge = "all"\n')
@@ -264,7 +268,13 @@ f = open({str(N / '.merge.flock')!r}, "a"); fcntl.flock(f, fcntl.LOCK_EX); print
         assert r.returncode == 3 and "any language" in r.stdout, r.stdout + r.stderr
     finally:
         cfg.unlink()
+    expected_comment = ("The owner approved a merge override for these checks. See the run report for details.\n\n"
+                        "    CI check ('FAILURE')\n    CI check ('FAILURE')\n")
     code = re.search(r"override (\w+)", r.stdout).group(1)
+    while code in expected_comment:   # avoid an incidental match with the randomly generated code
+        r = merge(8, "--override")
+        assert r.returncode == 3, r.stdout + r.stderr
+        code = re.search(r"override (\w+)", r.stdout).group(1)
     ci_fail = "CI: 'checks / ci' ('FAILURE')"
     assert code != normal_code and ci_fail in r.stdout.splitlines() and "CI: 'lint' ('IN_PROGRESS')" in r.stdout.splitlines(), r.stdout
     r = merge(8, "--code", code)
@@ -272,14 +282,10 @@ f = open({str(N / '.merge.flock')!r}, "a"); fcntl.flock(f, fcntl.LOCK_EX); print
 
     # Same or fewer means membership, not merely the count. An expired code and a retargeted PR also fail.
     run_code = ("--override", "--code", code)
-    night.write_text(json.dumps({"until": "2999-01-01T00:00:00+00:00", "max_merges": "unlimited"}))
-    r = merge(8, *run_code)
-    assert r.returncode == 1 and "night mode cannot override" in r.stderr, r.stdout + r.stderr
-    night.unlink()
     update(8, statusCheckRollup=[dict(red, workflowName="other")])
     r = merge(8, *run_code)
     assert r.returncode == 1 and "failed checks changed" in r.stderr, r.stdout + r.stderr
-    update(8, statusCheckRollup=[red])
+    update(8, statusCheckRollup=[red, tool_check])
     request = A / "owner_repo_8"
     record = request.read_text()
     request.write_text(re.sub(r"^([^ ]+ [^ ]+) \d+ ", r"\1 0 ", record))
@@ -289,16 +295,34 @@ f = open({str(N / '.merge.flock')!r}, "a"); fcntl.flock(f, fcntl.LOCK_EX); print
     r = merge(8, *run_code)
     assert r.returncode == 1 and "base is now main" in r.stderr, r.stdout + r.stderr
     request.write_text(record)
-    assert "8" not in merged() and not (home / "comment_8").exists()
+
+    # An owner override works during night mode. A refused merge leaves the code valid and creates no audit artifacts.
+    night.write_text(night_active)
+    merge_failure = home / "fail_merge_8"
+    report_path = run / "x8.override.md"
+    comment_path = home / "comment_8"
+    merge_failure.touch()
+    r = merge(8, *run_code)
+    assert r.returncode == 1 and "branch protection refused the merge" in r.stderr, r.stdout + r.stderr
+    assert "8" not in merged() and not comment_path.exists() and not report_path.exists() and request.exists()
+    merge_failure.unlink()
     r = merge(8, *run_code)
     assert r.returncode == 0 and merged()[-1] == "8", r.stdout + r.stderr
+    night.unlink()
     assert any("merged [override]" in line and "#8" in line and ci_fail in line for line in log.read_text().splitlines())
-    report = (run / "x8.override.md").read_text()
-    comment = (home / "comment_8").read_text()
-    assert all(line in report for line in (f"Code: {code}", f"Head: {(home / 'head_8').read_text()}", "Time:", ci_fail)), report
-    assert ci_fail in comment and "lint" not in comment and "Code:" not in comment, comment
+    report = report_path.read_text()
+    comment = comment_path.read_text()
+    assert all(line in report for line in (f"Head: {(home / 'head_8').read_text()}", "Time:", ci_fail, "Copilot")), report
+    assert "Code:" not in report and not re.search(rf"\b{re.escape(code)}\b", report), report
+    assert code not in comment and "Copilot" not in comment and comment == expected_comment, comment
+    trace_env = dict(env, GIT_CONFIG_COUNT="2", GIT_CONFIG_KEY_0="lonca.strictTraces", GIT_CONFIG_VALUE_0="true",
+                     GIT_CONFIG_KEY_1="lonca.toolNamesOk", GIT_CONFIG_VALUE_1="false")
+    r = subprocess.run([SRC / "bin/ai-trace-check"], cwd=repo, env=trace_env, input=comment, text=True, capture_output=True)
+    assert r.returncode == 0, r.stderr
     assert not (A / f"batch_fixture_{code}").read_text()   # still reserved, with no PRs left to approve
+    report_written = report_path.stat().st_mtime_ns
     assert merge(8, *run_code).returncode == 1 and merged().count("8") == 1
+    assert comment_path.read_text() == comment and report_path.stat().st_mtime_ns == report_written
 
     # Collect independent evidence failures. A new commit voids the code.
     head, _ = pr(9, worktree=False)
