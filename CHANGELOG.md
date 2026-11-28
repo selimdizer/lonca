@@ -8,6 +8,10 @@ versions follow [Semantic Versioning](https://semver.org/).
 - `merge-pr --override` records owner-approved exceptions for failed CI and eligible evidence checks (lonca#552).
 - Merge and night mode now show `yes <code>` and `start <code>` in approval examples (lonca#552).
 
+### Removed
+
+- `ROADMAP.md`: the maintainer's plan is kept outside the repo.
+
 ## [0.6.0] - 2026-11-28
 
 The other agent CLIs get Lonca per project too, and checkers no longer leave shells running.
