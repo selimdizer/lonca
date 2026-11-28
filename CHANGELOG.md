@@ -5,8 +5,15 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Upgrading
+## [0.6.0] - 2026-11-28
 
+The other agent CLIs get Lonca per project too, and checkers no longer leave shells running.
+
+### Upgrading from 0.5
+
+- Claude Code keeps the plugin copy of the version it installed: in each project run
+  `claude plugin marketplace update lonca` and `claude plugin update lonca@lonca --scope local`, then restart its
+  sessions.
 - Before `lonca migrate`, opt in the projects where you use OpenCode, Copilot, pi, Grok or Antigravity:
   `lonca init --agents <cli> <dir>`. Migration now removes their user-level Kanzo and deja entries too.
 
@@ -291,7 +298,8 @@ First public release.
 - `kanzo-sync`, `lane-watch`, `ai-cleanup` and their timers.
 - `install.sh` (with `--uninstall`) and the Herdr plugin.
 
-[Unreleased]: https://github.com/selimdizer/lonca/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/selimdizer/lonca/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/selimdizer/lonca/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/selimdizer/lonca/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/selimdizer/lonca/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/selimdizer/lonca/compare/v0.3.1...v0.3.2

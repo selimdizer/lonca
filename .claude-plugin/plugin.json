@@ -1,6 +1,6 @@
 {
   "name": "lonca",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Agents, skills and hooks for a Lonca project",
   "mcpServers": {
     "kanzo": {"command": "kanzo", "args": ["mcp"]},
