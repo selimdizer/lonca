@@ -5,6 +5,10 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+
+- `ROADMAP.md`: the maintainer's plan is kept outside the repo.
+
 ## [0.6.0] - 2026-11-28
 
 The other agent CLIs get Lonca per project too, and checkers no longer leave shells running.
