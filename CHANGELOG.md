@@ -5,19 +5,26 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Upgrading
+## [0.6.0] - 2026-11-28
 
+The other agent CLIs get Lonca per project too, and checkers no longer leave shells running.
+
+### Upgrading from 0.5
+
+- Claude Code serves the plugin from the copy it installed for each project folder: in each one run
+  `claude plugin marketplace update lonca` and `claude plugin update lonca@lonca --scope local`, then restart its
+  sessions.
 - Before `lonca migrate`, opt in the projects where you use OpenCode, Copilot, pi, Grok or Antigravity:
   `lonca init --agents <cli> <dir>`. Migration now removes their user-level Kanzo and deja entries too.
 
 ### Added
 
 - `ROADMAP.md`: the ordered plan, its open decisions and board cards.
+- `test-slot --max-wait <seconds>` (default `test_slot_max_wait` in `~/.config/lonca/config.toml`, else 1800): when no
+  slot frees in time it prints who holds them and exits 75 without running the command (lonca#492).
 
 ### Changed
 
-- `test-slot --max-wait <seconds>` (default `test_slot_max_wait` in `~/.config/lonca/config.toml`, else 1800): when no
-  slot frees in time it prints who holds them and exits 75 without running the command (lonca#492).
 - Checkers (verifier, reviewer, security-auditor) start only commands that end on their own (heavy suites through
   `test-slot --max-wait 1800 -- timeout -k 60 40m`), don't poll CI, report a suite that ends with 75, 124 or 137 as
   FAIL (not verified) and report only once every shell has ended; the lead stops whatever a checker left behind
@@ -34,6 +41,15 @@ versions follow [Semantic Versioning](https://semver.org/).
 - A Codex lead started in a project folder that is not a repository gets the Lonca rules: init adds a pointer line
   to that folder's `AGENTS.md`, the only instructions file Codex reads there; init and `migrate --dry-run` name it.
 
+### Fixed
+
+- The lane git guard decides by the git subcommand and its own options, not by the whole command line: words in a
+  commit, tag, merge or notes message, an `--author`, a `-c` value or a path after `--` no longer get a command
+  refused (`git commit -m "clean up X"`, `-m "fix: push to main later"`). Every refusal stays, and `push -d`,
+  `push -uf`, `branch -Dq` and `refs/heads/main` refspecs are now refused too (lonca#414).
+- ai-cleanup removes approval batch and key files older than 2 h (codes live 1 h), so unused asks no longer pile up
+  until no code is free (lonca#435). A file merge-pr removes during the sweep no longer stops the cleanup.
+
 ### Security
 
 - The lane git guard checks git aliases already in git config by their expansion: `git ci -n` with `alias.ci = commit`
@@ -44,15 +60,6 @@ versions follow [Semantic Versioning](https://semver.org/).
   project, `AGENT.md` (any case) and `.opencode/agent/*.md` as high (lonca#435).
 - merge-pr ignores an exported `MERGE_PR_SEAL`: `--ask` hands its children the internal `--seal <file>` instead, so a
   stray variable no longer makes a plain run exit 0 without merging (lonca#435).
-
-### Fixed
-
-- The lane git guard decides by the git subcommand and its own options, not by the whole command line: words in a
-  commit, tag, merge or notes message, an `--author`, a `-c` value or a path after `--` no longer get a command
-  refused (`git commit -m "clean up X"`, `-m "fix: push to main later"`). Every refusal stays, and `push -d`,
-  `push -uf`, `branch -Dq` and `refs/heads/main` refspecs are now refused too (lonca#414).
-- ai-cleanup removes approval batch and key files older than 2 h (codes live 1 h), so unused asks no longer pile up
-  until no code is free (lonca#435). A file merge-pr removes during the sweep no longer stops the cleanup.
 
 ## [0.5.0] - 2026-11-25
 
@@ -291,7 +298,8 @@ First public release.
 - `kanzo-sync`, `lane-watch`, `ai-cleanup` and their timers.
 - `install.sh` (with `--uninstall`) and the Herdr plugin.
 
-[Unreleased]: https://github.com/selimdizer/lonca/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/selimdizer/lonca/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/selimdizer/lonca/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/selimdizer/lonca/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/selimdizer/lonca/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/selimdizer/lonca/compare/v0.3.1...v0.3.2
